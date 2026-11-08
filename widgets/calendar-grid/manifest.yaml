@@ -52,6 +52,12 @@ config_schema:
         type: string
     shared_color:
       type: string
+    celebrate_special_days:
+      type: boolean
+      description: Highlight family birthdays and holidays on day columns
+    event_flair:
+      type: boolean
+      description: Render keyword-based SVG watermarks on event cards and illustrated banners in the event modal
     members:
       type: array
       items:

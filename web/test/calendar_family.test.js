@@ -1798,4 +1798,193 @@ test('Calendar Family Client Controller', async (t) => {
     global.window.MirrormereCalendarFamily.unmount('mealie-bar-cal');
   });
 
+  await t.test('detectEventFlair correctly classifies keyword themes', () => {
+    const fn = global.window.MirrormereCalendarFamily.detectEventFlair;
+    assert.equal(fn("Maya's Birthday"), 'birthday');
+    assert.equal(fn('Sam Bday Bash'), 'birthday');
+    assert.equal(fn('Block Party'), 'party');
+    assert.equal(fn('Dentist Appointment'), 'dentist');
+    assert.equal(fn('Orthodontist Consult'), 'dentist');
+    assert.equal(fn('Movie Night with Friends'), 'movie');
+    assert.equal(fn('Flight to New York'), 'flight');
+    assert.equal(fn('Soccer Tournament'), 'sports');
+    assert.equal(fn('Thanksgiving Dinner'), 'holiday');
+    assert.equal(fn('Team Sync'), null);
+    assert.equal(fn(''), null);
+    assert.equal(fn(null), null);
+  });
+
+  await t.test('detectDaySpecialStatus identifies family birthdays and holidays while excluding work birthdays', () => {
+    const fn = global.window.MirrormereCalendarFamily.detectDaySpecialStatus;
+    const members = [{ name: 'Alex' }, { name: 'Maya' }];
+
+    // Family birthday
+    assert.equal(fn([{ title: "Maya's Birthday" }], members), 'birthday');
+    assert.equal(fn([{ title: 'Birthday Dinner', owners: ['Alex'] }], members), 'birthday');
+    assert.equal(fn([{ title: 'Birthday!', member: 'Maya' }], members), 'birthday');
+
+    // Work birthday excluded
+    assert.equal(fn([{ title: 'Dave (Work) Birthday' }], members), null);
+    assert.equal(fn([{ title: 'Coworker Birthday' }], members), null);
+    assert.equal(fn([{ title: 'Bob Birthday', owners: ['work'] }], members), null);
+
+    // Non-family birthday
+    assert.equal(fn([{ title: "Charlie's Birthday" }], members), null);
+
+    // Holidays
+    assert.equal(fn([{ title: 'Christmas Eve' }], members), 'holiday');
+    assert.equal(fn([{ title: 'Veterans Day' }], members), 'holiday');
+    assert.equal(fn([{ title: 'Day Off', calendar: 'US Holidays' }], members), 'holiday');
+    assert.equal(fn([{ title: 'Normal Day' }], members), null);
+  });
+
+  await t.test('applySpecialDayHighlights highlights family birthdays and holidays and excludes work birthdays', () => {
+    const data = {
+      members: [{ name: 'Alex' }, { name: 'Maya' }],
+      days: [
+        {
+          date: '2026-10-25',
+          all_day: [{ id: 'bday-1', title: "Maya's Birthday" }],
+          events: [],
+        },
+        {
+          date: '2026-10-26',
+          all_day: [{ id: 'hol-1', title: 'Halloween' }],
+          events: [],
+        },
+        {
+          date: '2026-10-27',
+          all_day: [{ id: 'work-1', title: 'Dave (Work) Birthday' }],
+          events: [],
+        },
+      ],
+    };
+
+    const el = createMockElement({ widgetId: 'special-day-test', data });
+    const day1 = createMockDOMNode('div', { className: 'cf-day' });
+    day1.dataset.date = '2026-10-25';
+    const hdr1 = createMockDOMNode('div', { className: 'cf-day-header' });
+    day1.appendChild(hdr1);
+    el._panels.week.appendChild(day1);
+
+    const day2 = createMockDOMNode('div', { className: 'cf-day' });
+    day2.dataset.date = '2026-10-26';
+    const hdr2 = createMockDOMNode('div', { className: 'cf-day-header' });
+    day2.appendChild(hdr2);
+    el._panels.week.appendChild(day2);
+
+    const day3 = createMockDOMNode('div', { className: 'cf-day' });
+    day3.dataset.date = '2026-10-27';
+    const hdr3 = createMockDOMNode('div', { className: 'cf-day-header' });
+    day3.appendChild(hdr3);
+    el._panels.week.appendChild(day3);
+
+    global.window.MirrormereCalendarFamily.mount(el);
+
+    assert.ok(day1.classList.contains('cf-special-birthday'), 'day1 should have cf-special-birthday');
+    assert.equal(day1.dataset.specialDay, 'birthday');
+    const pill1 = day1.querySelector('.cf-special-pill');
+    assert.ok(pill1, 'day1 should have special pill');
+    assert.equal(pill1.textContent, '🎂 Family Bday');
+
+    assert.ok(day2.classList.contains('cf-special-holiday'), 'day2 should have cf-special-holiday');
+    assert.equal(day2.dataset.specialDay, 'holiday');
+    const pill2 = day2.querySelector('.cf-special-pill');
+    assert.ok(pill2, 'day2 should have holiday pill');
+    assert.equal(pill2.textContent, '✨ Holiday');
+
+    assert.ok(!day3.classList.contains('cf-special-birthday'), 'work birthday day3 should NOT have cf-special-birthday');
+    assert.equal(day3.querySelector('.cf-special-pill'), null);
+
+    global.window.MirrormereCalendarFamily.unmount('special-day-test');
+  });
+
+  await t.test('applySpecialDayHighlights respects celebrate_special_days: false', () => {
+    const data = {
+      members: [{ name: 'Alex' }],
+      days: [
+        {
+          date: '2026-10-25',
+          all_day: [{ id: 'bday-1', title: "Alex's Birthday" }],
+          events: [],
+        },
+      ],
+    };
+
+    const el = createMockElement({ widgetId: 'special-disabled-test', data });
+    el.dataset.celebrateSpecialDays = 'false';
+    const day1 = createMockDOMNode('div', { className: 'cf-day' });
+    day1.dataset.date = '2026-10-25';
+    const hdr1 = createMockDOMNode('div', { className: 'cf-day-header' });
+    day1.appendChild(hdr1);
+    el._panels.week.appendChild(day1);
+
+    global.window.MirrormereCalendarFamily.mount(el, { celebrate_special_days: false });
+    assert.ok(!day1.classList.contains('cf-special-birthday'));
+    assert.equal(day1.querySelector('.cf-special-pill'), null);
+
+    global.window.MirrormereCalendarFamily.unmount('special-disabled-test');
+  });
+
+  await t.test('applyEventFlairs adds flair class and watermark SVG, respecting event_flair: false', () => {
+    const el = createMockElement({ widgetId: 'flair-test' });
+    const timedCard = createMockDOMNode('div', { className: 'cf-day-event' });
+    timedCard.dataset.eventId = 'sport-1';
+    timedCard.dataset.eventTitle = 'Soccer Match';
+    el._panels.week.appendChild(timedCard);
+
+    const alldayCard = createMockDOMNode('div', { className: 'cf-allday' });
+    alldayCard.dataset.eventId = 'dentist-1';
+    alldayCard.dataset.eventTitle = 'Dentist Cleaning';
+    el._panels.week.appendChild(alldayCard);
+
+    global.window.MirrormereCalendarFamily.mount(el);
+
+    assert.ok(timedCard.classList.contains('cf-flair-sports'));
+    assert.equal(timedCard.dataset.flair, 'sports');
+    assert.ok(timedCard.querySelector('.cf-event-flair-watermark'));
+
+    assert.ok(alldayCard.classList.contains('cf-flair-dentist'));
+    assert.equal(alldayCard.dataset.flair, 'dentist');
+    assert.ok(alldayCard.querySelector('.cf-event-flair-watermark'));
+
+    global.window.MirrormereCalendarFamily.unmount('flair-test');
+
+    // Test disabled event_flair
+    const elDisabled = createMockElement({ widgetId: 'flair-disabled-test' });
+    elDisabled.dataset.eventFlair = 'false';
+    const disabledCard = createMockDOMNode('div', { className: 'cf-day-event' });
+    disabledCard.dataset.eventTitle = 'Soccer Match';
+    elDisabled._panels.week.appendChild(disabledCard);
+
+    global.window.MirrormereCalendarFamily.mount(elDisabled, { event_flair: false });
+    assert.ok(!disabledCard.classList.contains('cf-flair-sports'));
+    assert.equal(disabledCard.querySelector('.cf-event-flair-watermark'), null);
+
+    global.window.MirrormereCalendarFamily.unmount('flair-disabled-test');
+  });
+
+  await t.test('openModal renders illustrated SVG flair banner for matching event themes', () => {
+    const el = createMockElement({ widgetId: 'modal-flair-test' });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    // 1. Flair event
+    inst.openModal({ title: 'Birthday Bash', start: '18:00', end: '21:00' });
+    assert.ok(inst.activeModal);
+    const banner = inst.activeModal.querySelector('.cf-modal-flair-banner.cf-modal-flair-birthday');
+    assert.ok(banner, 'modal should have birthday flair banner');
+    inst.closeModal();
+
+    // 2. Mealie event suppresses flair banner
+    inst.openModal({
+      title: 'Birthday Cake',
+      location: '/hearth-api/mealie/image/cake.jpg',
+    });
+    assert.ok(inst.activeModal);
+    assert.equal(inst.activeModal.querySelector('.cf-modal-flair-banner'), null);
+    inst.closeModal();
+
+    global.window.MirrormereCalendarFamily.unmount('modal-flair-test');
+  });
+
 });

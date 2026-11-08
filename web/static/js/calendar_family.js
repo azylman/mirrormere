@@ -5,6 +5,151 @@
  * and horizontal touch swipe gesture navigation with window bounds paging.
  */
 (() => {
+
+  function detectEventFlair(title) {
+    if (!title || typeof title !== 'string') return null;
+    const t = title.trim();
+    if (!t) return null;
+
+    if (/\b(birthday|bday|b-day)\b/i.test(t)) return 'birthday';
+    if (/\b(party|celebration)\b/i.test(t)) return 'party';
+    if (/\b(dentist|orthodontist|dental|doctor|pediatric)\b/i.test(t)) return 'dentist';
+    if (/\b(movie|cinema|film)\b/i.test(t)) return 'movie';
+    if (/\b(flight|airline|airport|fly)\b/i.test(t)) return 'flight';
+    if (/\b(soccer|practice|game|basketball|baseball)\b/i.test(t)) return 'sports';
+    if (
+      /\b(veterans day|thanksgiving|christmas|new year|memorial day|labor day|independence day|4th of july|easter|halloween|valentine|mother's day|father's day|mlk|presidents day|juneteenth|holiday)\b/i.test(
+        t,
+      )
+    ) {
+      return 'holiday';
+    }
+
+    return null;
+  }
+
+  function detectDaySpecialStatus(dayEvents, members) {
+    if (!Array.isArray(dayEvents) || dayEvents.length === 0) return null;
+    const safeMembers = Array.isArray(members) ? members : [];
+
+    // 1. Family Birthday
+    for (const ev of dayEvents) {
+      if (!ev) continue;
+      const title = (ev.title || ev.eventTitle || '').trim();
+      if (!title) continue;
+
+      if (/\b(birthday|bday|b-day)\b/i.test(title)) {
+        if (
+          /\(work\)|\bcoworker\b/i.test(title) ||
+          /\bwork\b/i.test(title) ||
+          (Array.isArray(ev.owners) && ev.owners.some((o) => /\(work\)|\bcoworker\b|\bwork\b/i.test(o))) ||
+          (ev.description && /\bcoworker\b/i.test(ev.description))
+        ) {
+          continue;
+        }
+
+        let isFamily = false;
+        for (const m of safeMembers) {
+          if (!m || !m.name) continue;
+          const name = m.name.trim();
+          if (!name) continue;
+
+          const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const nameRegex = new RegExp(`\\b${escaped}('s)?\\b`, 'i');
+          if (nameRegex.test(title)) {
+            isFamily = true;
+            break;
+          }
+
+          if (
+            Array.isArray(ev.owners) &&
+            ev.owners.some(
+              (o) =>
+                o.toLowerCase() === name.toLowerCase() ||
+                o.toLowerCase().includes(name.toLowerCase()),
+            )
+          ) {
+            isFamily = true;
+            break;
+          }
+
+          if (m.initial && Array.isArray(ev.initials) && ev.initials.includes(m.initial)) {
+            isFamily = true;
+            break;
+          }
+
+          if (ev.member && ev.member.toLowerCase() === name.toLowerCase()) {
+            isFamily = true;
+            break;
+          }
+        }
+
+        if (isFamily) {
+          return 'birthday';
+        }
+      }
+    }
+
+    // 2. Holiday
+    for (const ev of dayEvents) {
+      if (!ev) continue;
+      const title = (ev.title || ev.eventTitle || '').trim();
+      if (
+        /\b(veterans day|thanksgiving|christmas|new year|memorial day|labor day|independence day|4th of july|easter|halloween|valentine|mother's day|father's day|mlk|presidents day|juneteenth|holiday)\b/i.test(
+          title,
+        )
+      ) {
+        return 'holiday';
+      }
+      const cal = ev.calendar || ev.calendar_name || '';
+      if (cal && /holiday/i.test(cal)) {
+        return 'holiday';
+      }
+    }
+
+    return null;
+  }
+
+  function getEventFlairWatermarkSvg(flair) {
+    switch (flair) {
+      case 'birthday':
+      case 'party':
+        return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14c-2.76 0-5-2.69-5-6a5 5 0 0 1 10 0c0 3.31-2.24 6-5 6Z" fill="currentColor" fill-opacity="0.25"/><path d="m8 14-1 2h2l-1-2"/><path d="M8 16c-.5 2-2 3-1 5"/><path d="M15 12c2.21 0 4-2.24 4-5a4 4 0 0 0-8 0" stroke-dasharray="2 2"/></svg>';
+      case 'dentist':
+        return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3C4.5 3 3 5 3 7.5c0 3 1.5 6 2 9.5.5 3 2 4.5 3.5 4.5 1 0 1.5-1 2-3 .5-2 1.5-2 2-2s1.5 0 2 2c.5 2 1 3 2 3 1.5 0 3-1.5 3.5-4.5.5-3.5 2-6.5 2-9.5C22 5 20.5 3 18 3c-2 0-3.5 1.5-5.5 1.5S9 3 7 3Z" fill="currentColor" fill-opacity="0.25"/></svg>';
+      case 'movie':
+        return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10h10l-1.5 11h-7L7 10Z" fill="currentColor" fill-opacity="0.25"/><path d="M10 10v11M14 10v11"/><path d="M6 10c-.8-1.5.5-3.5 2-3.5 1 0 1.5.5 2 1 .5-.5 1-1 2-1s1.5.5 2 1c.5-.5 1-1 2-1 1.5 0 2.8 2 2 3.5"/></svg>';
+      case 'flight':
+        return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 20.5 3c-1-1-3-.5-4.5 1L12.5 7.5 4.3 5.7c-.7-.1-1.3.3-1.4 1-.1.5.2 1 .6 1.3l6 4.5-3 3-2.5-.5c-.4-.1-.8.1-1 .4-.3.4-.2.9.2 1.2l2.5 1.8 1.8 2.5c.3.4.8.5 1.2.2.3-.2.5-.6.4-1l-.5-2.5 3-3 4.5 6c.3.4.8.7 1.3.6.7-.1 1.1-.7 1-1.4l-1.7-8.2Z" fill="currentColor" fill-opacity="0.25"/></svg>';
+      case 'sports':
+        return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" fill="currentColor" fill-opacity="0.25"/><path d="m12 7 3.5 2.5v4L12 16l-3.5-2.5v-4L12 7Z"/><path d="M12 7V3M15.5 9.5l3.5-2M15.5 13.5l3.5 2M12 16v4M8.5 13.5l-3.5 2M8.5 9.5l-3.5-2"/></svg>';
+      case 'holiday':
+        return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z" fill="currentColor" fill-opacity="0.25"/></svg>';
+      default:
+        return '';
+    }
+  }
+
+  function getModalFlairBannerSvg(flair) {
+    switch (flair) {
+      case 'birthday':
+      case 'party':
+        return '<svg viewBox="0 0 400 120" style="width:100%;height:100%;" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="bgB1_js" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f472b6"/><stop offset="100%" stop-color="#db2777"/></linearGradient><linearGradient id="bgB2_js" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0284c7"/></linearGradient><linearGradient id="bgB3_js" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#facc15"/><stop offset="100%" stop-color="#eab308"/></linearGradient></defs><circle cx="30" cy="30" r="3" fill="#ffffff" opacity="0.8"/><circle cx="80" cy="20" r="2.5" fill="#fde047" opacity="0.9"/><circle cx="140" cy="40" r="3.5" fill="#67e8f9" opacity="0.75"/><circle cx="280" cy="25" r="3" fill="#fde047" opacity="0.85"/><circle cx="340" cy="35" r="2.5" fill="#ffffff" opacity="0.8"/><circle cx="370" cy="70" r="3" fill="#f472b6" opacity="0.9"/><path d="M50 70 L52 76 L58 77 L53 81 L55 87 L50 83 L45 87 L47 81 L42 77 L48 76 Z" fill="#ffffff" opacity="0.75"/><path d="M320 80 L322 84 L326 85 L323 88 L324 92 L320 89 L316 92 L317 88 L314 85 L318 84 Z" fill="#fde047" opacity="0.8"/><path d="M185 85 Q 180 105 170 120" stroke="rgba(255,255,255,0.6)" stroke-width="1.5" fill="none"/><path d="M200 90 Q 200 110 205 120" stroke="rgba(255,255,255,0.6)" stroke-width="1.5" fill="none"/><path d="M215 85 Q 220 105 230 120" stroke="rgba(255,255,255,0.6)" stroke-width="1.5" fill="none"/><ellipse cx="178" cy="52" rx="20" ry="26" fill="url(#bgB2_js)"/><ellipse cx="173" cy="44" rx="4" ry="7" fill="#ffffff" opacity="0.4" transform="rotate(-15 173 44)"/><polygon points="175,77 181,77 178,82" fill="#0284c7"/><ellipse cx="222" cy="52" rx="20" ry="26" fill="url(#bgB3_js)"/><ellipse cx="217" cy="44" rx="4" ry="7" fill="#ffffff" opacity="0.4" transform="rotate(-15 217 44)"/><polygon points="219,77 225,77 222,82" fill="#ca8a04"/><ellipse cx="200" cy="45" rx="22" ry="28" fill="url(#bgB1_js)"/><ellipse cx="194" cy="36" rx="5" ry="8" fill="#ffffff" opacity="0.5" transform="rotate(-15 194 36)"/><polygon points="197,72 203,72 200,77" fill="#be185d"/></svg>';
+      case 'dentist':
+        return '<svg viewBox="0 0 400 120" style="width:100%;height:100%;" preserveAspectRatio="xMidYMid slice"><circle cx="80" cy="40" r="14" fill="#ffffff" opacity="0.15"/><circle cx="120" cy="80" r="8" fill="#ffffff" opacity="0.2"/><circle cx="280" cy="35" r="10" fill="#ffffff" opacity="0.15"/><circle cx="320" cy="75" r="16" fill="#ffffff" opacity="0.2"/><path d="M150 40 L152 46 L158 48 L152 50 L150 56 L148 50 L142 48 L148 46 Z" fill="#ffffff" opacity="0.9"/><path d="M245 35 L247 40 L252 41 L247 43 L245 48 L243 43 L238 41 L243 40 Z" fill="#ffffff" opacity="0.9"/><path d="M235 80 L236 83 L239 84 L236 85 L235 88 L234 85 L231 84 L234 83 Z" fill="#ffffff" opacity="0.8"/><path d="M190 28 C 172 28 165 42 165 56 C 165 72 172 88 178 102 C 182 110 188 108 192 98 C 196 88 198 88 200 88 C 202 88 204 88 208 98 C 212 108 218 110 222 102 C 228 88 235 72 235 56 C 235 42 228 28 210 28 C 204 28 202 33 200 33 C 198 33 196 28 190 28 Z" fill="#ffffff"/><path d="M182 45 C 178 50 178 60 180 66" stroke="#06b6d4" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.6"/></svg>';
+      case 'movie':
+        return '<svg viewBox="0 0 400 120" style="width:100%;height:100%;" preserveAspectRatio="xMidYMid slice"><circle cx="60" cy="30" r="2.5" fill="#fde047" opacity="0.8"/><circle cx="120" cy="50" r="3" fill="#ffffff" opacity="0.7"/><circle cx="280" cy="40" r="2" fill="#ffffff" opacity="0.8"/><circle cx="340" cy="25" r="3.5" fill="#fde047" opacity="0.9"/><g transform="translate(170, 20)"><circle cx="20" cy="22" r="9" fill="#fef08a"/><circle cx="34" cy="18" r="10" fill="#facc15"/><circle cx="48" cy="24" r="9" fill="#fef08a"/><circle cx="12" cy="30" r="8" fill="#fde047"/><circle cx="28" cy="28" r="9" fill="#ffffff"/><circle cx="44" cy="32" r="8" fill="#facc15"/><circle cx="56" cy="30" r="7" fill="#fde047"/><polygon points="12,38 56,38 48,88 20,88" fill="#e11d48"/><polygon points="19,38 27,38 25,88 21,88" fill="#ffffff"/><polygon points="33,38 41,38 39,88 35,88" fill="#ffffff"/></g></svg>';
+      case 'flight':
+        return '<svg viewBox="0 0 400 120" style="width:100%;height:100%;" preserveAspectRatio="xMidYMid slice"><path d="M40 90 A 18 18 0 0 1 70 80 A 24 24 0 0 1 110 85 A 14 14 0 0 1 125 95 Z" fill="#ffffff" opacity="0.25"/><path d="M260 85 A 16 16 0 0 1 290 75 A 22 22 0 0 1 325 80 A 16 16 0 0 1 345 92 Z" fill="#ffffff" opacity="0.3"/><path d="M80 85 Q 140 65 190 55" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="6 4" stroke-linecap="round" fill="none" opacity="0.65"/><g transform="translate(185, 25) rotate(-15)"><path d="M35 15 L12 2 L8 2 L14 15 L2 15 L0 12 L-4 12 L-2 18 L-4 24 L0 24 L2 21 L14 21 L8 34 L12 34 L35 21 C42 19 42 17 35 15 Z" fill="#ffffff"/></g></svg>';
+      case 'sports':
+        return '<svg viewBox="0 0 400 120" style="width:100%;height:100%;" preserveAspectRatio="xMidYMid slice"><path d="M40 100 L360 100" stroke="#ffffff" stroke-width="1.5" opacity="0.3"/><path d="M200 60 L200 100" stroke="#ffffff" stroke-width="1.5" opacity="0.25"/><polygon points="120,30 123,37 130,37 124,42 126,49 120,45 114,49 116,42 110,37 117,37" fill="#fde047" opacity="0.8"/><polygon points="280,30 283,37 290,37 284,42 286,49 280,45 274,49 276,42 270,37 277,37" fill="#fde047" opacity="0.8"/><g transform="translate(175, 25)"><circle cx="25" cy="25" r="24" fill="#ffffff"/><polygon points="25,12 34,18 30,28 20,28 16,18" fill="#1e293b"/><line x1="25" y1="12" x2="25" y2="2" stroke="#1e293b" stroke-width="2"/><line x1="34" y1="18" x2="44" y2="14" stroke="#1e293b" stroke-width="2"/><line x1="30" y1="28" x2="38" y2="36" stroke="#1e293b" stroke-width="2"/><line x1="20" y1="28" x2="12" y2="36" stroke="#1e293b" stroke-width="2"/><line x1="16" y1="18" x2="6" y2="14" stroke="#1e293b" stroke-width="2"/></g></svg>';
+      case 'holiday':
+        return '<svg viewBox="0 0 400 120" style="width:100%;height:100%;" preserveAspectRatio="xMidYMid slice"><circle cx="60" cy="40" r="3" fill="#ffffff" opacity="0.8"/><circle cx="100" cy="20" r="2" fill="#ffffff" opacity="0.9"/><circle cx="300" cy="30" r="3.5" fill="#ffffff" opacity="0.85"/><circle cx="350" cy="50" r="2" fill="#ffffff" opacity="0.75"/><path d="M200 20 L203 35 L218 38 L203 41 L200 56 L197 41 L182 38 L197 35 Z" fill="#ffffff"/><path d="M150 45 L152 54 L161 56 L152 58 L150 67 L148 58 L139 56 L148 54 Z" fill="#fde047" opacity="0.9"/><path d="M250 45 L252 54 L261 56 L252 58 L250 67 L248 58 L239 56 L248 54 Z" fill="#fde047" opacity="0.9"/></svg>';
+      default:
+        return '';
+    }
+  }
+
   class CalendarFamilyInstance {
     constructor(element, options = {}) {
       this.element = element;
@@ -67,6 +212,8 @@
 
       this.init();
       this.decorateMealieEvents();
+      this.applySpecialDayHighlights();
+      this.applyEventFlairs();
     }
 
     decorateMealieEvents() {
@@ -147,6 +294,147 @@
         pill.appendChild(spanEl);
       });
     }
+
+    applySpecialDayHighlights() {
+      if (!this.element || typeof this.element.querySelectorAll !== 'function') return;
+      const isSpecialDaysEnabled = this.config.celebrate_special_days !== false &&
+        (this.element ? this.element.dataset.celebrateSpecialDays !== 'false' : true);
+
+      const dayEls = this.element.querySelectorAll('.cf-day, .cf-month-day');
+      if (!isSpecialDaysEnabled) {
+        dayEls.forEach(dayEl => {
+          if (dayEl.classList) {
+            dayEl.classList.remove('cf-special-birthday', 'cf-special-holiday');
+          }
+          if (dayEl.dataset) {
+            delete dayEl.dataset.specialDay;
+          }
+          const pill = dayEl.querySelector ? dayEl.querySelector('.cf-special-pill') : null;
+          if (pill) {
+            if (typeof pill.remove === 'function') pill.remove();
+            else if (pill.parentNode) pill.parentNode.removeChild(pill);
+          }
+        });
+        return;
+      }
+
+      const members = Array.isArray(this.data.members)
+        ? this.data.members
+        : (Array.isArray(this.config && this.config.members) ? this.config.members : []);
+      dayEls.forEach(dayEl => {
+        const date = dayEl.dataset ? dayEl.dataset.date : null;
+        let dayEvents = [];
+        let matchedDay = null;
+
+        if (date && Array.isArray(this.data.days)) {
+          const dayObj = this.data.days.find(d => d.date === date);
+          if (dayObj) {
+            matchedDay = dayObj;
+            dayEvents.push(
+              ...(dayObj.all_day || []),
+              ...(dayObj.events || []),
+              ...(dayObj.early_events || []),
+              ...(dayObj.late_events || []),
+              ...(dayObj.meals || [])
+            );
+          }
+        }
+        if (date && Array.isArray(this.data.month_days)) {
+          const mDayObj = this.data.month_days.find(d => d.date === date);
+          if (mDayObj) {
+            if (!matchedDay) matchedDay = mDayObj;
+            if (Array.isArray(mDayObj.events) && mDayObj.events.length > 0) {
+              dayEvents.push(...mDayObj.events);
+            } else if (mDayObj.event_title) {
+              dayEvents.push({ id: date, title: mDayObj.event_title });
+            }
+          }
+        }
+
+        // Also inspect child event elements
+        if (typeof dayEl.querySelectorAll === 'function') {
+          const cardEls = dayEl.querySelectorAll('.cf-day-event, .cf-event, .cf-edge-event, .cf-month-event-title');
+          cardEls.forEach(cardEl => {
+            const evData = this.resolveEventData(cardEl);
+            if (evData) dayEvents.push(evData);
+          });
+        }
+
+        const status = detectDaySpecialStatus(dayEvents, members);
+        if (dayEl.classList) {
+          dayEl.classList.remove('cf-special-birthday', 'cf-special-holiday');
+        }
+        const existingPill = dayEl.querySelector ? dayEl.querySelector('.cf-special-pill') : null;
+        if (existingPill) {
+          if (typeof existingPill.remove === 'function') existingPill.remove();
+          else if (existingPill.parentNode) existingPill.parentNode.removeChild(existingPill);
+        }
+
+        if (status === 'birthday') {
+          if (dayEl.classList) dayEl.classList.add('cf-special-birthday');
+          if (dayEl.dataset) dayEl.dataset.specialDay = 'birthday';
+          const header = dayEl.querySelector ? dayEl.querySelector('.cf-day-header, .cf-month-day-header') : null;
+          if (header && typeof document !== 'undefined' && document.createElement) {
+            const pill = document.createElement('span');
+            pill.className = 'cf-special-pill cf-pill-birthday';
+            pill.textContent = (matchedDay && matchedDay.special_label) ? ('🎂 ' + matchedDay.special_label) : (status.label || '🎂 Family Bday');
+            header.appendChild(pill);
+          }
+        } else if (status === 'holiday') {
+          if (dayEl.classList) dayEl.classList.add('cf-special-holiday');
+          if (dayEl.dataset) dayEl.dataset.specialDay = 'holiday';
+          const header = dayEl.querySelector ? dayEl.querySelector('.cf-day-header, .cf-month-day-header') : null;
+          if (header && typeof document !== 'undefined' && document.createElement) {
+            const pill = document.createElement('span');
+            pill.className = 'cf-special-pill cf-pill-holiday';
+            pill.textContent = '✨ Holiday';
+            header.appendChild(pill);
+          }
+        } else if (dayEl.dataset) {
+          delete dayEl.dataset.specialDay;
+        }
+      });
+    }
+
+    applyEventFlairs() {
+      if (!this.element || typeof this.element.querySelectorAll !== 'function') return;
+      const isEventFlairEnabled = this.config.event_flair !== false &&
+        (this.element ? this.element.dataset.eventFlair !== 'false' : true);
+
+      const eventCards = this.element.querySelectorAll('.cf-day-event, .cf-allday');
+      eventCards.forEach(cardEl => {
+        if (!isEventFlairEnabled) {
+          const currentFlair = cardEl.dataset ? cardEl.dataset.flair : null;
+          if (currentFlair && cardEl.classList) {
+            cardEl.classList.remove(`cf-flair-${currentFlair}`);
+          }
+          if (cardEl.dataset) delete cardEl.dataset.flair;
+          const wm = cardEl.querySelector ? cardEl.querySelector('.cf-event-flair-watermark') : null;
+          if (wm) {
+            if (typeof wm.remove === 'function') wm.remove();
+            else if (wm.parentNode) wm.parentNode.removeChild(wm);
+          }
+          return;
+        }
+
+        const title = (cardEl.dataset && (cardEl.dataset.eventTitle || cardEl.dataset.title)) || (cardEl.querySelector && cardEl.querySelector('.cf-event-title')?.textContent) || cardEl.textContent?.trim();
+        const flair = detectEventFlair(title);
+        if (flair) {
+          if (cardEl.classList) cardEl.classList.add(`cf-flair-${flair}`);
+          if (cardEl.dataset) cardEl.dataset.flair = flair;
+          if (!cardEl.querySelector || !cardEl.querySelector('.cf-event-flair-watermark')) {
+            if (typeof document !== 'undefined' && document.createElement) {
+              const wm = document.createElement('span');
+              wm.className = 'cf-event-flair-watermark';
+              wm.setAttribute('aria-hidden', 'true');
+              wm.innerHTML = getEventFlairWatermarkSvg(flair);
+              cardEl.appendChild(wm);
+            }
+          }
+        }
+      });
+    }
+
 
 
     parseData() {
@@ -325,6 +613,8 @@
       this.updateDateUI();
       this.fitDayEvents();
       this.decorateMealieEvents();
+      this.applySpecialDayHighlights();
+      this.applyEventFlairs();
       this.resetInactivityTimer();
     }
 
@@ -664,6 +954,23 @@
       const card = document.createElement('div');
       card.className = 'cf-modal-card';
 
+      // Illustrated SVG flair banner (unless Mealie recipe hero photo)
+      const isEventFlairEnabled = this.config.event_flair !== false &&
+        (this.element ? this.element.dataset.eventFlair !== 'false' : true);
+      const heroOrLoc = (ev.image_url && ev.image_url.trim()) || (ev.location && ev.location.trim()) || '';
+      const isMealieHero = Boolean(heroOrLoc && (heroOrLoc.startsWith('/hearth-api/mealie/image/') || heroOrLoc.includes('/api/media/recipes/') || heroOrLoc.startsWith('data:image/')));
+      if (isEventFlairEnabled && !isMealieHero) {
+        const flair = detectEventFlair(ev.title);
+        if (flair) {
+          const bannerEl = document.createElement('div');
+          bannerEl.className = `cf-modal-flair-banner cf-modal-flair-${flair}`;
+          bannerEl.dataset.flair = flair;
+          bannerEl.setAttribute('aria-hidden', 'true');
+          bannerEl.innerHTML = getModalFlairBannerSvg(flair);
+          card.appendChild(bannerEl);
+        }
+      }
+
       // 3. Header: Title + Close button
       const header = document.createElement('div');
       header.className = 'cf-modal-header';
@@ -704,8 +1011,6 @@
       }
 
       // 5. Location or Mealie Recipe Hero Image
-      const heroOrLoc = (ev.image_url && ev.image_url.trim()) || (ev.location && ev.location.trim()) || '';
-      const isMealieHero = Boolean(heroOrLoc && (heroOrLoc.startsWith('/hearth-api/mealie/image/') || heroOrLoc.includes('/api/media/recipes/') || heroOrLoc.startsWith('data:image/')));
       if (heroOrLoc) {
         if (isMealieHero) {
           const imgWrap = document.createElement('div');
@@ -1137,6 +1442,8 @@
       this.updateDateUI();
       this.fitDayEvents();
       this.decorateMealieEvents();
+      this.applySpecialDayHighlights();
+      this.applyEventFlairs();
     }
 
     showSyncIndicator(message = 'Not synced yet') {
@@ -1295,8 +1602,10 @@
       this.updateDateUI();
       if (view === 'week') {
         this.fitDayEvents();
-      this.decorateMealieEvents();
+        this.decorateMealieEvents();
       }
+      this.applySpecialDayHighlights();
+      this.applyEventFlairs();
     }
 
     destroy() {
@@ -1368,11 +1677,16 @@
     }
   };
 
+  api.detectEventFlair = detectEventFlair;
+  api.detectDaySpecialStatus = detectDaySpecialStatus;
+  CalendarFamilyInstance.detectEventFlair = detectEventFlair;
+  CalendarFamilyInstance.detectDaySpecialStatus = detectDaySpecialStatus;
+
   if (typeof window !== 'undefined') {
     window.MirrormereCalendarFamily = api;
     window.MirrormereCalendarGrid = api;
   }
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { CalendarFamilyInstance, MirrormereCalendarFamily: api, MirrormereCalendarGrid: api };
+    module.exports = { CalendarFamilyInstance, MirrormereCalendarFamily: api, MirrormereCalendarGrid: api, detectEventFlair, detectDaySpecialStatus };
   }
 })();
