@@ -318,13 +318,82 @@ ensure_deadcode() {
 }
 
 run_deadcode() {
-    echo "   [deadcode] Checking for unreachable code (production & test graphs)..."
     ensure_deadcode
     main_pkgs=$(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./...) || {
         echo "🚨 [Mirrormere Verify] Error: failed to list main packages" >&2
         exit 1
     }
 
+    if [ "$MODE" = "staged" ]; then
+        staged_go=$(echo "$STAGED_FILES" | grep '\.go$' | while read -r gf; do
+            [ -f "$gf" ] && echo "$gf"
+        done)
+        [ -z "$staged_go" ] && return 0
+        dead_pkgs=$(echo "$staged_go" | while read -r f; do
+            d=$(dirname "$f")
+            [ -d "$d" ] && echo "./$d"
+        done | sort -u)
+        [ -z "$dead_pkgs" ] && return 0
+        # shellcheck disable=SC2086
+        pkg_imps=$(go list -f '{{.ImportPath}}' $dead_pkgs 2>/dev/null || true)
+        [ -z "$pkg_imps" ] && return 0
+        filter_re="^($(echo "$pkg_imps" | paste -sd'|' -))\$"
+        # shellcheck disable=SC2086
+        entry_pkgs=$(go list -f '{{if or (eq .Name "main") (gt (len .TestGoFiles) 0) (gt (len .XTestGoFiles) 0)}}{{.ImportPath}}{{end}}' $dead_pkgs 2>/dev/null || true)
+        # shellcheck disable=SC2086
+        missing_entry=$(go list -f '{{if and (ne .Name "main") (eq (len .TestGoFiles) 0) (eq (len .XTestGoFiles) 0)}}{{.ImportPath}}{{end}}' $dead_pkgs 2>/dev/null || true)
+        if [ -n "$missing_entry" ] || [ -z "$entry_pkgs" ]; then
+            entry_pkgs="$main_pkgs $entry_pkgs"
+        fi
+        echo "   [deadcode] Checking staged Go files for unreachable code..."
+        rc=0
+        # shellcheck disable=SC2086
+        dead_output=$("$DEADCODE_BIN" -test -filter="$filter_re" $entry_pkgs 2>&1) || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            if [ "$rc" -eq 137 ]; then
+                echo "   [deadcode] Warning: deadcode killed by cgroup OOM in local pre-flight (exit 137), deferred to CI." >&2
+                return 0
+            fi
+            echo "🚨 [Mirrormere Verify] Error: deadcode (-test) execution failed (exit $rc):" >&2
+            echo "$dead_output" >&2
+            exit 1
+        fi
+        if [ -n "$dead_output" ]; then
+            dead_staged=$(echo "$dead_output" | while IFS= read -r line; do
+                file_part="${line%%:*}"
+                for sf in $staged_go; do
+                    if [ "$file_part" = "$sf" ]; then
+                        printf '%s\n' "$line"
+                        break
+                    fi
+                done
+            done)
+            if [ -n "$dead_staged" ] && [ -z "$missing_entry" ]; then
+                rc_full=0
+                # shellcheck disable=SC2086
+                dead_full=$("$DEADCODE_BIN" -test -filter="$filter_re" $main_pkgs $entry_pkgs 2>/dev/null) || rc_full=$?
+                if [ "$rc_full" -eq 0 ]; then
+                    dead_staged=$(echo "$dead_full" | while IFS= read -r line; do
+                        file_part="${line%%:*}"
+                        for sf in $staged_go; do
+                            if [ "$file_part" = "$sf" ]; then
+                                printf '%s\n' "$line"
+                                break
+                            fi
+                        done
+                    done)
+                fi
+            fi
+            if [ -n "$dead_staged" ]; then
+                echo "🚨 [Mirrormere Verify] Dead code detected in staged files:" >&2
+                echo "$dead_staged" | sed 's/^/   • /' >&2
+                exit 1
+            fi
+        fi
+        return 0
+    fi
+
+    echo "   [deadcode] Checking for unreachable code (production & test graphs)..."
     tmp_prod=$(mktemp)
     tmp_test=$(mktemp)
 
@@ -346,10 +415,6 @@ run_deadcode() {
     rm -f "$tmp_prod" "$tmp_test"
 
     if [ "$rc_prod" -ne 0 ]; then
-        if [ "$rc_prod" -eq 137 ] && [ "$MODE" = "staged" ]; then
-            echo "   [deadcode] Warning: deadcode killed by cgroup OOM in local pre-flight (exit 137), deferred to CI." >&2
-            return 0
-        fi
         echo "🚨 [Mirrormere Verify] Error: deadcode (production) execution failed (exit $rc_prod):" >&2
         echo "$dead_prod" >&2
         exit 1
@@ -361,10 +426,6 @@ run_deadcode() {
     fi
 
     if [ "$rc" -ne 0 ]; then
-        if [ "$rc" -eq 137 ] && [ "$MODE" = "staged" ]; then
-            echo "   [deadcode] Warning: deadcode killed by cgroup OOM in local pre-flight (exit 137), deferred to CI." >&2
-            return 0
-        fi
         echo "🚨 [Mirrormere Verify] Error: deadcode (-test) execution failed (exit $rc):" >&2
         echo "$dead_output" >&2
         exit 1
@@ -490,6 +551,7 @@ if [ "$MODE" = "staged" ]; then
 
     if echo "$STAGED_FILES" | grep -q -E '\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^scripts/verify\.sh$'; then
         run_golangci_lint
+        run_deadcode
     fi
 
     if echo "$STAGED_FILES" | grep -q -E '^go\.(mod|sum)$'; then
