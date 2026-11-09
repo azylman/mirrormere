@@ -904,6 +904,7 @@ def resolve_yt_audio_stream_with_headers(video_id):
             "no_warnings": True,
             "noplaylist": True,
             "skip_download": True,
+            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
