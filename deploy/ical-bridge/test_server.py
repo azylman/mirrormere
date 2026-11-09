@@ -641,6 +641,91 @@ class TestHandlerEndpoints(unittest.TestCase):
                 self.assertEqual(tracks[0]["title"], "Playlist Track 2")
                 self.assertEqual(tracks[0]["artist"], "Artist 2")
 
+    def test_fetch_yt_playlists_surfaces_native_supermix_and_liked_music(self):
+        lm_resp = {
+            "items": [
+                {
+                    "id": "LM",
+                    "snippet": {
+                        "title": "Liked Music",
+                        "thumbnails": {"high": {"url": "https://img.youtube.com/lm.jpg"}},
+                    },
+                    "contentDetails": {"itemCount": 25},
+                }
+            ]
+        }
+        mine_resp = {
+            "items": [
+                {
+                    "id": "PLcustom1",
+                    "snippet": {
+                        "title": "Custom Playlist",
+                        "thumbnails": {"high": {"url": "https://img.youtube.com/pl1.jpg"}},
+                    },
+                    "contentDetails": {"itemCount": 10},
+                }
+            ]
+        }
+
+        def fake_urlopen(req, timeout=8):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            payload = lm_resp if "id=LM" in url else mine_resp
+            mock_r = MagicMock()
+            mock_r.read.return_value = json.dumps(payload).encode("utf-8")
+            mock_r.__enter__.return_value = mock_r
+            mock_r.__exit__.return_value = False
+            return mock_r
+
+        with patch.dict(srv.CACHE, {}, clear=True):
+            with patch.object(srv, "get_yt_oauth_token", return_value="mock_tok"):
+                with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                    with patch.object(
+                        srv,
+                        "fetch_yt_playlist_tracks",
+                        return_value=[{"video_id": "sm1", "title": "T1", "artist": "A1", "thumb": "https://img.youtube.com/sm.jpg"}],
+                    ):
+                        playlists = srv.fetch_yt_playlists()
+                        self.assertEqual(len(playlists), 3)
+                        self.assertEqual(playlists[0]["playlist_id"], srv.YT_NATIVE_SUPERMIX_ID)
+                        self.assertEqual(playlists[0]["title"], "My Supermix")
+                        self.assertEqual(playlists[1]["playlist_id"], srv.YT_NATIVE_LIKED_MUSIC_ID)
+                        self.assertEqual(playlists[1]["title"], "Liked Music")
+                        self.assertEqual(playlists[1]["count"], 25)
+                        self.assertEqual(playlists[2]["playlist_id"], "PLcustom1")
+
+    def test_fetch_yt_playlist_tracks_normalizes_legacy_aliases(self):
+        api_response = {
+            "items": [
+                {
+                    "snippet": {
+                        "title": "Supermix Track",
+                        "videoOwnerChannelTitle": "Artist SM",
+                        "thumbnails": {"high": {"url": "https://img.youtube.com/sm.jpg"}},
+                    },
+                    "contentDetails": {"videoId": "sm_vid_001"},
+                }
+            ]
+        }
+        captured_urls = []
+
+        def fake_urlopen(req, timeout=8):
+            captured_urls.append(req.full_url if hasattr(req, "full_url") else str(req))
+            mock_r = MagicMock()
+            mock_r.read.return_value = json.dumps(api_response).encode("utf-8")
+            mock_r.__enter__.return_value = mock_r
+            mock_r.__exit__.return_value = False
+            return mock_r
+
+        with patch.dict(srv.CACHE, {}, clear=True):
+            with patch.object(srv, "get_yt_oauth_token", return_value="mock_tok"):
+                with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                    tracks = srv.fetch_yt_playlist_tracks(srv.YT_LEGACY_TYPO_SUPERMIX_ID)
+                    self.assertEqual(len(tracks), 1)
+                    self.assertTrue(any(srv.YT_NATIVE_SUPERMIX_ID in u for u in captured_urls))
+                    tracks_lm = srv.fetch_yt_playlist_tracks("LM_LIKED_SONGS")
+                    self.assertEqual(len(tracks_lm), 1)
+                    self.assertTrue(any(f"playlistId={srv.YT_NATIVE_LIKED_MUSIC_ID}" in u for u in captured_urls))
+
     def test_start_music_playback_no_tracks(self):
         with patch.object(srv, "fetch_yt_playlist_tracks", return_value=[]):
             with patch.object(srv, "search_yt_music", return_value=[]):
