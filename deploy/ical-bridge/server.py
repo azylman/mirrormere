@@ -745,6 +745,12 @@ def get_yt_oauth_token():
             return None
 
 
+# Canonical YouTube Music native system playlist IDs exposed via YouTube Data API v3
+YT_NATIVE_SUPERMIX_ID = "RDTMAK5uy_kset8DisdE7LSD4TNjEVvrKRTmG7a56sY"
+YT_LEGACY_TYPO_SUPERMIX_ID = "RDTMAK5uy_ksetItRFlDrQI5PqO6aoUZgleGC9iAYjk"
+YT_NATIVE_LIKED_MUSIC_ID = "LM"
+
+
 def fetch_yt_playlists():
     key = "yt:playlists"
     now = time.time()
@@ -754,10 +760,42 @@ def fetch_yt_playlists():
     tok = get_yt_oauth_token()
     if not tok:
         return []
-    url = "https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=25"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"})
+    headers = {"Authorization": f"Bearer {tok}", "Accept": "application/json"}
     out = []
     try:
+        # 1. Fetch native YouTube Music "Liked Music" (LM) entity metadata directly from YouTube Data API v3
+        liked_entry = {
+            "playlist_id": YT_NATIVE_LIKED_MUSIC_ID,
+            "title": "Liked Music",
+            "count": 0,
+            "thumb": "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-music-@576.png",
+        }
+        try:
+            lm_url = f"https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id={YT_NATIVE_LIKED_MUSIC_ID}"
+            lm_req = urllib.request.Request(lm_url, headers=headers)
+            with urllib.request.urlopen(lm_req, timeout=8) as r:
+                lm_data = json.loads(r.read().decode())
+            lm_items = lm_data.get("items", [])
+            if lm_items:
+                lm_it = lm_items[0]
+                lm_sn = lm_it.get("snippet") or {}
+                lm_thumbs = lm_sn.get("thumbnails") or {}
+                lm_thumb = (
+                    (lm_thumbs.get("high") or {}).get("url")
+                    or (lm_thumbs.get("medium") or {}).get("url")
+                    or (lm_thumbs.get("default") or {}).get("url")
+                    or ""
+                )
+                liked_entry["title"] = lm_sn.get("title") or "Liked Music"
+                liked_entry["count"] = (lm_it.get("contentDetails") or {}).get("itemCount", 0)
+                if lm_thumb:
+                    liked_entry["thumb"] = lm_thumb
+        except Exception as e:
+            print(f"[HEARTH-Bridge] YT native LM metadata error: {e}", flush=True)
+
+        # 2. Fetch user's custom playlists (mine=true)
+        url = "https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=25"
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=8) as r:
             data = json.loads(r.read().decode())
         for p in data.get("items", []):
@@ -776,6 +814,30 @@ def fetch_yt_playlists():
                 "count": count,
                 "thumb": thumb_url,
             })
+
+        # 3. Prepend native YouTube Music "My Supermix" (RDTMAK5uy_kset8DisdE7LSD4TNjEVvrKRTmG7a56sY) and "Liked Music" (LM)
+        supermix_thumb = "https://www.gstatic.com/youtube/media/ytm/images/pbg/my-supermix-en-@576.png"
+        sm_count = 50
+        try:
+            sm_tracks = fetch_yt_playlist_tracks(YT_NATIVE_SUPERMIX_ID)
+            if sm_tracks:
+                sm_count = len(sm_tracks)
+                if sm_tracks[0].get("thumb"):
+                    supermix_thumb = sm_tracks[0]["thumb"]
+        except Exception:
+            pass
+
+        native_entries = [
+            {
+                "playlist_id": YT_NATIVE_SUPERMIX_ID,
+                "title": "My Supermix",
+                "count": sm_count,
+                "thumb": supermix_thumb,
+            },
+            liked_entry,
+        ]
+        existing_ids = {p.get("playlist_id") for p in native_entries}
+        out = native_entries + [p for p in out if p.get("playlist_id") not in existing_ids]
         with CACHE_LOCK:
             CACHE[key] = (now, out)
     except Exception as e:
@@ -788,6 +850,10 @@ def fetch_yt_playlists():
 def fetch_yt_playlist_tracks(playlist_id):
     if not playlist_id:
         return []
+    if playlist_id in ("LM_LIKED_SONGS", "VLLM"):
+        playlist_id = YT_NATIVE_LIKED_MUSIC_ID
+    elif playlist_id in ("RDTMAK_MY_SUPERMIX", YT_LEGACY_TYPO_SUPERMIX_ID):
+        playlist_id = YT_NATIVE_SUPERMIX_ID
     tok = get_yt_oauth_token()
     tracks = []
     if tok:
