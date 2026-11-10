@@ -228,6 +228,11 @@ body[data-theme="night"] .photo-pause-pill[data-paused="true"]:hover,
   object-position: center;
 }
 
+.photo-backdrop-container,
+.photo-layer.photo-next {
+  pointer-events: none;
+}
+
 .photo-layer.photo-video-player {
   position: absolute;
   top: 0;
@@ -242,14 +247,14 @@ body[data-theme="night"] .photo-pause-pill[data-paused="true"]:hover,
 
 .photo-video-play-btn {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 14px;
+  right: 14px;
+  transform: none;
   z-index: 3;
-  width: 56px;
-  height: 56px;
-  min-width: 56px;
-  min-height: 56px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
   padding: 0;
   border-radius: 50%;
   background: #faf7f2;
@@ -272,18 +277,18 @@ body[data-theme="night"] .photo-pause-pill[data-paused="true"]:hover,
   display: block;
   pointer-events: none;
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
 }
 
 .photo-video-play-btn:hover {
   background: #ffffff;
   border-color: rgba(255, 111, 89, 0.35);
-  transform: translate(-50%, -50%) scale(1.06);
+  transform: scale(1.06);
 }
 
 .photo-video-play-btn:active {
-  transform: translate(-50%, -50%) scale(0.95);
+  transform: scale(0.95);
 }
 
 :root[data-theme="night"] .photo-video-play-btn,
