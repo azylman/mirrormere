@@ -114,9 +114,9 @@ function YtMusicSpeakerBar({ speakers, activeSpeaker, onSelectSpeaker }: {
 }
 
 function YtMusicMiniPlayer({
-  np, startingPlayback, onPrev, onPlayPause, onNext, onStop, onVolumeChange, onOpenNowPlaying,
+  np, startingPlayback, onShuffle, onPrev, onPlayPause, onNext, onStop, onVolumeChange, onOpenNowPlaying,
 }: {
-  np: NowPlaying; startingPlayback: boolean; onPrev: () => void; onPlayPause: () => void;
+  np: NowPlaying; startingPlayback: boolean; onShuffle: () => void; onPrev: () => void; onPlayPause: () => void;
   onNext: () => void; onStop: () => void; onVolumeChange: (e: ChangeEvent<HTMLInputElement>) => void; onOpenNowPlaying: () => void;
 }) {
   'use no memo';
@@ -129,6 +129,11 @@ function YtMusicMiniPlayer({
         <div className="np-artist" id="np-artist">{np.artist || (np.title ? 'Ready' : 'Pick a playlist or search a song')}</div>
       </div>
       <div className="transport">
+        <button type="button" className={`ctrl-btn${np.shuffle ? ' active' : ''}`} id="btn-shuffle" title="Shuffle" aria-label="Shuffle" aria-pressed={Boolean(np.shuffle)} onClick={onShuffle}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="16 3 21 3 21 8" /><line x1="4" y1="20" x2="21" y2="3" /><polyline points="21 16 21 21 16 21" /><line x1="15" y1="15" x2="21" y2="21" /><line x1="4" y1="4" x2="9" y2="9" />
+          </svg>
+        </button>
         <button type="button" className="ctrl-btn" id="btn-prev" title="Previous" aria-label="Previous" onClick={onPrev}><YtMusicPrevIcon /></button>
         <button type="button" className="ctrl-btn play-main" id="btn-play" title={isPlaying ? 'Pause' : 'Play'} aria-label={isPlaying ? 'Pause' : 'Play'} onClick={onPlayPause}>
           {isPlaying ? <YtMusicPauseIcon /> : <YtMusicPlayIcon />}
@@ -286,6 +291,14 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
     await postControl('stop');
   };
 
+  const handleShuffle = () => {
+    setStateData((prev) => ({
+      ...prev,
+      now_playing: { ...prev.now_playing, shuffle: !prev.now_playing?.shuffle },
+    }));
+    void postControl('shuffle');
+  };
+
   const handleSearchSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const q = searchQuery.trim();
@@ -387,7 +400,11 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
         ref={audioRef}
         id="ytm-local-audio"
         preload="none"
-        onEnded={() => void postControl('next')}
+        onEnded={(e) => {
+          const el = e.currentTarget;
+          if (el && Number.isFinite(el.duration) && el.duration > 30 && el.currentTime > 0 && el.duration - el.currentTime > 8) return;
+          void postControl('next');
+        }}
         style={{ display: 'none' }}
       />
       {showNowPlaying ? (
@@ -397,6 +414,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
           activeSpeaker={currentActiveSpeaker}
           speakers={speakers}
           startingPlayback={startingPlayback}
+          onShuffle={handleShuffle}
           onPrev={() => void postControl('prev')}
           onPlayPause={() => void handlePlayPause()}
           onNext={() => void postControl('next')}
@@ -407,62 +425,24 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
         />
       ) : (
         <>
-          <YtMusicHeader
-            accounts={accounts}
-            activeAccountId={activeAccountId}
-            isLocalSpeaker={isLocalSpeaker}
-            onSelectAccount={(accId) => void handleSelectAccount(accId)}
-            onToggleSpeaker={handleToggleSpeaker}
-          />
-          <YtMusicSpeakerBar
-            speakers={speakers}
-            activeSpeaker={currentActiveSpeaker}
-            onSelectSpeaker={(spkId) => void handleSelectSpeaker(spkId)}
-          />
+          <YtMusicHeader accounts={accounts} activeAccountId={activeAccountId} isLocalSpeaker={isLocalSpeaker} onSelectAccount={(accId) => void handleSelectAccount(accId)} onToggleSpeaker={handleToggleSpeaker} />
+          <YtMusicSpeakerBar speakers={speakers} activeSpeaker={currentActiveSpeaker} onSelectSpeaker={(spkId) => void handleSelectSpeaker(spkId)} />
           <YtMusicMiniPlayer
-            np={np}
-            startingPlayback={startingPlayback}
-            onPrev={() => void postControl('prev')}
-            onPlayPause={() => void handlePlayPause()}
-            onNext={() => void postControl('next')}
-            onStop={() => void handleStop()}
-            onVolumeChange={handleVolumeChange}
-            onOpenNowPlaying={() => { if (np.title) setUserBrowsing(false); }}
+            np={np} startingPlayback={startingPlayback} onShuffle={handleShuffle}
+            onPrev={() => void postControl('prev')} onPlayPause={() => void handlePlayPause()}
+            onNext={() => void postControl('next')} onStop={() => void handleStop()}
+            onVolumeChange={handleVolumeChange} onOpenNowPlaying={() => { if (np.title) setUserBrowsing(false); }}
           />
           <div className="sub-toolbar">
-            <button
-              type="button"
-              className={`mode-btn ${activeTab === 'playlists' || activeTab === 'discovery' ? 'active' : ''}`}
-              data-tab="playlists"
-              aria-label="Playlists"
-              onClick={() => setActiveTab('playlists')}
-            >
+            <button type="button" className={`mode-btn ${activeTab === 'playlists' || activeTab === 'discovery' ? 'active' : ''}`} data-tab="playlists" aria-label="Playlists" onClick={() => setActiveTab('playlists')}>
               Playlists
             </button>
-            <button
-              type="button"
-              className={`mode-btn ${activeTab === 'queue' ? 'active' : ''}`}
-              data-tab="queue"
-              aria-label="Queue"
-              onClick={() => setActiveTab('queue')}
-            >
+            <button type="button" className={`mode-btn ${activeTab === 'queue' ? 'active' : ''}`} data-tab="queue" aria-label="Queue" onClick={() => setActiveTab('queue')}>
               Queue
             </button>
             <form className="search-form" id="search-form" onSubmit={(e) => void handleSearchSubmit(e)}>
-              <input
-                type="text"
-                className="search-input"
-                data-prevent-screen-swipe=""
-                id="search-input"
-                aria-label="Search YouTube Music"
-                placeholder="Search YouTube Music songs or artists..."
-                autoComplete="off"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              <button type="submit" className={`mode-btn ${activeTab === 'search' ? 'active' : ''}`} aria-label="Search">
-                Search
-              </button>
+              <input type="text" className="search-input" data-prevent-screen-swipe="" id="search-input" aria-label="Search YouTube Music" placeholder="Search YouTube Music songs or artists..." autoComplete="off" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+              <button type="submit" className={`mode-btn ${activeTab === 'search' ? 'active' : ''}`} aria-label="Search">Search</button>
             </form>
           </div>
           {activeTab === 'playlists' || activeTab === 'discovery' ? (

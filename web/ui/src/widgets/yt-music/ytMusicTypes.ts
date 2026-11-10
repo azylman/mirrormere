@@ -30,6 +30,7 @@ export interface NowPlaying {
   volume?: number;
   queue_index?: number;
   video_id?: string;
+  shuffle?: boolean;
 }
 
 export interface Playlist {

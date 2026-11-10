@@ -26,6 +26,7 @@ describe('YtMusicNowPlaying', () => {
       { entity_id: 'media_player.living_room', name: 'Living Room' },
       { entity_id: 'media_player.kitchen', name: 'Kitchen' },
     ],
+    onShuffle: vi.fn(),
     onPrev: vi.fn(),
     onPlayPause: vi.fn(),
     onNext: vi.fn(),
@@ -36,12 +37,21 @@ describe('YtMusicNowPlaying', () => {
   };
 
   it('renders now playing metadata, active speaker badge, and transport controls', () => {
-    const { container } = render(<YtMusicNowPlaying {...baseProps} />);
+    const { container, rerender } = render(<YtMusicNowPlaying {...baseProps} />);
 
     expect(container.querySelector('#np-title')?.textContent).toBe('Starboy');
     expect(container.querySelector('#np-artist')?.textContent).toBe('The Weeknd');
     expect(container.querySelector('#np-art')?.getAttribute('src')).toBe('https://example.com/starboy.jpg');
     expect(container.querySelector('#np-device-badge')?.textContent).toContain('Living Room');
+
+    const shuffleBtn = container.querySelector('#btn-shuffle');
+    expect(shuffleBtn?.getAttribute('aria-label')).toBe('Shuffle');
+    expect(shuffleBtn?.getAttribute('aria-pressed')).toBe('false');
+    expect(shuffleBtn?.classList.contains('active')).toBe(false);
+
+    rerender(<YtMusicNowPlaying {...baseProps} nowPlaying={{ ...baseProps.nowPlaying, shuffle: true }} />);
+    expect(container.querySelector('#btn-shuffle')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('#btn-shuffle')?.classList.contains('active')).toBe(true);
 
     const playBtn = container.querySelector('#btn-play');
     expect(playBtn?.getAttribute('aria-label')).toBe('Pause');
@@ -61,6 +71,9 @@ describe('YtMusicNowPlaying', () => {
 
     fireEvent.click(container.querySelector('#btn-browse-library')!);
     expect(baseProps.onBrowseLibrary).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(container.querySelector('#btn-shuffle')!);
+    expect(baseProps.onShuffle).toHaveBeenCalledTimes(1);
 
     fireEvent.click(container.querySelector('#btn-prev')!);
     expect(baseProps.onPrev).toHaveBeenCalledTimes(1);

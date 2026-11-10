@@ -20,6 +20,7 @@ export interface YtMusicNowPlayingProps {
   activeSpeaker?: string;
   speakers?: Speaker[];
   startingPlayback?: boolean;
+  onShuffle?: () => void;
   onPrev: () => void;
   onPlayPause: () => void;
   onNext: () => void;
@@ -40,6 +41,7 @@ export const YtMusicNowPlaying = memo(function YtMusicNowPlaying({
   activeSpeaker,
   speakers = [],
   startingPlayback = false,
+  onShuffle,
   onPrev,
   onPlayPause,
   onNext,
@@ -111,6 +113,33 @@ export const YtMusicNowPlaying = memo(function YtMusicNowPlaying({
           </div>
         </div>
         <div className="transport">
+          <button
+            type="button"
+            className={`ctrl-btn${np.shuffle ? ' active' : ''}`}
+            id="btn-shuffle"
+            title="Shuffle"
+            aria-label="Shuffle"
+            aria-pressed={Boolean(np.shuffle)}
+            onClick={onShuffle}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="16 3 21 3 21 8" />
+              <line x1="4" y1="20" x2="21" y2="3" />
+              <polyline points="21 16 21 21 16 21" />
+              <line x1="15" y1="15" x2="21" y2="21" />
+              <line x1="4" y1="4" x2="9" y2="9" />
+            </svg>
+          </button>
           <button
             type="button"
             className="ctrl-btn"

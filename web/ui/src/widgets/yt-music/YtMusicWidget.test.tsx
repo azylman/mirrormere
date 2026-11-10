@@ -256,6 +256,21 @@ describe('YtMusicWidget', () => {
           );
         }
 
+        if (body.action === 'shuffle') {
+          return new Response(
+            JSON.stringify({
+              state: {
+                ...mockIdleState,
+                now_playing: {
+                  ...mockIdleState.now_playing,
+                  shuffle: true,
+                },
+              },
+            }),
+            { status: 200 }
+          );
+        }
+
         return new Response(JSON.stringify({ state: mockIdleState }), { status: 200 });
       }
 
@@ -567,6 +582,21 @@ describe('YtMusicWidget', () => {
       expect(container.querySelector('#btn-play')).not.toBeNull();
     });
 
+    // Shuffle
+    const shuffleBtn = container.querySelector('#btn-shuffle') as HTMLButtonElement;
+    expect(shuffleBtn.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(shuffleBtn);
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        (c) =>
+          String(c[0]).includes('/music/control') &&
+          JSON.parse(String(c[1]?.body)).action === 'shuffle'
+      );
+      expect(call).toBeDefined();
+      expect(container.querySelector('#btn-shuffle')?.getAttribute('aria-pressed')).toBe('true');
+      expect(container.querySelector('#btn-shuffle')?.classList.contains('active')).toBe(true);
+    });
+
     // Previous
     fireEvent.click(container.querySelector('#btn-prev')!);
     await waitFor(() => {
@@ -849,6 +879,7 @@ describe('YtMusicWidget', () => {
     });
 
     // Test transport controls and volume slider in full Now Playing view
+    fireEvent.click(container.querySelector('#btn-shuffle')!);
     fireEvent.click(container.querySelector('#btn-prev')!);
     fireEvent.click(container.querySelector('#btn-next')!);
     fireEvent.change(container.querySelector('#vol-slider')!, { target: { value: '60' } });
@@ -882,6 +913,7 @@ describe('YtMusicWidget', () => {
 
     await waitFor(() => {
       expect(container.querySelector('.ytm-discovery')).not.toBeNull();
+      expect(container.querySelector('[data-pl="PL_favorites"]')).not.toBeNull();
     });
 
     // 1. Click playlist tile
@@ -1405,7 +1437,18 @@ describe('YtMusicWidget', () => {
     await waitFor(() => expect(container.querySelector('.ytm-discovery')).not.toBeNull());
     expect(container.querySelector('#ytm-local-audio')).toBe(audio);
 
-    // Audio ended triggers next
+    // Premature mid-track stream drop (>8s remaining on >30s track) does NOT skip to next track
+    Object.defineProperty(audio, 'duration', { value: 180, configurable: true });
+    Object.defineProperty(audio, 'currentTime', { value: 45, configurable: true });
+    fireEvent.ended(audio);
+    expect(
+      fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes('/music/control') && JSON.parse(String(c[1]?.body)).action === 'next'
+      )
+    ).toBeUndefined();
+
+    // Audio ended near end of track triggers next
+    Object.defineProperty(audio, 'currentTime', { value: 178, configurable: true });
     fireEvent.ended(audio);
     await waitFor(() => {
       const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('/music/control') && JSON.parse(String(c[1]?.body)).action === 'next');
