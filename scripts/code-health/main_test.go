@@ -433,6 +433,48 @@ type SmallB struct {
 			wantErr:    "ratchet violation(s) detected",
 		},
 		{
+			name: "test file exceeding file length ceiling fails check without baseline",
+			files: map[string]string{
+				"pkg/clean.go":    "package pkg\n",
+				"pkg/big_test.go": buildLargeGoSource(1505, 10),
+			},
+			wantCode: 1,
+			wantErr:  "pkg/big_test.go: file length 1505 exceeds limit 1500 (ceiling 1500)",
+		},
+		{
+			name: "test file exceeding file length ceiling passes check when grandfathered in baseline",
+			files: map[string]string{
+				"pkg/clean.go":    "package pkg\n",
+				"pkg/big_test.go": buildLargeGoSource(1505, 10),
+			},
+			baselineJSON: `{"files":{"pkg/big_test.go":{"lines":1505}}}`,
+			wantCode:     0,
+			wantOut:      "Checked 1 Go file(s)",
+		},
+		{
+			name: "update mode records oversized test files in baseline",
+			files: map[string]string{
+				"pkg/clean.go":    "package pkg\n",
+				"pkg/big_test.go": buildLargeGoSource(1505, 10),
+			},
+			customArgs: []string{"-update"},
+			wantCode:   0,
+			wantOut:    "wrote baseline",
+			wantFileContains: map[string]string{
+				".code-health-baseline.json": "pkg/big_test.go",
+			},
+		},
+		{
+			name: "syntax error in test file fails update mode",
+			files: map[string]string{
+				"pkg/clean.go":       "package pkg\n",
+				"pkg/broken_test.go": "package pkg\nfunc (",
+			},
+			customArgs: []string{"-update"},
+			wantCode:   1,
+			wantErr:    "code-health: analyze:",
+		},
+		{
 			name: "unsorted routes detected in check mode",
 			files: map[string]string{
 				"pkg/server.go": `package pkg
@@ -653,6 +695,7 @@ func TestAnalyzeTestFile(t *testing.T) {
 		content        string
 		nonexistent    bool
 		wantViolations []string
+		wantLines      int
 		wantErr        bool
 	}{
 		{
@@ -663,6 +706,7 @@ type Case struct {
 	expected int
 }
 `,
+			wantLines: 5,
 		},
 		{
 			name: "generated test file is skipped",
@@ -732,9 +776,12 @@ func TestJ_CoverageGaps() {}
 				filePath = filepath.Join(dir, "does_not_exist_test.go")
 			}
 
-			violations, err := analyzeTestFile(filePath, "sample_test.go")
+			fm, violations, err := analyzeTestFile(filePath, "sample_test.go")
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("analyzeTestFile() error = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if tc.wantLines > 0 && fm.Lines != tc.wantLines {
+				t.Errorf("analyzeTestFile() lines = %d, want %d", fm.Lines, tc.wantLines)
 			}
 			if len(tc.wantViolations) > 0 {
 				joined := strings.Join(violations, "\n")
