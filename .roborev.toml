@@ -8,7 +8,9 @@ exclude_patterns = [
   "*.lock",
   "package-lock.json",
   "pnpm-lock.yaml",
-  "web/static/ui/**"
+  "web/static/ui/**",
+  "**/migrations/*.sql",
+  "**/__fixtures__/*.json"
 ]
 
 review_guidelines = """
@@ -21,7 +23,7 @@ Repo-Specific Invariants (appended to global Aerial cluster guidelines in ~/.rob
 
 [ci]
 agents = ["gemini"]
-review_types = ["default"]
+review_types = ["default", "test-value"]
 reasoning = "thorough"
 min_severity = "medium"
 upsert_comments = true

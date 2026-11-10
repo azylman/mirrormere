@@ -1,4 +1,10 @@
 {
-  "files": {},
-  "functions": {}
+  "files": {
+    "internal/provider/home_assistant_test.go": {
+      "lines": 1623
+    },
+    "internal/render/family_test.go": {
+      "lines": 1607
+    }
+  }
 }
