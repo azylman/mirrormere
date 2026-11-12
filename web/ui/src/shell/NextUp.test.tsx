@@ -1,13 +1,24 @@
 import { Profiler } from 'react';
-import { act, fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
 import {
+  resetSharedYtMusicState,
+  setSharedYtMusicState,
+} from '../widgets/yt-music/ytMusicTypes';
+import {
   NextUp,
   formatRelativeCountdown,
+  formatTimerCountdown,
+  getSharedPlexSession,
+  isPlexLiveIslandActive,
   parseEventDates,
+  resetSharedPlexSession,
   resolveNextUpEvent,
+  resolveScreenIndexForWidgetType,
   selectCalendarEvents,
+  selectHomeAssistantLiveActivities,
+  setSharedPlexSession,
   useCalendarEvents,
 } from './NextUp';
 import type { RawCalendarEvent } from './NextUp';
@@ -1009,5 +1020,243 @@ describe('NextUp component', () => {
     // onRender must still have been called only once (no re-render for NextUp)
     expect(onRender).toHaveBeenCalledTimes(1);
     expect(container.querySelector('#next-event-title')?.textContent).toBe('Team Sync');
+  });
+
+  describe('Multi-Source Live Island Bus (HA Alerts, Timers, Plex, YT Music)', () => {
+    beforeEach(() => {
+      resetSharedYtMusicState();
+      resetSharedPlexSession();
+      useDisplayStore.setState({
+        header: { timestamp: null, timezone: 'UTC', weather: null },
+        screen: { currentScreen: 0, totalScreens: 3, intervalSeconds: 30, widgets: [] },
+        layout: [
+          { index: 0, widgets: [{ widget_id: 'cal-1', type: 'calendar-grid', origin: [0, 0], dimensions: [3, 2] }] },
+          { index: 1, widgets: [{ widget_id: 'ha-1', type: 'home-assistant', origin: [0, 0], dimensions: [3, 2] }] },
+          { index: 2, widgets: [{ widget_id: 'plex-1', type: 'plex-recent', origin: [0, 0], dimensions: [3, 2] }] },
+        ],
+        widgets: {},
+      });
+    });
+
+    it('formats timer countdowns and extracts HA lock, cover, and timer activities', () => {
+      const refNow = new Date('2026-10-31T10:00:00Z');
+      expect(formatTimerCountdown({ finishes_at: '2026-10-31T10:05:30Z' }, refNow)).toBe('5:30 left');
+      expect(formatTimerCountdown({ finishes_at: '2026-10-31T11:02:05Z' }, refNow)).toBe('1:02:05 left');
+      expect(formatTimerCountdown({ remaining: '0:12:09' }, refNow)).toBe('12:09 left');
+      expect(formatTimerCountdown({ remaining: '01:15:00' }, refNow)).toBe('01:15:00 left');
+      expect(formatTimerCountdown({}, refNow)).toBe('Timer active');
+
+      const activities = selectHomeAssistantLiveActivities(
+        {
+          'ha-1': {
+            state: 'ok',
+            timestamp: '2026-10-31T10:00:00Z',
+            data: {
+              entities: {
+                'lock.front_door': {
+                  entity_id: 'lock.front_door',
+                  state: 'unlocked',
+                  attributes: { friendly_name: 'Front Door' },
+                },
+                'cover.garage_door': {
+                  entity_id: 'cover.garage_door',
+                  state: 'open',
+                  attributes: { friendly_name: 'Garage Door' },
+                },
+                'timer.kitchen': {
+                  entity_id: 'timer.kitchen',
+                  state: 'active',
+                  attributes: { friendly_name: 'Kitchen Timer', remaining: '0:04:15' },
+                },
+                'lock.back_door': {
+                  entity_id: 'lock.back_door',
+                  state: 'locked',
+                  attributes: { friendly_name: 'Back Door' },
+                },
+              },
+            },
+          },
+        },
+        refNow,
+      );
+
+      expect(activities).toHaveLength(3);
+      expect(activities[0]).toMatchObject({
+        kind: 'ha-alert',
+        entityId: 'lock.front_door',
+        title: 'Front Door',
+        subtitle: 'Unlocked',
+        actionLabel: 'Lock',
+      });
+      expect(activities[1]).toMatchObject({
+        kind: 'ha-alert',
+        entityId: 'cover.garage_door',
+        title: 'Garage Door',
+        subtitle: 'Open',
+        actionLabel: 'Close',
+      });
+      expect(activities[2]).toMatchObject({
+        kind: 'ha-timer',
+        entityId: 'timer.kitchen',
+        title: 'Kitchen Timer',
+        subtitle: '4:15 left',
+        actionLabel: 'Cancel',
+      });
+    });
+
+    it('renders HA alert pill, dispatches 1-tap Lock action with optimistic store update, and navigates on pill click', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      useDisplayStore.setState({
+        widgets: {
+          'ha-1': {
+            state: 'ok',
+            timestamp: '2026-10-31T10:00:00Z',
+            data: {
+              entities: {
+                'lock.front_door': {
+                  entity_id: 'lock.front_door',
+                  state: 'unlocked',
+                  attributes: { friendly_name: 'Front Door' },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const { container } = render(<NextUp now={new Date('2026-10-31T10:00:00Z')} timezone="UTC" />);
+      const pill = container.querySelector('#next-event-pill') as HTMLElement;
+      expect(pill.getAttribute('data-live-island')).toBe('ha-alert');
+      expect(container.querySelector('#live-island-title')?.textContent).toBe('Front Door');
+      expect(container.querySelector('#live-island-artist')?.textContent).toBe('Unlocked');
+
+      // Click pill body -> switches to screen 1 (home-assistant)
+      fireEvent.click(pill);
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+
+      // Click 1-tap Lock action button -> optimistic update locks entity and dispatches POST /api/widgets/ha-1/action
+      const actionBtn = container.querySelector('#live-island-action') as HTMLButtonElement;
+      expect(actionBtn.textContent).toBe('Lock');
+      fireEvent.click(actionBtn);
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/widgets/ha-1/action',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({
+              domain: 'lock',
+              service: 'lock',
+              entity_id: 'lock.front_door',
+              service_data: { entity_id: 'lock.front_door' },
+            }),
+          }),
+        );
+      });
+
+      // Because optimistic update changed state to 'locked', HA alert disappears
+      expect(container.querySelector('#next-event-pill')?.getAttribute('data-live-island')).toBeNull();
+      vi.unstubAllGlobals();
+    });
+
+    it('prioritizes ha-alert > ha-timer > yt-music > plex and cycles through active Live Island pills', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      useDisplayStore.setState({
+        widgets: {
+          'ha-1': {
+            state: 'ok',
+            timestamp: '2026-10-31T10:00:00Z',
+            data: {
+              entities: {
+                'cover.garage': {
+                  entity_id: 'cover.garage',
+                  state: 'open',
+                  attributes: { friendly_name: 'Garage' },
+                },
+                'timer.oven': {
+                  entity_id: 'timer.oven',
+                  state: 'active',
+                  attributes: { friendly_name: 'Oven Timer', finishes_at: '2026-10-31T10:10:00Z' },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      act(() => {
+        setSharedYtMusicState({
+          now_playing: { title: 'Starboy', artist: 'The Weeknd', state: 'playing' },
+          active_speaker: 'this_device',
+          apiBase: '/hearth-api',
+        });
+        setSharedPlexSession({
+          id: 'm-1',
+          title: 'Dune: Part Two',
+          subtitle: 'Now Playing on TV',
+          thumb: 'https://example.com/dune.jpg',
+          state: 'playing',
+        });
+      });
+
+      expect(getSharedPlexSession()?.title).toBe('Dune: Part Two');
+      expect(isPlexLiveIslandActive(getSharedPlexSession())).toBe(true);
+      expect(resolveScreenIndexForWidgetType('plex-recent')).toBe(2);
+
+      // No-op when setting identical plex session
+      act(() => {
+        setSharedPlexSession((prev) => (prev ? { ...prev } : null));
+      });
+
+      const { container } = render(<NextUp now={new Date('2026-10-31T10:00:00Z')} timezone="UTC" />);
+
+      // 1/4: ha-alert (Garage)
+      expect(container.querySelector('#next-event-pill')?.getAttribute('data-live-island')).toBe('ha-alert');
+      expect(container.querySelector('#live-island-title')?.textContent).toBe('Garage');
+      const cycleBtn = container.querySelector('#live-island-cycle') as HTMLButtonElement;
+      expect(cycleBtn).not.toBeNull();
+      expect(cycleBtn.textContent).toBe('1/4');
+
+      // Click cycle -> 2/4: ha-timer (Oven Timer)
+      fireEvent.click(cycleBtn);
+      expect(container.querySelector('#next-event-pill')?.getAttribute('data-live-island')).toBe('ha-timer');
+      expect(container.querySelector('#live-island-title')?.textContent).toBe('Oven Timer');
+      expect(container.querySelector('#live-island-artist')?.textContent).toBe('10:00 left');
+      expect(container.querySelector('#live-island-cycle')?.textContent).toBe('2/4');
+
+      // Click cycle -> 3/4: yt-music (Starboy)
+      fireEvent.click(container.querySelector('#live-island-cycle')!);
+      expect(container.querySelector('#next-event-pill')?.getAttribute('data-live-island')).toBe('yt-music');
+      expect(container.querySelector('#live-island-title')?.textContent).toBe('Starboy');
+      expect(container.querySelector('#live-island-cycle')?.textContent).toBe('3/4');
+
+      // Click cycle -> 4/4: plex (Dune: Part Two)
+      fireEvent.click(container.querySelector('#live-island-cycle')!);
+      expect(container.querySelector('#next-event-pill')?.getAttribute('data-live-island')).toBe('plex');
+      expect(container.querySelector('#live-island-title')?.textContent).toBe('Dune: Part Two');
+      expect(container.querySelector('#live-island-artist')?.textContent).toBe('Now Playing on TV');
+      expect(container.querySelector('#live-island-cycle')?.textContent).toBe('4/4');
+
+      // Click Plex pill -> navigates to screen 2 (plex-recent)
+      fireEvent.click(container.querySelector('#next-event-pill')!);
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(2);
+
+      // Cycle back to ha-timer (index 1) and click Cancel
+      fireEvent.click(container.querySelector('#live-island-cycle')!); // 1/4
+      fireEvent.click(container.querySelector('#live-island-cycle')!); // 2/4 (ha-timer)
+      fireEvent.click(container.querySelector('#live-island-action')!); // Cancel timer
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/widgets/ha-1/action',
+          expect.objectContaining({ method: 'POST' }),
+        );
+      });
+
+      vi.unstubAllGlobals();
+    });
   });
 });

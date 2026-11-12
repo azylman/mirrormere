@@ -2,6 +2,7 @@ import './PlexRecentWidget.css';
 import { memo, useEffect, useMemo, useRef, useState, ViewTransition } from 'react';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
+import { setSharedPlexSession } from '../../shell/nextUpHelpers';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 
@@ -187,6 +188,15 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.ok !== false) {
         setTvPlayState('success');
+        setSharedPlexSession({
+          id: selectedItem.id,
+          title: selectedItem.title,
+          subtitle: selectedItem.subtitle || 'Now Playing on TV',
+          thumb: selectedItem.thumb,
+          state: 'playing',
+          type: selectedItem.type || selectedItem.category,
+          apiBase,
+        });
       } else {
         setTvPlayState('error');
       }

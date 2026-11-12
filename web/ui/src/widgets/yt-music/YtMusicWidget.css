@@ -689,3 +689,52 @@ body.theme-day .widget-yt-music .btn-browse-library,
   color: #2b2038;
 }
 
+.live-island-icon-badge {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 1rem;
+  background: rgba(239, 68, 68, 0.14);
+  color: var(--mm-text-title, #2a2338);
+}
+
+.live-island-pill[data-live-island="ha-timer"] .live-island-icon-badge {
+  background: rgba(245, 158, 11, 0.16);
+}
+
+.live-island-action-pill {
+  border: 0;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  background: var(--mm-coral, #ff6f59);
+  color: #ffffff;
+  white-space: nowrap;
+  transition: transform 0.12s ease, opacity 0.15s ease;
+}
+
+.live-island-action-pill:active {
+  transform: scale(0.94);
+}
+
+.live-island-btn.cycle {
+  width: auto;
+  min-width: 32px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+
