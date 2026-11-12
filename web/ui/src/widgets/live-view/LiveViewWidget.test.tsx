@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, render, fireEvent, createEvent, act } from '@testing-library/react';
-import { LiveViewWidget, parseLiveViewConfig } from './LiveViewWidget';
+import { LiveViewWidget, parseLiveViewConfig, computeStaggerDelayMs } from './LiveViewWidget';
 import { useDisplayStore } from '../../store';
 import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
@@ -108,12 +108,49 @@ describe('LiveViewWidget helpers', () => {
       expect(parseLiveViewConfig({ timeout_seconds: 'abc' }).timeout_seconds).toBeUndefined();
       expect(parseLiveViewConfig({ timeout_seconds: '30' }).timeout_seconds).toBe(30);
     });
+
+    it('parses refresh_interval_seconds, background_refresh_interval_seconds, and stagger_index with mjpeg defaults', () => {
+      const mjpegDef = parseLiveViewConfig({ stream_type: 'mjpeg' });
+      expect(mjpegDef.refresh_interval_seconds).toBe(15);
+      expect(mjpegDef.background_refresh_interval_seconds).toBe(300);
+      expect(mjpegDef.stagger_index).toBeUndefined();
+
+      const customMjpeg = parseLiveViewConfig({
+        stream_type: 'mjpeg',
+        refresh_interval_seconds: 20,
+        background_refresh_interval_seconds: 600,
+        stagger_index: 4,
+      });
+      expect(customMjpeg.refresh_interval_seconds).toBe(20);
+      expect(customMjpeg.background_refresh_interval_seconds).toBe(600);
+      expect(customMjpeg.stagger_index).toBe(4);
+
+      const webrtcDef = parseLiveViewConfig({ stream_type: 'webrtc' });
+      expect(webrtcDef.refresh_interval_seconds).toBeUndefined();
+      expect(webrtcDef.background_refresh_interval_seconds).toBeUndefined();
+      expect(webrtcDef.stagger_index).toBeUndefined();
+    });
+
+    it('computes stagger delay using stagger_index or deterministic id hash', () => {
+      expect(computeStaggerDelayMs('cam-rosie', 0, 1600)).toBe(0);
+      expect(computeStaggerDelayMs('cam-doorbell', 1, 1600)).toBe(1600);
+      expect(computeStaggerDelayMs('cam-top-of-the-hill', 8, 5000)).toBe(40000);
+      const hashed = computeStaggerDelayMs('cam-rosie', undefined, 1600);
+      expect(hashed).toBeGreaterThanOrEqual(0);
+      expect(hashed).toBeLessThan(9 * 1600);
+      expect(hashed % 1600).toBe(0);
+    });
   });
 });
 
 describe('LiveViewWidget component', () => {
   const widgetId = 'w-live-1';
   const initialStore = useDisplayStore.getState();
+  const seedWidget = (config: Record<string, unknown> = {}) => {
+    useDisplayStore.setState({
+      widgets: { [widgetId]: { meta: makeWidgetMeta(config), data: {}, state: 'ready', timestamp: '2026-10-31T12:00:00Z' } },
+    });
+  };
 
   if (typeof window.PointerEvent === 'undefined') {
     // @ts-expect-error polyfill PointerEvent for JSDOM
@@ -235,20 +272,11 @@ describe('LiveViewWidget component', () => {
   });
 
   it('renders live view DOM structure without duplicate data-widget-id', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc',
-            title: 'Backyard',
-            fit: 'cover',
-            poster_url: 'https://cam.example.com/poster.jpg',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc',
+      title: 'Backyard',
+      fit: 'cover',
+      poster_url: 'https://cam.example.com/poster.jpg',
     });
 
     const { container } = render(
@@ -287,19 +315,10 @@ describe('LiveViewWidget component', () => {
   });
 
   it('starts WebRTC negotiation and connects ontrack stream to video element', async () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc',
-            stream_type: 'webrtc',
-            title: 'Driveway',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
+      title: 'Driveway',
     });
 
     const { container } = render(
@@ -340,19 +359,10 @@ describe('LiveViewWidget component', () => {
   });
 
   it('plays MJPEG stream on img element and hides video', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/mjpeg',
-            stream_type: 'mjpeg',
-            title: 'Porch',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/mjpeg',
+      stream_type: 'mjpeg',
+      title: 'Porch',
     });
 
     const { container } = render(
@@ -371,19 +381,10 @@ describe('LiveViewWidget component', () => {
   });
 
   it('plays HLS stream on video element and hides img', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/index.m3u8',
-            stream_type: 'hls',
-            title: 'HLS Stream',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/index.m3u8',
+      stream_type: 'hls',
+      title: 'HLS Stream',
     });
 
     const { container } = render(
@@ -404,18 +405,9 @@ describe('LiveViewWidget component', () => {
   });
 
   it('tears down decoders when isCurrentPane becomes false, and resumes when current pane again', async () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc',
-            stream_type: 'webrtc',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
     });
 
     const { rerender } = render(
@@ -452,18 +444,9 @@ describe('LiveViewWidget component', () => {
   });
 
   it('tears down decoders when document becomes hidden', async () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc',
-            stream_type: 'webrtc',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
     });
 
     render(
@@ -500,18 +483,9 @@ describe('LiveViewWidget component', () => {
     window.IntersectionObserver = MockIO;
 
     try {
-      useDisplayStore.setState({
-        widgets: {
-          [widgetId]: {
-            meta: makeWidgetMeta({
-              stream_url: 'https://cam.example.com/webrtc',
-              stream_type: 'webrtc',
-            }),
-            data: {},
-            state: 'ready',
-            timestamp: '2026-10-31T12:00:00Z',
-          },
-        },
+      seedWidget({
+        stream_url: 'https://cam.example.com/webrtc',
+        stream_type: 'webrtc',
       });
 
       const { container } = render(
@@ -543,18 +517,9 @@ describe('LiveViewWidget component', () => {
   });
 
   it('tears down decoders and clears loading when videoMode becomes "video", and resumes on "widgets"', async () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc',
-            stream_type: 'webrtc',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
     });
 
     const { container } = render(
@@ -601,23 +566,14 @@ describe('LiveViewWidget component', () => {
   });
 
   it('handles tap-to-wake: fires wake action and video trigger with payload', async () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-            stream_type: 'webrtc',
-            stream_id: 'front-door',
-            controllable: true,
-            control_url: 'https://cam.example.com/control',
-            priority: 'temporary',
-            timeout_seconds: 45,
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
+      stream_type: 'webrtc',
+      stream_id: 'front-door',
+      controllable: true,
+      control_url: 'https://cam.example.com/control',
+      priority: 'temporary',
+      timeout_seconds: 45,
     });
 
     const { container } = render(
@@ -674,20 +630,11 @@ describe('LiveViewWidget component', () => {
   });
 
   it('omits timeout_seconds when not provided or zero, and respects expand_stream_url', async () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/ambient',
-            expand_stream_url: 'https://cam.example.com/hq',
-            expand_stream_type: 'hls',
-            timeout_seconds: 0,
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/ambient',
+      expand_stream_url: 'https://cam.example.com/hq',
+      expand_stream_type: 'hls',
+      timeout_seconds: 0,
     });
 
     const { container } = render(
@@ -720,17 +667,8 @@ describe('LiveViewWidget component', () => {
   });
 
   it('rejects drag gestures (hypot >= 15) and suppresses synthetic clicks within 400ms', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
     });
 
     const { container } = render(
@@ -757,18 +695,9 @@ describe('LiveViewWidget component', () => {
   });
 
   it('ignores tap when expand_on_click is false', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-            expand_on_click: false,
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
+      expand_on_click: false,
     });
 
     const { container } = render(
@@ -793,17 +722,8 @@ describe('LiveViewWidget component', () => {
   it('handles trigger fetch rejection gracefully by clearing loading state', async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
     });
 
     const { container } = render(
@@ -832,18 +752,9 @@ describe('LiveViewWidget component', () => {
       return pc;
     };
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc',
-            stream_type: 'webrtc',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
     });
 
     render(
@@ -887,18 +798,9 @@ describe('LiveViewWidget component', () => {
       return pc;
     };
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc',
-            stream_type: 'webrtc',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
     });
 
     render(
@@ -940,18 +842,9 @@ describe('LiveViewWidget component', () => {
       return pc;
     };
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc',
-            stream_type: 'webrtc',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
     });
 
     const { unmount } = render(
@@ -987,18 +880,9 @@ describe('LiveViewWidget component', () => {
     window.MediaStream = MockStream;
 
     try {
-      useDisplayStore.setState({
-        widgets: {
-          [widgetId]: {
-            meta: makeWidgetMeta({
-              stream_url: 'https://cam.example.com/webrtc',
-              stream_type: 'webrtc',
-            }),
-            data: {},
-            state: 'ready',
-            timestamp: '2026-10-31T12:00:00Z',
-          },
-        },
+      seedWidget({
+        stream_url: 'https://cam.example.com/webrtc',
+        stream_type: 'webrtc',
       });
 
       const { container } = render(
@@ -1045,17 +929,8 @@ describe('LiveViewWidget component', () => {
     });
 
     try {
-      useDisplayStore.setState({
-        widgets: {
-          [widgetId]: {
-            meta: makeWidgetMeta({
-              stream_url: 'https://cam.example.com/stream',
-            }),
-            data: {},
-            state: 'ready',
-            timestamp: '2026-10-31T12:00:00Z',
-          },
-        },
+      seedWidget({
+        stream_url: 'https://cam.example.com/stream',
       });
 
       const { container } = render(
@@ -1131,19 +1006,10 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-            controllable: true,
-            control_url: 'https://cam.example.com/wake',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
+      controllable: true,
+      control_url: 'https://cam.example.com/wake',
     });
 
     const { container } = render(
@@ -1165,17 +1031,8 @@ describe('LiveViewWidget component', () => {
   });
 
   it('suppresses expand when pointer drag distance is >= 15px', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
     });
 
     const { container } = render(
@@ -1198,17 +1055,8 @@ describe('LiveViewWidget component', () => {
   });
 
   it('handles events with invalid coordinates gracefully', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
     });
 
     const { container } = render(
@@ -1238,18 +1086,9 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc-err',
-            stream_type: 'webrtc',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc-err',
+      stream_type: 'webrtc',
     });
 
     render(
@@ -1280,18 +1119,9 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc-hang',
-            stream_type: 'webrtc',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc-hang',
+      stream_type: 'webrtc',
     });
 
     const { unmount } = render(
@@ -1315,18 +1145,9 @@ describe('LiveViewWidget component', () => {
       resolveRemote = resolve;
     });
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc',
-            stream_type: 'webrtc',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
     });
 
     const { unmount } = render(
@@ -1365,17 +1186,8 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
     });
 
     const { container } = render(
@@ -1398,17 +1210,8 @@ describe('LiveViewWidget component', () => {
   });
 
   it('clears safetyTimerRef on unmount when loading is active', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
     });
 
     const { container, unmount } = render(
@@ -1431,17 +1234,8 @@ describe('LiveViewWidget component', () => {
   });
 
   it('resets existing safetyTimer on subsequent click after debounce window', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
     });
 
     const { container } = render(
@@ -1486,18 +1280,9 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/webrtc',
-            stream_type: 'webrtc',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
     });
 
     const { unmount } = render(
@@ -1526,18 +1311,9 @@ describe('LiveViewWidget component', () => {
   });
 
   it('renders and decodes MJPEG stream into image element', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream.mjpeg',
-            stream_type: 'mjpeg',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream.mjpeg',
+      stream_type: 'mjpeg',
     });
 
     const { container } = render(
@@ -1556,18 +1332,9 @@ describe('LiveViewWidget component', () => {
   });
 
   it('renders and plays HLS stream in video element', () => {
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream.m3u8',
-            stream_type: 'hls',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream.m3u8',
+      stream_type: 'hls',
     });
 
     const { container } = render(
@@ -1588,18 +1355,9 @@ describe('LiveViewWidget component', () => {
     delete window.RTCPeerConnection;
 
     try {
-      useDisplayStore.setState({
-        widgets: {
-          [widgetId]: {
-            meta: makeWidgetMeta({
-              stream_url: 'https://cam.example.com/webrtc',
-              stream_type: 'webrtc',
-            }),
-            data: {},
-            state: 'ready',
-            timestamp: '2026-10-31T12:00:00Z',
-          },
-        },
+      seedWidget({
+        stream_url: 'https://cam.example.com/webrtc',
+        stream_type: 'webrtc',
       });
 
       const { container } = render(
@@ -1655,24 +1413,15 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-            stream_id: 'cam-custom',
-            priority: 'temporary',
-            timeout_seconds: 45,
-            controllable: true,
-            control_url: 'https://cam.example.com/wake',
-            expand_stream_url: 'https://cam.example.com/expand-stream',
-            expand_stream_type: 'hls',
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
+      stream_id: 'cam-custom',
+      priority: 'temporary',
+      timeout_seconds: 45,
+      controllable: true,
+      control_url: 'https://cam.example.com/wake',
+      expand_stream_url: 'https://cam.example.com/expand-stream',
+      expand_stream_type: 'hls',
     });
 
     const { container } = render(
@@ -1715,18 +1464,9 @@ describe('LiveViewWidget component', () => {
     vi.useFakeTimers();
     globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
 
-    useDisplayStore.setState({
-      widgets: {
-        [widgetId]: {
-          meta: makeWidgetMeta({
-            stream_url: 'https://cam.example.com/stream',
-            expand_on_click: true,
-          }),
-          data: {},
-          state: 'ready',
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedWidget({
+      stream_url: 'https://cam.example.com/stream',
+      expand_on_click: true,
     });
 
     const { container } = render(
@@ -1758,5 +1498,89 @@ describe('LiveViewWidget component', () => {
     });
 
     vi.useRealTimers();
+  });
+
+  it('staggers on-screen mjpeg snapshot refresh and preserves img.src when swiping off-pane into 5-minute background refresh', () => {
+    seedWidget({
+      stream_url: '/hearth-api/cameras/doorbell/stream',
+      stream_type: 'mjpeg',
+      title: 'Doorbell',
+      refresh_interval_seconds: 15,
+      background_refresh_interval_seconds: 300,
+      stagger_index: 2,
+    });
+
+    const { container, rerender } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/doorbell/stream');
+
+    // Stagger index 2 * 1600ms = 3200ms offset before first staggered refresh
+    act(() => {
+      vi.advanceTimersByTime(3100);
+    });
+    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/doorbell/stream');
+
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    const firstRefreshedSrc = img.getAttribute('src') ?? '';
+    expect(firstRefreshedSrc).toMatch(/^\/hearth-api\/cameras\/doorbell\/stream\?t=\d+$/);
+
+    // Next refresh after 15000ms
+    act(() => {
+      vi.advanceTimersByTime(15000);
+    });
+    const secondRefreshedSrc = img.getAttribute('src') ?? '';
+    expect(secondRefreshedSrc).toMatch(/^\/hearth-api\/cameras\/doorbell\/stream\?t=\d+$/);
+    expect(secondRefreshedSrc).not.toBe(firstRefreshedSrc);
+
+    // Swipe off-pane: img.src MUST be preserved (not cleared to '')
+    rerender(
+      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+    expect(img.getAttribute('src')).toBe(secondRefreshedSrc);
+
+    // Off-pane background refresh: stagger 2 * 5000ms = 10000ms + 300000ms (5 minutes)
+    act(() => {
+      vi.advanceTimersByTime(10000 + 299000);
+    });
+    expect(img.getAttribute('src')).toBe(secondRefreshedSrc);
+
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    const bgRefreshedSrc = img.getAttribute('src') ?? '';
+    expect(bgRefreshedSrc).toMatch(/^\/hearth-api\/cameras\/doorbell\/stream\?t=\d+$/);
+    expect(bgRefreshedSrc).not.toBe(secondRefreshedSrc);
+  });
+
+  it('hydrates initial mjpeg streamUrl when mounted directly off-pane and appends &t= when query params exist', () => {
+    seedWidget({
+      stream_url: '/hearth-api/cameras/rosie_cam/stream?quality=high',
+      stream_type: 'mjpeg',
+      title: 'Rosie Cam',
+      stagger_index: 0,
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 1 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/rosie_cam/stream?quality=high');
+
+    act(() => {
+      vi.advanceTimersByTime(300000);
+    });
+    expect(img.getAttribute('src')).toMatch(/^\/hearth-api\/cameras\/rosie_cam\/stream\?quality=high&t=\d+$/);
   });
 });

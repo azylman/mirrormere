@@ -20,44 +20,75 @@ export interface LiveViewConfig {
   control_url: string;
   expand_stream_url: string;
   expand_stream_type: string;
+  refresh_interval_seconds?: number;
+  background_refresh_interval_seconds?: number;
+  stagger_index?: number;
+}
+
+export function computeStaggerDelayMs(id: string, staggerIndex?: number, stepMs = 1600): number {
+  if (typeof staggerIndex === 'number' && !isNaN(staggerIndex) && staggerIndex >= 0) {
+    return Math.floor(staggerIndex) * stepMs;
+  }
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
+  }
+  return (Math.abs(hash) % 9) * stepMs;
+}
+
+function buildSnapshotUrl(baseUrl: string, timestamp: number): string {
+  const sep = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${sep}t=${timestamp}`;
+}
+
+function unwrapConfigObject(raw: unknown): Record<string, unknown> {
+  let val = raw;
+  for (let i = 0; i < 2 && typeof val === 'string'; i++) {
+    try { val = JSON.parse(val); } catch { break; }
+  }
+  return val && typeof val === 'object' && !Array.isArray(val) ? (val as Record<string, unknown>) : {};
+}
+
+function parsePositiveNumber(val: unknown): number | undefined {
+  if (val === undefined || val === null || val === '') return undefined;
+  const n = Number(val);
+  return !isNaN(n) && n > 0 ? n : undefined;
+}
+
+function parseNonNegativeInt(val: unknown): number | undefined {
+  if (val === undefined || val === null || val === '') return undefined;
+  const n = Number(val);
+  return !isNaN(n) && n >= 0 ? Math.floor(n) : undefined;
+}
+
+function parseNonEmptyStr(val: unknown, fallback: string): string {
+  return typeof val === 'string' && val.trim() !== '' ? val : fallback;
 }
 
 export function parseLiveViewConfig(raw: unknown, fallbackId = ''): LiveViewConfig {
-  let obj: Record<string, unknown> = {};
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    obj = raw as Record<string, unknown>;
-  } else if (typeof raw === 'string') {
-    try {
-      let parsed = JSON.parse(raw);
-      if (typeof parsed === 'string') {
-        try { parsed = JSON.parse(parsed); } catch { /* ignore */ }
-      }
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        obj = parsed as Record<string, unknown>;
-      }
-    } catch { /* ignore */ }
-  }
-
+  const obj = unwrapConfigObject(raw);
   const streamUrl = typeof obj.stream_url === 'string' ? obj.stream_url : '';
   const rawType = typeof obj.stream_type === 'string' ? obj.stream_type.toLowerCase() : '';
   const streamType = rawType === 'mjpeg' || rawType === 'hls' ? rawType : 'webrtc';
-  const fit = obj.fit === 'cover' ? 'cover' : 'contain';
-  const title = typeof obj.title === 'string' && obj.title.trim() !== '' ? obj.title : 'Live View';
-  const posterUrl = typeof obj.poster_url === 'string' ? obj.poster_url : '';
-  const expandOnClick = obj.expand_on_click !== false;
-  const streamId = typeof obj.stream_id === 'string' && obj.stream_id.trim() !== '' ? obj.stream_id : fallbackId;
-  const priority = obj.priority === 'temporary' ? 'temporary' : 'persistent';
-  const controllable = Boolean(obj.controllable);
-  const controlUrl = typeof obj.control_url === 'string' ? obj.control_url : '';
-  const expandStreamUrl = typeof obj.expand_stream_url === 'string' && obj.expand_stream_url.trim() !== '' ? obj.expand_stream_url : streamUrl;
-  const expandStreamType = typeof obj.expand_stream_type === 'string' && obj.expand_stream_type.trim() !== '' ? obj.expand_stream_type : (streamType || 'webrtc');
-  const timeoutNum = Number(obj.timeout_seconds);
-  const timeoutSeconds = obj.timeout_seconds !== undefined && obj.timeout_seconds !== null && !isNaN(timeoutNum) && timeoutNum > 0 ? timeoutNum : undefined;
+  const isMjpeg = streamType === 'mjpeg';
 
   return {
-    stream_url: streamUrl, stream_type: streamType, fit, title, poster_url: posterUrl,
-    expand_on_click: expandOnClick, stream_id: streamId, priority, timeout_seconds: timeoutSeconds,
-    controllable, control_url: controlUrl, expand_stream_url: expandStreamUrl, expand_stream_type: expandStreamType,
+    stream_url: streamUrl,
+    stream_type: streamType,
+    fit: obj.fit === 'cover' ? 'cover' : 'contain',
+    title: parseNonEmptyStr(obj.title, 'Live View'),
+    poster_url: typeof obj.poster_url === 'string' ? obj.poster_url : '',
+    expand_on_click: obj.expand_on_click !== false,
+    stream_id: parseNonEmptyStr(obj.stream_id, fallbackId),
+    priority: obj.priority === 'temporary' ? 'temporary' : 'persistent',
+    timeout_seconds: parsePositiveNumber(obj.timeout_seconds),
+    controllable: Boolean(obj.controllable),
+    control_url: typeof obj.control_url === 'string' ? obj.control_url : '',
+    expand_stream_url: parseNonEmptyStr(obj.expand_stream_url, streamUrl),
+    expand_stream_type: parseNonEmptyStr(obj.expand_stream_type, streamType),
+    refresh_interval_seconds: parsePositiveNumber(obj.refresh_interval_seconds) ?? (isMjpeg ? 15 : undefined),
+    background_refresh_interval_seconds: parsePositiveNumber(obj.background_refresh_interval_seconds) ?? (isMjpeg ? 300 : undefined),
+    stagger_index: parseNonNegativeInt(obj.stagger_index),
   };
 }
 
@@ -144,6 +175,9 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     stream_url: streamUrl, stream_type: streamType, fit, title, poster_url: posterUrl,
     expand_on_click: expandOnClick, stream_id: streamId, priority, timeout_seconds: timeoutSeconds,
     controllable, control_url: controlUrl, expand_stream_url: expandStreamUrl, expand_stream_type: expandStreamType,
+    refresh_interval_seconds: refreshIntervalSeconds,
+    background_refresh_interval_seconds: backgroundRefreshIntervalSeconds,
+    stagger_index: staggerIndex,
   } = config;
 
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -197,7 +231,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     return () => observer.disconnect();
   }, []);
 
-  const stopDecoders = () => {
+  const stopDecoders = (clearMjpeg = true) => {
     epochRef.current += 1;
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -212,17 +246,18 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
       try { videoRef.current.removeAttribute('src'); } catch { /* ignore */ }
       try { videoRef.current.pause?.(); } catch { /* ignore */ }
     }
-    if (imgRef.current) {
+    if (clearMjpeg && imgRef.current) {
       imgRef.current.src = '';
       try { imgRef.current.removeAttribute('src'); } catch { /* ignore */ }
     }
   };
 
   const shouldPlay = isCurrentPane && isDocumentVisible && isIntersecting && videoMode !== 'video' && Boolean(streamUrl);
+  const shouldBackgroundRefresh = !isCurrentPane && isDocumentVisible && videoMode !== 'video' && Boolean(streamUrl) && streamType === 'mjpeg';
 
   useEffect(() => {
     if (!shouldPlay) {
-      stopDecoders();
+      stopDecoders(streamType !== 'mjpeg');
       return;
     }
     const epoch = ++epochRef.current;
@@ -231,7 +266,24 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
 
     if (streamType === 'mjpeg') {
       if (imgRef.current) imgRef.current.src = streamUrl;
-      return () => stopDecoders();
+      const intervalMs = (refreshIntervalSeconds ?? 15) * 1000;
+      const staggerMs = computeStaggerDelayMs(id, staggerIndex, 1600);
+      let intervalId: ReturnType<typeof setInterval> | null = null;
+      const timeoutId = setTimeout(() => {
+        if (imgRef.current) {
+          imgRef.current.src = buildSnapshotUrl(streamUrl, Date.now());
+        }
+        intervalId = setInterval(() => {
+          if (imgRef.current) {
+            imgRef.current.src = buildSnapshotUrl(streamUrl, Date.now());
+          }
+        }, intervalMs);
+      }, staggerMs);
+      return () => {
+        clearTimeout(timeoutId);
+        if (intervalId) clearInterval(intervalId);
+        stopDecoders(false);
+      };
     }
     if (streamType === 'hls') {
       if (videoRef.current) {
@@ -300,7 +352,28 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
 
     void startWebRTC();
     return () => stopDecoders();
-  }, [shouldPlay, streamUrl, streamType, id]);
+  }, [shouldPlay, streamUrl, streamType, id, refreshIntervalSeconds, staggerIndex]);
+
+  useEffect(() => {
+    if (!shouldBackgroundRefresh) return;
+    if (imgRef.current && !imgRef.current.getAttribute('src')) {
+      imgRef.current.src = streamUrl;
+    }
+    const bgIntervalMs = (backgroundRefreshIntervalSeconds ?? 300) * 1000;
+    const staggerMs = computeStaggerDelayMs(id, staggerIndex, 5000);
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    const timeoutId = setTimeout(() => {
+      intervalId = setInterval(() => {
+        if (imgRef.current) {
+          imgRef.current.src = buildSnapshotUrl(streamUrl, Date.now());
+        }
+      }, bgIntervalMs);
+    }, staggerMs);
+    return () => {
+      clearTimeout(timeoutId);
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [shouldBackgroundRefresh, streamUrl, id, backgroundRefreshIntervalSeconds, staggerIndex]);
 
   const triggerExpand = async () => {
     if (!expandOnClick || isLoading || !streamUrl) return;

@@ -844,6 +844,190 @@ class TestHandlerEndpoints(unittest.TestCase):
                 mock_shuffle.assert_not_called()
                 self.assertEqual(srv.MUSIC_STATE["queue"], [t0, t1, t3, t2])
 
+    def test_camera_catalog_and_eve_cam_mapping(self):
+        target = srv.resolve_camera_target("eve_cam")
+        self.assertIsNotNone(target)
+        self.assertEqual(target["id"], "eve_cam")
+        self.assertEqual(target["entity_id"], "camera.bedroom_bedroom_camera")
+        self.assertEqual(target["title"], "Eve Cam")
+
+        alias_target = srv.resolve_camera_target("camera.bedroom_bedroom_camera")
+        self.assertIsNotNone(alias_target)
+        self.assertEqual(alias_target["id"], "eve_cam")
+
+        mock_states = [
+            {
+                "entity_id": "camera.bedroom_bedroom_camera",
+                "state": "streaming",
+                "attributes": {"friendly_name": "Bedroom camera"},
+            },
+            {
+                "entity_id": "camera.rosie_cam",
+                "state": "streaming",
+                "attributes": {"friendly_name": "Rosie Cam"},
+            },
+        ]
+        with patch.dict(srv.CACHE, {}, clear=True):
+            with patch.object(srv, "_ha_request", return_value=mock_states):
+                h = self._create_handler("GET", "/hearth-api/cameras", client_ip="127.0.0.1")
+                h.do_GET()
+                h.send_response.assert_called_with(200)
+                body = json.loads(h.wfile.getvalue().decode("utf-8"))
+                self.assertIn("cameras", body)
+                eve_entries = [c for c in body["cameras"] if c["id"] == "eve_cam"]
+                self.assertEqual(len(eve_entries), 1)
+                self.assertEqual(eve_entries[0]["entity_id"], "camera.bedroom_bedroom_camera")
+                self.assertEqual(eve_entries[0]["state"], "streaming")
+                self.assertEqual(eve_entries[0]["title"], "Eve Cam")
+
+    def test_camera_snapshot_and_webrtc_endpoints(self):
+        fake_jpeg = b"\xff\xd8\xff\xe0fake_jpeg_bytes"
+        with patch.object(srv, "fetch_camera_snapshot", return_value=(fake_jpeg, "image/jpeg")):
+            h_snap = self._create_handler("GET", "/hearth-api/cameras/eve_cam/snapshot", client_ip="127.0.0.1")
+            h_snap.do_GET()
+            h_snap.send_response.assert_called_with(200)
+            self.assertEqual(h_snap.wfile.getvalue(), fake_jpeg)
+
+            h_stream = self._create_handler("GET", "/hearth-api/cameras/eve_cam/stream", client_ip="127.0.0.1")
+            h_stream.do_GET()
+            h_stream.send_response.assert_called_with(200)
+            self.assertEqual(h_stream.wfile.getvalue(), fake_jpeg)
+
+        with patch.object(srv, "exchange_camera_webrtc", return_value=(True, "v=0\r\nsdp_answer", 200)):
+            offer = b"v=0\r\nsdp_offer"
+            h_rtc = self._create_handler(
+                "POST",
+                "/hearth-api/cameras/eve_cam/webrtc",
+                headers={"Content-Length": str(len(offer)), "Content-Type": "application/sdp"},
+                body=offer,
+                client_ip="127.0.0.1",
+            )
+            h_rtc.do_POST()
+            h_rtc.send_response.assert_called_with(200)
+            self.assertEqual(h_rtc.wfile.getvalue(), b"v=0\r\nsdp_answer")
+
+    def test_camera_last_good_frame_retained_on_nest_placeholder(self):
+        good_jpeg = b"\xff\xd8\xff\xe0good_camera_frame_bytes\xff\xd9"
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+        self.assertEqual(len(placeholder_png), srv.HA_NEST_PLACEHOLDER_LEN)
+
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+        }
+
+        def make_resp(payload, ctype="image/jpeg"):
+            r = MagicMock()
+            r.read.return_value = payload
+            r.headers = {"Content-Type": ctype}
+            r.__enter__.return_value = r
+            r.__exit__.return_value = False
+            return r
+
+        with patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True):
+            with patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True):
+                with patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)):
+                    # 1. First fetch succeeds with a real JPEG frame and populates both caches
+                    with patch("urllib.request.urlopen", return_value=make_resp(good_jpeg, "image/jpeg")):
+                        data1, ctype1 = srv.fetch_camera_snapshot("doorbell", force_refresh=True)
+                        self.assertEqual(data1, good_jpeg)
+                        self.assertEqual(ctype1, "image/jpeg")
+                        self.assertIn("doorbell", srv.CAMERA_LAST_GOOD_FRAME)
+                        self.assertEqual(srv.CAMERA_LAST_GOOD_FRAME["doorbell"][1], good_jpeg)
+
+                    # 2. Subsequent fetch gets 2689-byte Nest placeholder from HA, go2rtc times out,
+                    # and camera_proxy_stream fails -> returns retained CAMERA_LAST_GOOD_FRAME
+                    def cold_urlopen(req, timeout=5):
+                        url = req.full_url if hasattr(req, "full_url") else str(req)
+                        if "/api/camera_proxy/" in url:
+                            return make_resp(placeholder_png, "image/png")
+                        raise TimeoutError("upstream timeout")
+
+                    with patch("urllib.request.urlopen", side_effect=cold_urlopen):
+                        data2, ctype2 = srv.fetch_camera_snapshot("doorbell", force_refresh=True)
+                        self.assertEqual(data2, good_jpeg)
+                        self.assertEqual(ctype2, "image/jpeg")
+                        self.assertNotEqual(len(data2), srv.HA_NEST_PLACEHOLDER_LEN)
+
+    def test_camera_proxy_stream_multipart_jpeg_fallback(self):
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+        stream_jpeg = b"\xff\xd8\xff\xe0multipart_extracted_jpeg_payload\xff\xd9"
+        multipart_stream = (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n"
+            b"Content-Length: " + str(len(stream_jpeg)).encode("ascii") + b"\r\n\r\n"
+            + stream_jpeg
+            + b"\r\n--frame\r\n"
+        )
+
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+        }
+
+        def stream_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/camera_proxy/" in url:
+                r = MagicMock()
+                r.read.return_value = placeholder_png
+                r.headers = {"Content-Type": "image/png"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/frame.jpeg" in url:
+                raise TimeoutError("go2rtc timeout")
+            if "/api/camera_proxy_stream/" in url:
+                bio = io.BytesIO(multipart_stream)
+                r = MagicMock()
+                r.read.side_effect = bio.read
+                r.headers = {"Content-Type": "multipart/x-mixed-replace; boundary=frame"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        with patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True):
+            with patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True):
+                with patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)):
+                    with patch("urllib.request.urlopen", side_effect=stream_urlopen):
+                        data, ctype = srv.fetch_camera_snapshot("front_yard_camera", force_refresh=True)
+                        self.assertEqual(data, stream_jpeg)
+                        self.assertEqual(ctype, "image/jpeg")
+                        self.assertIn("front_yard_camera", srv.CAMERA_LAST_GOOD_FRAME)
+                        self.assertEqual(srv.CAMERA_LAST_GOOD_FRAME["front_yard_camera"][1], stream_jpeg)
+
+    def test_warm_camera_snapshots_once_staggered(self):
+        fake_cams = [
+            {"id": "doorbell", "entity_id": "camera.doorbell"},
+            {"id": "front_yard_camera", "entity_id": "camera.front_yard_camera"},
+            {"id": "rosie_cam", "entity_id": "camera.rosie_cam"},
+        ]
+        good_jpeg = b"\xff\xd8\xff\xe0warm_jpeg\xff\xd9"
+        called = []
+
+        def fake_fetch(cam_id, force_refresh=False):
+            called.append((cam_id, force_refresh))
+            return good_jpeg, "image/jpeg"
+
+        srv.CAMERA_WARMER_STOP_EVENT.clear()
+        with patch.object(srv, "_get_configured_cameras", return_value=fake_cams):
+            with patch.object(srv, "fetch_camera_snapshot", side_effect=fake_fetch):
+                with patch.object(srv.CAMERA_WARMER_STOP_EVENT, "wait", return_value=False) as mock_wait:
+                    warmed = srv.warm_camera_snapshots_once(stagger_sec=1.5)
+                    self.assertEqual(warmed, ["doorbell", "front_yard_camera", "rosie_cam"])
+                    self.assertEqual(
+                        called,
+                        [
+                            ("doorbell", True),
+                            ("front_yard_camera", True),
+                            ("rosie_cam", True),
+                        ],
+                    )
+                    self.assertEqual(mock_wait.call_count, 2)
+                    mock_wait.assert_called_with(1.5)
+
 
 if __name__ == "__main__":
     unittest.main()

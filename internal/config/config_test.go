@@ -76,7 +76,7 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	}
 	assertEq(t, "weather interval", cfg.Display.Header.Weather.GetRefreshIntervalSeconds(), 900)
 	assertEq(t, "weather units", cfg.Display.Header.Weather.Units, "imperial")
-	assertEq(t, "widgets len", len(cfg.Display.Widgets), 5)
+	assertEq(t, "widgets len", len(cfg.Display.Widgets), 14)
 
 	cal := cfg.Display.Widgets[0]
 	if cal.ID != "family-calendar" || cal.Type != "calendar-feed" {

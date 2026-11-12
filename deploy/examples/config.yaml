@@ -128,6 +128,169 @@ display:
       dimensions: [3, 2]
       pinned: false
 
+    # Camera Feeds Tiles (9-camera LiveView configuration: wider landscape tiles + tall portrait Doorbell on 3x6 grid = 18 cells)
+    - id: cam-rosie
+      type: live-view
+      dimensions: [2, 1]
+      pinned: false
+      config:
+        title: "Rosie Cam"
+        stream_id: "rosie_cam"
+        stream_url: "/hearth-api/cameras/rosie_cam/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/rosie_cam/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/rosie_cam/webrtc"
+        expand_stream_type: "webrtc"
+        refresh_interval_seconds: 15
+        background_refresh_interval_seconds: 300
+        stagger_index: 0
+
+    - id: cam-doorbell
+      type: live-view
+      dimensions: [1, 2]
+      pinned: false
+      config:
+        title: "Doorbell"
+        stream_id: "doorbell"
+        stream_url: "/hearth-api/cameras/doorbell/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/doorbell/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/doorbell/webrtc"
+        expand_stream_type: "webrtc"
+        refresh_interval_seconds: 15
+        background_refresh_interval_seconds: 300
+        stagger_index: 1
+
+    - id: cam-isaac
+      type: live-view
+      dimensions: [2, 1]
+      pinned: false
+      config:
+        title: "Isaac Cam"
+        stream_id: "isaac_cam"
+        stream_url: "/hearth-api/cameras/isaac_cam/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/isaac_cam/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/isaac_cam/webrtc"
+        expand_stream_type: "webrtc"
+        refresh_interval_seconds: 15
+        background_refresh_interval_seconds: 300
+        stagger_index: 2
+
+    - id: cam-eve
+      type: live-view
+      dimensions: [2, 1]
+      pinned: false
+      config:
+        title: "Eve Cam"
+        stream_id: "eve_cam"
+        stream_url: "/hearth-api/cameras/eve_cam/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/eve_cam/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/eve_cam/webrtc"
+        expand_stream_type: "webrtc"
+        refresh_interval_seconds: 15
+        background_refresh_interval_seconds: 300
+        stagger_index: 3
+
+    - id: cam-living-room
+      type: live-view
+      dimensions: [1, 1]
+      pinned: false
+      config:
+        title: "Living Room Hub"
+        stream_id: "kitchen_hub"
+        stream_url: "/hearth-api/cameras/kitchen_hub/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/kitchen_hub/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/kitchen_hub/webrtc"
+        expand_stream_type: "webrtc"
+        refresh_interval_seconds: 15
+        background_refresh_interval_seconds: 300
+        stagger_index: 4
+
+    - id: cam-front-yard
+      type: live-view
+      dimensions: [2, 1]
+      pinned: false
+      config:
+        title: "Front Yard"
+        stream_id: "front_yard_camera"
+        stream_url: "/hearth-api/cameras/front_yard_camera/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/front_yard_camera/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/front_yard_camera/webrtc"
+        expand_stream_type: "webrtc"
+        refresh_interval_seconds: 15
+        background_refresh_interval_seconds: 300
+        stagger_index: 5
+
+    - id: cam-sideyard
+      type: live-view
+      dimensions: [1, 1]
+      pinned: false
+      config:
+        title: "Sideyard Stairs"
+        stream_id: "sideyard_stairs"
+        stream_url: "/hearth-api/cameras/sideyard_stairs/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/sideyard_stairs/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/sideyard_stairs/webrtc"
+        expand_stream_type: "webrtc"
+        refresh_interval_seconds: 15
+        background_refresh_interval_seconds: 300
+        stagger_index: 6
+
+    - id: cam-deck
+      type: live-view
+      dimensions: [3, 1]
+      pinned: false
+      config:
+        title: "Deck"
+        stream_id: "deck_camera"
+        stream_url: "/hearth-api/cameras/deck_camera/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/deck_camera/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/deck_camera/webrtc"
+        expand_stream_type: "webrtc"
+        refresh_interval_seconds: 15
+        background_refresh_interval_seconds: 300
+        stagger_index: 7
+
+    - id: cam-top-of-the-hill
+      type: live-view
+      dimensions: [3, 1]
+      pinned: false
+      config:
+        title: "Top of the Hill"
+        stream_id: "top_of_the_hill"
+        stream_url: "/hearth-api/cameras/top_of_the_hill/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/top_of_the_hill/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/top_of_the_hill/webrtc"
+        expand_stream_type: "webrtc"
+        refresh_interval_seconds: 15
+        background_refresh_interval_seconds: 300
+        stagger_index: 8
+
 # In-memory chat-log store (all optional; nothing is written to disk and a
 # restart starts empty). Defaults shown.
 # chat_log:

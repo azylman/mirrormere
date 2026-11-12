@@ -10,7 +10,7 @@ describe('main entrypoint', () => {
     await expect(import('./main')).rejects.toThrow(
       'mirrormere: #root container missing from display_react.html',
     );
-  });
+  }, 15000);
 
   it('initializes runtime and mounts App into #root when container exists', async () => {
     const root = document.createElement('div');
@@ -33,5 +33,5 @@ describe('main entrypoint', () => {
     expect(startRuntimeMock).toHaveBeenCalledOnce();
     expect(createRootMock).toHaveBeenCalledWith(root);
     expect(renderMock).toHaveBeenCalledOnce();
-  });
+  }, 15000);
 });

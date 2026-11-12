@@ -44,6 +44,14 @@ PLEX_THUMB_RE = re.compile(r"^/library/(metadata|arts|parts)/[0-9a-zA-Z_/.-]+$")
 RECIPE_ID_RE = re.compile(r"^[0-9a-zA-Z_-]+$")
 YT_VIDEO_ID_RE = re.compile(r"^[0-9A-Za-z_-]{11}$")
 HA_ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+CAMERA_SLUG_RE = re.compile(r"^[a-z0-9_]+$")
+
+CAMERA_SNAP_CACHE = OrderedDict()
+CAMERA_LAST_GOOD_FRAME = OrderedDict()
+CAMERA_SNAP_LOCK = threading.Lock()
+CAMERA_SNAP_TTL = 2.0
+HA_NEST_PLACEHOLDER_LEN = 2689
+CAMERA_WARMER_STOP_EVENT = threading.Event()
 
 
 def _resolve_env_secrets(data):
@@ -1426,6 +1434,442 @@ def launch_plex_on_living_room_tv(body):
         return False, {"error": str(e)}
 
 
+# === HOME ASSISTANT & GO2RTC SECURITY CAMERA PROXY ===
+DEFAULT_CAMERAS = [
+    {
+        "id": "doorbell",
+        "entity_id": "camera.doorbell",
+        "go2rtc_src": "doorbell",
+        "title": "Doorbell",
+        "group": "exterior",
+    },
+    {
+        "id": "front_yard_camera",
+        "entity_id": "camera.front_yard_camera",
+        "go2rtc_src": "front_yard_camera",
+        "title": "Front Yard",
+        "group": "exterior",
+    },
+    {
+        "id": "sideyard_stairs",
+        "entity_id": "camera.sideyard_stairs",
+        "go2rtc_src": "sideyard_stairs",
+        "title": "Sideyard Stairs",
+        "group": "exterior",
+    },
+    {
+        "id": "deck_camera",
+        "entity_id": "camera.deck_camera",
+        "go2rtc_src": "deck_camera",
+        "title": "Deck",
+        "group": "exterior",
+    },
+    {
+        "id": "top_of_the_hill",
+        "entity_id": "camera.top_of_the_hill",
+        "go2rtc_src": "top_of_the_hill",
+        "title": "Top of the Hill",
+        "group": "exterior",
+    },
+    {
+        "id": "rosie_cam",
+        "entity_id": "camera.rosie_cam",
+        "go2rtc_src": "rosie_cam",
+        "title": "Rosie Cam",
+        "group": "kids",
+    },
+    {
+        "id": "isaac_cam",
+        "entity_id": "camera.isaac_cam",
+        "go2rtc_src": "isaac_cam",
+        "title": "Isaac Cam",
+        "group": "kids",
+    },
+    {
+        "id": "eve_cam",
+        "entity_id": "camera.bedroom_bedroom_camera",
+        "go2rtc_src": "bedroom_bedroom_camera",
+        "aliases": [
+            "eve_cam",
+            "camera.eve_cam",
+            "bedroom_bedroom_camera",
+            "camera.bedroom_bedroom_camera",
+            "bassinet",
+            "camera.bassinet",
+            "eve_bassinet",
+            "camera.eve_bassinet",
+        ],
+        "title": "Eve Cam",
+        "group": "kids",
+    },
+    {
+        "id": "kitchen_hub",
+        "entity_id": "camera.kitchen_hub",
+        "go2rtc_src": "kitchen_hub",
+        "title": "Living Room Hub",
+        "group": "indoor",
+    },
+    {
+        "id": "octoprint_camera",
+        "entity_id": "camera.octoprint_camera",
+        "go2rtc_src": "octoprint",
+        "aliases": ["octoprint", "camera.octoprint"],
+        "title": "OctoPrint Camera",
+        "group": "indoor",
+    },
+]
+
+
+def _get_go2rtc_base_url():
+    explicit = str(_cfg("GO2RTC_BASE_URL", "")).strip().rstrip("/")
+    if explicit:
+        return explicit
+    ha_url = str(_cfg("HA_BASE_URL", "")).strip().rstrip("/")
+    if ha_url:
+        try:
+            parsed = urllib.parse.urlparse(ha_url)
+            if parsed.hostname:
+                return f"http://{parsed.hostname}:1984"
+        except Exception:
+            pass
+    return ""
+
+
+def _get_configured_cameras():
+    cfg = _load_config()
+    cams = cfg.get("cameras")
+    if isinstance(cams, list) and cams:
+        return cams
+    return DEFAULT_CAMERAS
+
+
+def resolve_camera_target(camera_key):
+    if not camera_key or not isinstance(camera_key, str):
+        return None
+    clean = camera_key.strip().lower()
+    if clean.endswith(".jpg") or clean.endswith(".jpeg") or clean.endswith(".mjpeg"):
+        clean = clean.rsplit(".", 1)[0]
+    if not clean or ".." in clean or "/" in clean:
+        return None
+
+    if clean.startswith("camera."):
+        if not HA_ENTITY_ID_RE.match(clean):
+            return None
+        slug = clean.split(".", 1)[1]
+    else:
+        if not CAMERA_SLUG_RE.match(clean):
+            return None
+        slug = clean
+
+    for cam in _get_configured_cameras():
+        if not isinstance(cam, dict):
+            continue
+        cid = str(cam.get("id") or "").lower()
+        ent = str(cam.get("entity_id") or "").lower()
+        g2r = str(cam.get("go2rtc_src") or cid).lower()
+        aliases = [str(a).lower() for a in (cam.get("aliases") or [])]
+        if clean in (cid, ent, g2r) or slug in (cid, g2r) or clean in aliases or slug in aliases:
+            return {
+                "id": cid or slug,
+                "entity_id": ent or f"camera.{slug}",
+                "go2rtc_src": g2r or slug,
+                "title": cam.get("title") or slug.replace("_", " ").title(),
+                "group": cam.get("group") or "general",
+                "aliases": aliases,
+            }
+
+    return {
+        "id": slug,
+        "entity_id": f"camera.{slug}",
+        "go2rtc_src": slug,
+        "title": slug.replace("_", " ").title(),
+        "group": "general",
+        "aliases": [],
+    }
+
+
+def fetch_cameras_catalog():
+    key = "cameras:catalog"
+    now = time.time()
+    with CACHE_LOCK:
+        if key in CACHE and now - CACHE[key][0] < 15:
+            return CACHE[key][1]
+
+    ha_states = _ha_request("GET", "/api/states", timeout=5)
+    state_map = {}
+    if isinstance(ha_states, list):
+        for st in ha_states:
+            if isinstance(st, dict):
+                eid = str(st.get("entity_id") or "").lower()
+                if eid.startswith("camera."):
+                    state_map[eid] = st
+
+    catalog = []
+    for raw_cam in _get_configured_cameras():
+        if not isinstance(raw_cam, dict):
+            continue
+        target = resolve_camera_target(raw_cam.get("id") or raw_cam.get("entity_id") or "")
+        if not target:
+            continue
+        cid = target["id"]
+        eid = target["entity_id"]
+        st_obj = state_map.get(eid)
+        if not st_obj and target.get("aliases"):
+            for alias in target["aliases"]:
+                cand = alias if alias.startswith("camera.") else f"camera.{alias}"
+                if cand in state_map:
+                    st_obj = state_map[cand]
+                    eid = cand
+                    break
+
+        if st_obj:
+            state_str = str(st_obj.get("state") or "streaming")
+            attrs = st_obj.get("attributes") or {}
+            title = raw_cam.get("title") or attrs.get("friendly_name") or target["title"]
+        else:
+            state_str = "standby" if cid == "eve_cam" else "idle"
+            title = target["title"]
+
+        catalog.append({
+            "id": cid,
+            "entity_id": eid,
+            "title": title,
+            "group": target["group"],
+            "state": state_str,
+            "snapshot_url": f"/hearth-api/cameras/{cid}/snapshot",
+            "stream_url": f"/hearth-api/cameras/{cid}/stream",
+            "webrtc_url": f"/hearth-api/cameras/{cid}/webrtc",
+        })
+
+    with CACHE_LOCK:
+        CACHE[key] = (now, catalog)
+    return catalog
+
+
+def _store_camera_good_frame(cid, data, ctype):
+    now = time.time()
+    with CAMERA_SNAP_LOCK:
+        CAMERA_SNAP_CACHE[cid] = (now, data, ctype)
+        CAMERA_SNAP_CACHE.move_to_end(cid)
+        while len(CAMERA_SNAP_CACHE) > MAX_IMG_CACHE_ENTRIES:
+            CAMERA_SNAP_CACHE.popitem(last=False)
+        CAMERA_LAST_GOOD_FRAME[cid] = (now, data, ctype)
+        CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
+        while len(CAMERA_LAST_GOOD_FRAME) > MAX_IMG_CACHE_ENTRIES:
+            CAMERA_LAST_GOOD_FRAME.popitem(last=False)
+
+
+def _extract_first_jpeg_from_stream(stream, max_bytes=2 * 1024 * 1024):
+    buf = bytearray()
+    soi = -1
+    while len(buf) < max_bytes:
+        chunk = stream.read(16384)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        if soi < 0:
+            soi = buf.find(b"\xff\xd8\xff")
+            if soi < 0:
+                soi = buf.find(b"\xff\xd8")
+        if soi >= 0:
+            eoi = buf.find(b"\xff\xd9", soi + 2)
+            if eoi >= 0:
+                frame = bytes(buf[soi:eoi + 2])
+                if len(frame) != HA_NEST_PLACEHOLDER_LEN:
+                    return frame
+                del buf[:eoi + 2]
+                soi = -1
+    return None
+
+
+def fetch_camera_snapshot(camera_key, force_refresh=False):
+    target = resolve_camera_target(camera_key)
+    if not target:
+        return None, None
+
+    cid = target["id"]
+    now = time.time()
+    if not force_refresh:
+        with CAMERA_SNAP_LOCK:
+            cached = CAMERA_SNAP_CACHE.get(cid)
+            if cached and now - cached[0] < CAMERA_SNAP_TTL:
+                CAMERA_SNAP_CACHE.move_to_end(cid)
+                return cached[1], cached[2]
+
+    ha_url = str(_cfg("HA_BASE_URL", "")).strip().rstrip("/")
+    ha_tok = str(_cfg("HA_ACCESS_TOKEN", "")).strip()
+    go2rtc_base = _get_go2rtc_base_url()
+
+    ha_fallback_data, ha_fallback_type = None, None
+    candidate_entities = [target["entity_id"]]
+    for alias in target.get("aliases") or []:
+        ent_alias = alias if alias.startswith("camera.") else f"camera.{alias}"
+        if ent_alias not in candidate_entities and HA_ENTITY_ID_RE.match(ent_alias):
+            candidate_entities.append(ent_alias)
+
+    if ha_url and ha_tok:
+        for ent in candidate_entities:
+            url = f"{ha_url}/api/camera_proxy/{urllib.parse.quote(ent)}"
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {ha_tok}"})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    data = r.read()
+                    ctype = r.headers.get("Content-Type", "image/jpeg")
+                    if data:
+                        is_nest_placeholder = (
+                            len(data) == HA_NEST_PLACEHOLDER_LEN
+                            and ("png" in (ctype or "").lower() or data.startswith(b"\x89PNG"))
+                        )
+                        if not is_nest_placeholder:
+                            _store_camera_good_frame(cid, data, ctype)
+                            return data, ctype
+                        ha_fallback_data, ha_fallback_type = data, ctype
+                        break
+            except Exception as e:
+                print(f"[HEARTH-Bridge] HA camera snapshot warning for {ent}: {e}", flush=True)
+
+    if go2rtc_base:
+        candidate_srcs = [target["go2rtc_src"]]
+        if cid not in candidate_srcs:
+            candidate_srcs.append(cid)
+        for alias in target.get("aliases") or []:
+            clean_alias = alias.split(".", 1)[-1]
+            if clean_alias not in candidate_srcs and CAMERA_SLUG_RE.match(clean_alias):
+                candidate_srcs.append(clean_alias)
+
+        for src in candidate_srcs:
+            url = f"{go2rtc_base}/api/frame.jpeg?src={urllib.parse.quote(src)}"
+            req = urllib.request.Request(url)
+            try:
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    data = r.read()
+                    ctype = r.headers.get("Content-Type", "image/jpeg")
+                    if data and len(data) != HA_NEST_PLACEHOLDER_LEN:
+                        _store_camera_good_frame(cid, data, ctype)
+                        return data, ctype
+            except Exception as e:
+                print(f"[HEARTH-Bridge] go2rtc frame.jpeg warning for {src}: {e}", flush=True)
+
+    # Fallback: request single multipart JPEG frame from Home Assistant /api/camera_proxy_stream/<entity_id>
+    if ha_url and ha_tok:
+        for ent in candidate_entities:
+            stream_url = f"{ha_url}/api/camera_proxy_stream/{urllib.parse.quote(ent)}"
+            req = urllib.request.Request(stream_url, headers={"Authorization": f"Bearer {ha_tok}"})
+            try:
+                with urllib.request.urlopen(req, timeout=6) as r:
+                    frame = _extract_first_jpeg_from_stream(r)
+                    if frame:
+                        _store_camera_good_frame(cid, frame, "image/jpeg")
+                        return frame, "image/jpeg"
+            except Exception as e:
+                print(f"[HEARTH-Bridge] HA camera_proxy_stream warning for {ent}: {e}", flush=True)
+
+    # Retain last good frame if available instead of returning the 2,689-byte gray placeholder
+    with CAMERA_SNAP_LOCK:
+        last_good = CAMERA_LAST_GOOD_FRAME.get(cid)
+        if last_good:
+            CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
+            if isinstance(last_good, tuple) and len(last_good) == 3:
+                return last_good[1], last_good[2]
+            elif isinstance(last_good, tuple) and len(last_good) == 2:
+                return last_good[0], last_good[1]
+
+    if ha_fallback_data:
+        return ha_fallback_data, ha_fallback_type
+    return None, None
+
+
+def warm_camera_snapshots_once(stagger_sec=2.0):
+    warmed = []
+    cams = _get_configured_cameras()
+    for idx, cam in enumerate(cams):
+        if CAMERA_WARMER_STOP_EVENT.is_set():
+            break
+        if not isinstance(cam, dict):
+            continue
+        cam_id = cam.get("id") or cam.get("entity_id") or ""
+        if not cam_id:
+            continue
+        if idx > 0 and stagger_sec and stagger_sec > 0:
+            if CAMERA_WARMER_STOP_EVENT.wait(stagger_sec):
+                break
+        try:
+            data, ctype = fetch_camera_snapshot(cam_id, force_refresh=True)
+            if data and len(data) != HA_NEST_PLACEHOLDER_LEN:
+                warmed.append(cam_id)
+        except Exception as e:
+            print(f"[HEARTH-Bridge] Camera warmer warning for {cam_id}: {e}", flush=True)
+    return warmed
+
+
+def _camera_warmer_loop(interval_sec=300, stagger_sec=2.0):
+    while not CAMERA_WARMER_STOP_EVENT.is_set():
+        try:
+            warm_camera_snapshots_once(stagger_sec=stagger_sec)
+        except Exception as e:
+            print(f"[HEARTH-Bridge] Camera warmer loop error: {e}", flush=True)
+        if CAMERA_WARMER_STOP_EVENT.wait(interval_sec):
+            break
+
+
+def _start_camera_warmer_daemon(interval_sec=300, stagger_sec=2.0):
+    t = threading.Thread(
+        target=_camera_warmer_loop,
+        kwargs={"interval_sec": interval_sec, "stagger_sec": stagger_sec},
+        daemon=True,
+    )
+    t.start()
+    return t
+
+
+def exchange_camera_webrtc(camera_key, sdp_offer):
+    target = resolve_camera_target(camera_key)
+    if not target:
+        return False, "Invalid camera identifier", 400
+    if not sdp_offer or not isinstance(sdp_offer, str) or not sdp_offer.strip():
+        return False, "Missing SDP offer", 400
+
+    go2rtc_base = _get_go2rtc_base_url()
+    if not go2rtc_base:
+        return False, "WebRTC upstream not configured", 502
+
+    candidate_srcs = [target["go2rtc_src"]]
+    if target["id"] not in candidate_srcs:
+        candidate_srcs.append(target["id"])
+    for alias in target.get("aliases") or []:
+        clean_alias = alias.split(".", 1)[-1]
+        if clean_alias not in candidate_srcs and CAMERA_SLUG_RE.match(clean_alias):
+            candidate_srcs.append(clean_alias)
+
+    payload = sdp_offer.encode("utf-8")
+    last_err = "Upstream WebRTC negotiation failed"
+    for src in candidate_srcs:
+        url = f"{go2rtc_base}/api/webrtc?src={urllib.parse.quote(src)}"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/sdp", "Accept": "application/sdp, application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                raw = r.read().decode("utf-8")
+                if raw.strip().startswith("{"):
+                    try:
+                        parsed = json.loads(raw)
+                        if isinstance(parsed, dict) and isinstance(parsed.get("sdp"), str):
+                            return True, parsed["sdp"], 200
+                    except Exception:
+                        pass
+                if raw.strip():
+                    return True, raw, 200
+        except Exception as e:
+            last_err = str(e)
+            print(f"[HEARTH-Bridge] go2rtc WebRTC error for {src}: {e}", flush=True)
+
+    return False, last_err, 502
+
+
 def ics_escape(text):
     if not text:
         return ""
@@ -1603,6 +2047,13 @@ def build_feed(feed_name):
                     v = gcal_item_to_vevent(ev)
                     if v:
                         vevents.append(v)
+    else:
+        cid = cal_ids.get(feed_name) or extra_member_cals.get(feed_name)
+        if cid:
+            for ev in fetch_gcal_events(cid):
+                v = gcal_item_to_vevent(ev)
+                if v:
+                    vevents.append(v)
 
     body = "\r\n".join(vevents)
     header = (
@@ -1917,6 +2368,55 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(payload)
             return
 
+        if path in ("/hearth-api/cameras", "/hearth-api/cameras/"):
+            cams = fetch_cameras_catalog()
+            payload = json.dumps({"cameras": cams, "items": cams}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            if not is_head:
+                try:
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            return
+
+        cam_key = None
+        if path.startswith("/hearth-api/cameras/"):
+            parts = [p for p in path[len("/hearth-api/cameras/"):].split("/") if p]
+            if len(parts) == 2 and parts[1] in ("snapshot", "stream", "snapshot.jpg", "stream.mjpeg"):
+                cam_key = parts[0]
+            elif len(parts) == 1:
+                cam_key = parts[0]
+        elif path.startswith("/hearth-api/camera/snapshot/"):
+            cam_key = path[len("/hearth-api/camera/snapshot/"):].strip("/")
+        elif path.startswith("/hearth-api/camera/stream/"):
+            cam_key = path[len("/hearth-api/camera/stream/"):].strip("/")
+
+        if cam_key is not None:
+            target = resolve_camera_target(cam_key)
+            if not target:
+                self._send_json_error(400, "Invalid camera identifier")
+                return
+            data, ctype = fetch_camera_snapshot(cam_key)
+            if data:
+                self.send_response(200)
+                self.send_header("Content-Type", ctype or "image/jpeg")
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                if not is_head:
+                    try:
+                        self.wfile.write(data)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                return
+            self.send_response(404)
+            self.end_headers()
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -1939,8 +2439,39 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json_error(400, f"Invalid Content-Length: {e}")
             return
 
-        if length > 8192:
+        is_webrtc_path = (
+            (path.startswith("/hearth-api/cameras/") and path.endswith("/webrtc"))
+            or path.startswith("/hearth-api/camera/webrtc/")
+        )
+        max_body = 65536 if is_webrtc_path else 8192
+        if length > max_body:
             self._send_json_error(413, "Payload too large")
+            return
+
+        if is_webrtc_path:
+            if path.startswith("/hearth-api/cameras/"):
+                cam_key = path[len("/hearth-api/cameras/"):-len("/webrtc")].strip("/")
+            else:
+                cam_key = path[len("/hearth-api/camera/webrtc/"):].strip("/")
+            raw_sdp = self.rfile.read(length).decode("utf-8", errors="replace") if length > 0 else ""
+            if raw_sdp.strip().startswith("{"):
+                try:
+                    j = json.loads(raw_sdp)
+                    if isinstance(j, dict) and isinstance(j.get("sdp"), str):
+                        raw_sdp = j["sdp"]
+                except Exception:
+                    pass
+            ok, result_str, status_code = exchange_camera_webrtc(cam_key, raw_sdp)
+            if ok:
+                payload = result_str.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/sdp; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            else:
+                self._send_json_error(status_code, result_str)
             return
 
         # Parse and validate JSON body
@@ -2030,6 +2561,7 @@ if __name__ == "__main__":
     socket.getaddrinfo = _ipv4_getaddrinfo
 
     threading.Thread(target=_music_auto_advance_loop, daemon=True).start()
+    _start_camera_warmer_daemon(interval_sec=300, stagger_sec=2.0)
     srv = ThreadingHTTPServer(("0.0.0.0", 8099), Handler)
     print("[HEARTH-Bridge] Listening on :8099", flush=True)
     srv.serve_forever()
