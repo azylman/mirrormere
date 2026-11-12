@@ -434,6 +434,18 @@ describe('CarouselController', () => {
     expect(h.host.select).toHaveBeenCalledWith(1);
 
     h.controller.rendered(1);
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { type: 'hearth-screen-select', screen_index: 2 },
+      }),
+    );
+    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+    h.transitionEnd();
+    expect(h.host.commit).toHaveBeenCalledWith(2);
+    expect(h.host.select).toHaveBeenCalledWith(2);
+
+    h.controller.rendered(2);
     h.controller.dispose();
     window.dispatchEvent(
       new MessageEvent('message', {
@@ -441,7 +453,7 @@ describe('CarouselController', () => {
         data: { type: 'hearth-swipe', direction: 'next' },
       }),
     );
-    expect(h.host.commit).toHaveBeenCalledTimes(2);
+    expect(h.host.commit).toHaveBeenCalledTimes(3);
   });
 
   it('rejects cross-origin, null-origin, and malformed hearth-swipe messages', () => {
@@ -506,6 +518,12 @@ describe('CarouselController', () => {
       new MessageEvent('message', {
         origin: window.location.origin,
         data: { type: 'hearth-swipe' },
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { type: 'hearth-screen-select', screen_index: 'invalid' },
       }),
     );
     window.dispatchEvent(
