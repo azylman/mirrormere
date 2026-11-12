@@ -87,7 +87,7 @@ export interface NextUpProps {
 }
 
 type ActiveIslandItem =
-  | { kind: 'ha-alert' | 'ha-timer'; id: string; ha: HaLiveIslandActivity }
+  | { kind: 'ha-alert' | 'ha-timer' | 'ha-sports'; id: string; ha: HaLiveIslandActivity }
   | { kind: 'yt-music'; id: 'yt-music' }
   | { kind: 'plex'; id: string; plex: PlexNowPlayingSession };
 
@@ -278,17 +278,38 @@ function renderHaIsland(
   );
 }
 
+async function dispatchPlexControl(action: 'play_pause' | 'stop', plex: PlexNowPlayingSession): Promise<void> {
+  const apiBase = plex.apiBase || '/hearth-api';
+  if (action === 'stop') {
+    setSharedPlexSession(null);
+    await fetch(`${apiBase}/plex/control`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'stop', rating_key: plex.id }),
+    }).catch(() => {});
+    return;
+  }
+  const nextState = plex.state === 'paused' ? 'playing' : 'paused';
+  setSharedPlexSession((prev) => (prev ? { ...prev, state: nextState } : null));
+  await fetch(`${apiBase}/plex/control`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: nextState === 'paused' ? 'pause' : 'play', rating_key: plex.id }),
+  }).catch(() => {});
+}
+
 function renderPlexIsland(
   plex: PlexNowPlayingSession,
   onClick: () => void,
   onKeyDown: (e: ReactKeyboardEvent<HTMLDivElement>) => void,
   cycleButton: ReactNode,
 ) {
-  const subtitle = plex.subtitle || 'Now Playing on TV';
+  const isPlaying = plex.state !== 'paused';
+  const subtitle = plex.subtitle || (isPlaying ? 'Now Playing on TV' : 'Paused on TV');
   return (
     <div className="header-next-event" id="header-next-event">
       <div
-        className="pill-badge next-event-pill live-island-pill is-playing"
+        className={`pill-badge next-event-pill live-island-pill${isPlaying ? ' is-playing' : ' is-paused'}`}
         id="next-event-pill"
         data-live-island="plex"
         role="button"
@@ -302,7 +323,35 @@ function renderPlexIsland(
           <span className="live-island-title" id="live-island-title">{plex.title}</span>
           <span className="live-island-artist" id="live-island-artist">{subtitle}</span>
         </div>
-        {cycleButton ? <div className="live-island-controls" id="live-island-controls">{cycleButton}</div> : null}
+        <div className="live-island-controls" id="live-island-controls">
+          <button
+            type="button"
+            className="live-island-btn play-pause"
+            id="live-island-play-pause"
+            aria-label={isPlaying ? 'Pause' : 'Play'}
+            title={isPlaying ? 'Pause' : 'Play'}
+            onClick={(e) => {
+              e.stopPropagation();
+              void dispatchPlexControl('play_pause', plex);
+            }}
+          >
+            {isPlaying ? <YtMusicPauseIcon /> : <YtMusicPlayIcon />}
+          </button>
+          <button
+            type="button"
+            className="live-island-btn stop"
+            id="live-island-stop"
+            aria-label="Stop"
+            title="Stop"
+            onClick={(e) => {
+              e.stopPropagation();
+              void dispatchPlexControl('stop', plex);
+            }}
+          >
+            ✕
+          </button>
+          {cycleButton}
+        </div>
       </div>
     </div>
   );
@@ -362,6 +411,7 @@ export function NextUp(props: NextUpProps = {}) {
         'yt-music': ['yt-music', '#grid-canvas .widget-yt-music'],
         'ha-alert': ['home-assistant', '#grid-canvas .widget-home-assistant'],
         'ha-timer': ['home-assistant', '#grid-canvas .widget-home-assistant'],
+        'ha-sports': ['home-assistant', '#grid-canvas .widget-home-assistant'],
         plex: ['plex-recent', '#grid-canvas .widget-plex-recent'],
       };
       const [wType, selector] = targetMap[activeItem.kind];
@@ -409,7 +459,7 @@ export function NextUp(props: NextUpProps = {}) {
   if (activeItem?.kind === 'yt-music') {
     return renderYtMusicIsland(ytmState.now_playing!, ytmState, handlePillClick, handleKeyDown, cycleButton);
   }
-  if (activeItem?.kind === 'ha-alert' || activeItem?.kind === 'ha-timer') {
+  if (activeItem?.kind === 'ha-alert' || activeItem?.kind === 'ha-timer' || activeItem?.kind === 'ha-sports') {
     return renderHaIsland(activeItem.ha, handlePillClick, handleKeyDown, cycleButton);
   }
   if (activeItem?.kind === 'plex') {
