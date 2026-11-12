@@ -1258,5 +1258,154 @@ describe('NextUp component', () => {
 
       vi.unstubAllGlobals();
     });
+
+    it('filters live sports games by configurable live_island_teams and dispatches 1-tap Watch action', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      useDisplayStore.setState({
+        widgets: {
+          'ha-1': {
+            meta: {
+              type: 'home-assistant',
+              origin: [0, 0],
+              dimensions: [3, 2],
+              config: { live_island_teams: ['MLB:CHC'] },
+              assets_base: '',
+            },
+            state: 'ok',
+            timestamp: '2026-10-31T10:00:00Z',
+            data: {
+              entities: {
+                'sensor.team_tracker_cubs': {
+                  entity_id: 'sensor.team_tracker_cubs',
+                  state: 'IN',
+                  attributes: {
+                    league: 'MLB',
+                    sport: 'baseball',
+                    team_abbr: 'CHC',
+                    team_name: 'Cubs',
+                    team_score: 5,
+                    opponent_abbr: 'LAD',
+                    opponent_name: 'Dodgers',
+                    opponent_score: 3,
+                    clock: 'Bot 7th',
+                  },
+                },
+                'sensor.team_tracker_bears': {
+                  entity_id: 'sensor.team_tracker_bears',
+                  state: 'IN',
+                  attributes: {
+                    league: 'NFL',
+                    sport: 'football',
+                    team_abbr: 'CHI',
+                    team_score: 14,
+                    opponent_abbr: 'GB',
+                    opponent_score: 10,
+                    clock: 'Q3 04:12',
+                  },
+                },
+                'sensor.team_tracker_bulls': {
+                  entity_id: 'sensor.team_tracker_bulls',
+                  state: 'PRE',
+                  attributes: {
+                    league: 'NBA',
+                    team_abbr: 'CHI',
+                    opponent_abbr: 'MIA',
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const { container } = render(<NextUp now={new Date('2026-10-31T10:00:00Z')} timezone="UTC" />);
+      const pill = container.querySelector('#next-event-pill') as HTMLElement;
+      expect(pill.getAttribute('data-live-island')).toBe('ha-sports');
+      expect(container.querySelector('#live-island-icon')?.textContent).toBe('⚾');
+      expect(container.querySelector('#live-island-title')?.textContent).toBe('CHC 5 · LAD 3');
+      expect(container.querySelector('#live-island-artist')?.textContent).toBe('Bot 7th · MLB');
+      // Only CHC game matched allowlist, so no cycle button
+      expect(container.querySelector('#live-island-cycle')).toBeNull();
+
+      const watchBtn = container.querySelector('#live-island-action') as HTMLButtonElement;
+      expect(watchBtn.textContent).toBe('Watch');
+      fireEvent.click(watchBtn);
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/widgets/ha-1/action',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({
+              domain: 'script',
+              service: 'turn_on',
+              entity_id: 'script.watch_live_sports',
+              service_data: {
+                entity_id: 'script.watch_live_sports',
+                team: 'CHC',
+                league: 'MLB',
+              },
+            }),
+          }),
+        );
+      });
+
+      vi.unstubAllGlobals();
+    });
+
+    it('renders inline Play/Pause and Stop controls on Plex Live Island pill and dispatches /plex/control', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      act(() => {
+        setSharedPlexSession({
+          id: 'rk-42',
+          title: 'Interstellar',
+          subtitle: 'Living Room TV',
+          state: 'playing',
+          apiBase: '/hearth-api',
+        });
+      });
+
+      const { container } = render(<NextUp now={new Date('2026-10-31T10:00:00Z')} timezone="UTC" />);
+      const pill = container.querySelector('#next-event-pill') as HTMLElement;
+      expect(pill.getAttribute('data-live-island')).toBe('plex');
+      expect(pill.className).toContain('is-playing');
+
+      const playPauseBtn = container.querySelector('#live-island-play-pause') as HTMLButtonElement;
+      expect(playPauseBtn.getAttribute('aria-label')).toBe('Pause');
+      fireEvent.click(playPauseBtn);
+
+      expect(getSharedPlexSession()?.state).toBe('paused');
+      expect(pill.className).toContain('is-paused');
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/hearth-api/plex/control',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ action: 'pause', rating_key: 'rk-42' }),
+          }),
+        );
+      });
+
+      const stopBtn = container.querySelector('#live-island-stop') as HTMLButtonElement;
+      expect(stopBtn.getAttribute('aria-label')).toBe('Stop');
+      fireEvent.click(stopBtn);
+
+      expect(getSharedPlexSession()).toBeNull();
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/hearth-api/plex/control',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ action: 'stop', rating_key: 'rk-42' }),
+          }),
+        );
+      });
+
+      vi.unstubAllGlobals();
+    });
   });
 });

@@ -282,7 +282,7 @@ export function resolveScreenIndexForWidgetType(widgetType: string): number | nu
 }
 
 export interface HaLiveIslandActivity {
-  kind: 'ha-alert' | 'ha-timer';
+  kind: 'ha-alert' | 'ha-timer' | 'ha-sports';
   id: string;
   widgetId: string;
   entityId: string;
@@ -317,18 +317,87 @@ export function formatTimerCountdown(attributes: Record<string, unknown> | undef
   return 'Timer active';
 }
 
+function parseSportsAllowlist(entry: WidgetEntry): string[] {
+  const cfg = entry.meta?.config as Record<string, unknown> | undefined;
+  const data = entry.data as Record<string, unknown> | undefined;
+  const raw = cfg?.live_island_teams ?? cfg?.sports_teams ?? data?.live_island_teams ?? data?.sports_teams;
+  const items = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : [];
+  return items.map((item) => String(item ?? '').trim().toUpperCase()).filter(Boolean);
+}
+
+const SPORT_ICONS: Array<[RegExp, string]> = [
+  [/MLB|BASEBALL/, '⚾'],
+  [/NFL|NCAAF|FOOTBALL/, '🏈'],
+  [/NBA|NCAAB|WNBA|BASKETBALL/, '🏀'],
+  [/NHL|HOCKEY/, '🏒'],
+  [/MLS|EPL|SOCCER|UEFA/, '⚽'],
+];
+
+function pickSportIcon(league: string, sport: string): string {
+  const key = `${league} ${sport}`.toUpperCase();
+  return SPORT_ICONS.find(([re]) => re.test(key))?.[1] ?? '🏆';
+}
+
+function matchesSportsAllowlist(allowlist: string[], candidates: string[], entityId: string): boolean {
+  if (allowlist.length === 0) return true;
+  const uEntity = entityId.toUpperCase();
+  const [uLeague, uSport, uTeam, uOpp, uTeamName, uOppName] = candidates.map((c) => c.toUpperCase());
+  return allowlist.some((token) => {
+    if (token === '*') return true;
+    if (token.includes(':')) {
+      const [wL, wT] = token.split(':', 2).map((s) => s.trim());
+      return (!wL || wL === uLeague || wL === uSport) &&
+        (!wT || wT === uTeam || wT === uOpp || uTeamName.includes(wT) || uOppName.includes(wT));
+    }
+    return [uLeague, uSport, uTeam, uOpp, uEntity].includes(token) ||
+      (Boolean(uTeamName) && uTeamName.includes(token)) ||
+      (Boolean(uOppName) && uOppName.includes(token)) ||
+      uEntity.endsWith(`_${token}`);
+  });
+}
+
+function formatSportsTitleAndSub(ent: EntityState, entityId: string, attrs: Record<string, unknown>, team: string, opp: string, league: string): [string, string] {
+  const tS = attrs.team_score ?? '';
+  const oS = attrs.opponent_score ?? '';
+  const title = team && opp ? `${team}${tS !== '' ? ` ${tS}` : ''} · ${opp}${oS !== '' ? ` ${oS}` : ''}` : getEntityName(ent, entityId);
+  const period = String(attrs.clock ?? attrs.inning ?? attrs.quarter ?? attrs.period ?? 'Live').trim() || 'Live';
+  const sub = league && !period.toUpperCase().includes(league.toUpperCase()) ? `${period} · ${league.toUpperCase()}` : period;
+  return [title, sub];
+}
+
+function tryBuildSportsActivity(widgetId: string, entityId: string, ent: EntityState, st: string, allowlist: string[]): HaLiveIslandActivity | null {
+  if (!['in', 'in_progress', 'live'].includes(st)) return null;
+  const attrs = (ent.attributes ?? {}) as Record<string, unknown>;
+  const [team, opp, league, sport] = [attrs.team_abbr, attrs.opponent_abbr, attrs.league, attrs.sport].map((v) => String(v ?? '').trim());
+  if (!entityId.toLowerCase().startsWith('sensor.team_tracker_') && !team && !opp && !league && !sport) return null;
+  const [tName, oName] = [attrs.team_name ?? attrs.friendly_name, attrs.opponent_name].map((v) => String(v ?? '').trim());
+  if (!matchesSportsAllowlist(allowlist, [league, sport, team, opp, tName, oName], entityId)) return null;
+  const [title, subtitle] = formatSportsTitleAndSub(ent, entityId, attrs, team, opp, league);
+  const watchEntity = String(attrs.watch_entity_id || 'script.watch_live_sports').trim();
+  const svcData: Record<string, unknown> = {};
+  if (team) svcData.team = team;
+  if (league) svcData.league = league;
+  return {
+    kind: 'ha-sports', id: `ha-sports-${entityId}`, widgetId, entityId, title, subtitle,
+    icon: pickSportIcon(league, sport), actionLabel: 'Watch',
+    actionPayload: { domain: getDomain(watchEntity) || 'script', service: 'turn_on', entity_id: watchEntity, service_data: svcData },
+  };
+}
+
 export function selectHomeAssistantLiveActivities(
   widgets: Record<string, WidgetEntry | undefined>,
   now: Date = new Date(),
 ): HaLiveIslandActivity[] {
   const alerts: HaLiveIslandActivity[] = [];
   const timers: HaLiveIslandActivity[] = [];
+  const sports: HaLiveIslandActivity[] = [];
   const seenEntities = new Set<string>();
 
   for (const [widgetId, entry] of Object.entries(widgets)) {
     if (!entry || !entry.data || typeof entry.data !== 'object') continue;
     const entities = (entry.data as Record<string, unknown>).entities as Record<string, EntityState | undefined> | undefined;
     if (!entities || typeof entities !== 'object') continue;
+    const sportsAllowlist = parseSportsAllowlist(entry);
 
     for (const [key, ent] of Object.entries(entities)) {
       if (!ent || typeof ent !== 'object') continue;
@@ -358,8 +427,14 @@ export function selectHomeAssistantLiveActivities(
           title: getEntityName(ent, entityId), subtitle: formatTimerCountdown(ent.attributes, now), icon: '⏱️',
           actionLabel: 'Cancel', actionPayload: { domain: 'timer', service: 'cancel', entity_id: entityId },
         });
+      } else if (domain === 'sensor') {
+        const sportAct = tryBuildSportsActivity(widgetId, entityId, ent, st, sportsAllowlist);
+        if (sportAct) {
+          seenEntities.add(entityId);
+          sports.push(sportAct);
+        }
       }
     }
   }
-  return [...alerts, ...timers];
+  return [...alerts, ...timers, ...sports];
 }
