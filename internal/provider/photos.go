@@ -556,13 +556,14 @@ func (p *PhotosProvider) syncAlbum(ctx context.Context, a *albumState, full bool
 
 	if cacheDir != "" {
 		toCache = &albumDiskCache{
-			AlbumName:     a.cfg.Name,
-			ScrapedTitle:  a.scrapedTitle,
-			ResolvedURL:   a.cfg.ResolvedURL,
-			LastPage1Sync: a.lastPage1Sync,
-			LastFullSync:  a.lastFullSync,
-			Paginated:     a.paginated,
-			Photos:        a.photos,
+			AlbumName:          a.cfg.Name,
+			ScrapedTitle:       a.scrapedTitle,
+			ResolvedURL:        a.cfg.ResolvedURL,
+			LastPage1Sync:      a.lastPage1Sync,
+			LastFullSync:       a.lastFullSync,
+			Paginated:          a.paginated,
+			MediaTypesEnriched: !hasUncheckedPhotoLocations(a.photos),
+			Photos:             a.photos,
 		}
 	}
 	p.mu.Unlock()
@@ -1220,6 +1221,25 @@ func hasVideoMarker(val any) bool {
 	return false
 }
 
+// hasGIFMarker recursively scans a media item array or metadata map for Google Photos
+// animated GIF markers ("image/gif", ".gif" filename suffix, or "gif").
+func hasGIFMarker(val any) bool {
+	switch v := val.(type) {
+	case string:
+		l := strings.ToLower(strings.TrimSpace(v))
+		return strings.Contains(l, "image/gif") || strings.HasSuffix(l, ".gif") || l == "gif"
+	case []any:
+		return slices.ContainsFunc(v, hasGIFMarker)
+	case map[string]any:
+		for _, child := range v {
+			if hasGIFMarker(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // isPhotoItemArray performs a structural check on an array element to determine whether
 // it matches the [id, [url, ...], ...] media item shape. It intentionally avoids filtering
 // by media type so that isMediaItemList can reliably identify media collections even when
@@ -1352,6 +1372,8 @@ func parseMediaItem(elem any) (PhotoItem, bool) {
 	}
 	if hasVideoMarker(arr) {
 		item.MediaType = "video"
+	} else if hasGIFMarker(arr) {
+		item.MediaType = "gif"
 	}
 	return item, true
 }
