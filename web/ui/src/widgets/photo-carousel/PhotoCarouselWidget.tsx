@@ -12,7 +12,7 @@ import {
   parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, useContainerSize,
   registerEmberSyncListener, usePhotoSlideshowTransition, resolvePhotoCarouselSourceAndUrl,
   formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
-  isWideContainer, isVideoPhoto, getVideoStreamURL,
+  isWideContainer, isVideoPhoto, isGifPhoto, getVideoStreamURL,
   type ContainerSize, type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem, type SlideTransitionState,
 } from './photoCarouselHelpers';
 
@@ -21,7 +21,7 @@ export {
   getPhotoItemKey, selectNextPhotoIndex, selectPrevPhotoIndex, selectPreloadPhotoIndices,
   formatPhotoOverlayDate, formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
   isPortraitPhoto, isWideContainer, selectCompanionPortraitIndex,
-  isVideoPhoto, getVideoStreamURL, VIDEO_STREAM_SUFFIXES,
+  isVideoPhoto, isGifPhoto, getVideoStreamURL, VIDEO_STREAM_SUFFIXES,
   PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
 } from './photoCarouselHelpers';
 
@@ -99,22 +99,24 @@ function PhotoBackdrop({ currentUrl, nextUrl, isTransitioning }: { currentUrl: s
 }
 
 function PhotoMediaSlot({
-  url, rawUrl, isVideo, canPlay, playingVideoUrl, streamSuffixIndex, videoClass, imgClass, style,
+  url, rawUrl, isVideo, isGif, canPlay, playingVideoUrl, streamSuffixIndex, videoClass, imgClass, style,
   onPlayVideo, onStopVideo, onVideoEnded, onVideoError,
 }: {
-  url: string; rawUrl?: string; isVideo?: boolean; canPlay: boolean; playingVideoUrl: string | null; streamSuffixIndex: number;
+  url: string; rawUrl?: string; isVideo?: boolean; isGif?: boolean; canPlay: boolean; playingVideoUrl: string | null; streamSuffixIndex: number;
   videoClass: string; imgClass: string; style?: React.CSSProperties;
   onPlayVideo: (rawUrl?: string) => void; onStopVideo: () => void; onVideoEnded: () => void; onVideoError: () => void;
 }) {
-  const isPlaying = canPlay && Boolean(playingVideoUrl && isVideo && rawUrl && playingVideoUrl === rawUrl);
+  const isPlayable = Boolean(isVideo || isGif);
+  const isPlaying = canPlay && Boolean(playingVideoUrl && isPlayable && rawUrl && playingVideoUrl === rawUrl);
+  const activeImgUrl = isPlaying && isGif ? url.replace(/-k$/, '') : url;
   return (
     <>
-      {isPlaying ? (
+      {isPlaying && isVideo ? (
         <video key={rawUrl} className={videoClass} src={getVideoStreamURL(rawUrl, streamSuffixIndex)} poster={url} autoPlay playsInline onClick={(e) => { e.stopPropagation(); onStopVideo(); }} onEnded={onVideoEnded} onError={onVideoError} />
       ) : (
-        <img className={imgClass} src={url} alt="Photo" style={style} />
+        <img className={imgClass} src={activeImgUrl} alt="Photo" style={style} onClick={isPlaying && isGif ? (e) => { e.stopPropagation(); onStopVideo(); } : undefined} />
       )}
-      {canPlay && isVideo && Boolean(rawUrl) && !isPlaying && (
+      {canPlay && isPlayable && Boolean(rawUrl) && !isPlaying && (
         <button type="button" className="photo-video-play-btn" aria-label="Play video" onClick={(e) => { e.stopPropagation(); onPlayVideo(rawUrl); }}><HudPlayIcon /></button>
       )}
     </>
@@ -122,12 +124,13 @@ function PhotoMediaSlot({
 }
 
 function PhotoForeground({
-  currentUrl, currentSecondaryUrl, currentRawUrl, currentSecondaryRawUrl, currentIsVideo, currentSecondaryIsVideo,
+  currentUrl, currentSecondaryUrl, currentRawUrl, currentSecondaryRawUrl, currentIsVideo, currentSecondaryIsVideo, currentIsGif, currentSecondaryIsGif,
   nextUrl, nextSecondaryUrl, isTransitioning, isStepping, playingVideoUrl, streamSuffixIndex,
   onPlayVideo, onStopVideo, onVideoEnded, onVideoError,
 }: {
   currentUrl: string; currentSecondaryUrl?: string; currentRawUrl?: string; currentSecondaryRawUrl?: string;
-  currentIsVideo?: boolean; currentSecondaryIsVideo?: boolean; nextUrl: string; nextSecondaryUrl?: string;
+  currentIsVideo?: boolean; currentSecondaryIsVideo?: boolean; currentIsGif?: boolean; currentSecondaryIsGif?: boolean;
+  nextUrl: string; nextSecondaryUrl?: string;
   isTransitioning: boolean; isStepping: boolean; playingVideoUrl: string | null; streamSuffixIndex: number;
   onPlayVideo: (rawUrl?: string) => void; onStopVideo: () => void; onVideoEnded: () => void; onVideoError: () => void;
 }) {
@@ -140,14 +143,14 @@ function PhotoForeground({
       {currentSecondaryUrl ? (
         <div className="photo-layer photo-current photo-foreground-diptych dither" style={fadeOutStyle}>
           <div className="photo-diptych-slot">
-            <PhotoMediaSlot {...shared} url={currentUrl} rawUrl={currentRawUrl} isVideo={currentIsVideo} videoClass="photo-diptych-item photo-video-player dither" imgClass="photo-diptych-item photo-current dither" />
+            <PhotoMediaSlot {...shared} url={currentUrl} rawUrl={currentRawUrl} isVideo={currentIsVideo} isGif={currentIsGif} videoClass="photo-diptych-item photo-video-player dither" imgClass="photo-diptych-item photo-current dither" />
           </div>
           <div className="photo-diptych-slot">
-            <PhotoMediaSlot {...shared} url={currentSecondaryUrl} rawUrl={currentSecondaryRawUrl} isVideo={currentSecondaryIsVideo} videoClass="photo-diptych-item photo-video-player dither" imgClass="photo-diptych-item photo-current-secondary dither" />
+            <PhotoMediaSlot {...shared} url={currentSecondaryUrl} rawUrl={currentSecondaryRawUrl} isVideo={currentSecondaryIsVideo} isGif={currentSecondaryIsGif} videoClass="photo-diptych-item photo-video-player dither" imgClass="photo-diptych-item photo-current-secondary dither" />
           </div>
         </div>
       ) : (
-        <PhotoMediaSlot {...shared} url={currentUrl} rawUrl={currentRawUrl} isVideo={currentIsVideo} videoClass="photo-layer photo-current photo-video-player dither" imgClass="photo-layer photo-current dither" style={fadeOutStyle} />
+        <PhotoMediaSlot {...shared} url={currentUrl} rawUrl={currentRawUrl} isVideo={currentIsVideo} isGif={currentIsGif} videoClass="photo-layer photo-current photo-video-player dither" imgClass="photo-layer photo-current dither" style={fadeOutStyle} />
       )}
       {nextSecondaryUrl ? (
         <div className="photo-layer photo-next photo-foreground-diptych dither" style={fadeInStyle}>
@@ -179,10 +182,11 @@ function PhotoPreloadPool({ photos, baseIndex, companionIndex, widgetId, contain
       {allIndices.map((idx) => {
         const p = photos[idx];
         const rawUrl = p?.url ?? p?.URL;
+        const isGif = isGifPhoto(p);
         return (
           <span key={getPhotoItemKey(p, idx)}>
-            <img src={getBackdropPhotoURL(rawUrl)} decoding="async" loading="eager" alt="" />
-            <img src={getSizedPhotoURL(rawUrl, containerSize, isVideoPhoto(p))} decoding="async" loading="eager" alt="" />
+            <img src={getBackdropPhotoURL(rawUrl, isGif)} decoding="async" loading="eager" alt="" />
+            <img src={getSizedPhotoURL(rawUrl, containerSize, isVideoPhoto(p), isGif)} decoding="async" loading="eager" alt="" />
           </span>
         );
       })}
@@ -342,18 +346,20 @@ function resolveSlideLayerState(
 ) {
   const wide = isWideContainer(containerSize);
   const resolveSlide = (idx: number | null, fixedCompanionIdx: number | null) => {
-    if (idx === null) return { photo: undefined, fgUrl: "", backdropUrl: "", rawUrl: undefined, isVideo: false, companionIdx: null, companionPhoto: undefined, companionFgUrl: "", companionRawUrl: undefined, companionIsVideo: false };
+    if (idx === null) return { photo: undefined, fgUrl: "", backdropUrl: "", rawUrl: undefined, isVideo: false, isGif: false, companionIdx: null, companionPhoto: undefined, companionFgUrl: "", companionRawUrl: undefined, companionIsVideo: false, companionIsGif: false };
     const photo = photos[idx];
     const isVideo = isVideoPhoto(photo);
+    const isGif = isGifPhoto(photo);
     const rawUrl = photo?.url ?? photo?.URL;
-    const fgUrl = rawUrl ? getSizedPhotoURL(rawUrl, containerSize, isVideo) : "";
-    const backdropUrl = rawUrl ? getBackdropPhotoURL(rawUrl) : "";
+    const fgUrl = rawUrl ? getSizedPhotoURL(rawUrl, containerSize, isVideo, isGif) : "";
+    const backdropUrl = rawUrl ? getBackdropPhotoURL(rawUrl, isGif) : "";
     const companionIdx = wide ? fixedCompanionIdx : null;
     const companionPhoto = companionIdx !== null ? photos[companionIdx] : undefined;
     const companionIsVideo = isVideoPhoto(companionPhoto);
+    const companionIsGif = isGifPhoto(companionPhoto);
     const companionRawUrl = companionPhoto?.url ?? companionPhoto?.URL;
-    const companionFgUrl = companionRawUrl ? getSizedPhotoURL(companionRawUrl, containerSize, companionIsVideo) : "";
-    return { photo, fgUrl, backdropUrl, rawUrl, isVideo, companionIdx, companionPhoto, companionFgUrl, companionRawUrl, companionIsVideo };
+    const companionFgUrl = companionRawUrl ? getSizedPhotoURL(companionRawUrl, containerSize, companionIsVideo, companionIsGif) : "";
+    return { photo, fgUrl, backdropUrl, rawUrl, isVideo, isGif, companionIdx, companionPhoto, companionFgUrl, companionRawUrl, companionIsVideo, companionIsGif };
   };
   const isTransitioning = Boolean(transitionState?.active);
   const current = resolveSlide(safeIndex, currentCompanionIndex);
@@ -368,11 +374,11 @@ function shouldClearVideoPlayback({
 }: {
   playingVideoUrl: string | null; playingSlideKey: string | null; slideKey: string; isTransitioning: boolean;
   transitionState: SlideTransitionState | null; isCurrentPane: boolean; isDocumentVisible: boolean; isVideoMode: boolean;
-  current: { isVideo: boolean; rawUrl?: string; companionIsVideo: boolean; companionRawUrl?: string };
+  current: { isVideo: boolean; isGif: boolean; rawUrl?: string; companionIsVideo: boolean; companionIsGif: boolean; companionRawUrl?: string };
 }): boolean {
   if (playingVideoUrl === null) return false;
-  const matchesPrimary = Boolean(current.isVideo && current.rawUrl && playingVideoUrl === current.rawUrl);
-  const matchesSecondary = Boolean(current.companionIsVideo && current.companionRawUrl && playingVideoUrl === current.companionRawUrl);
+  const matchesPrimary = Boolean((current.isVideo || current.isGif) && current.rawUrl && playingVideoUrl === current.rawUrl);
+  const matchesSecondary = Boolean((current.companionIsVideo || current.companionIsGif) && current.companionRawUrl && playingVideoUrl === current.companionRawUrl);
   return (
     playingSlideKey !== slideKey ||
     isTransitioning ||
@@ -450,6 +456,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
             currentUrl={current.fgUrl} currentSecondaryUrl={current.companionFgUrl || undefined}
             currentRawUrl={current.rawUrl} currentSecondaryRawUrl={current.companionRawUrl}
             currentIsVideo={current.isVideo} currentSecondaryIsVideo={current.companionIsVideo}
+            currentIsGif={current.isGif} currentSecondaryIsGif={current.companionIsGif}
             nextUrl={next.fgUrl} nextSecondaryUrl={next.companionFgUrl || undefined}
             isTransitioning={isTransitioning} isStepping={isStepping}
             playingVideoUrl={playingVideoUrl} streamSuffixIndex={streamSuffixIndex}

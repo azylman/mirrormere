@@ -14,6 +14,7 @@ import {
   isWideContainer,
   selectCompanionPortraitIndex,
   isVideoPhoto,
+  isGifPhoto,
   getVideoStreamURL,
 } from './PhotoCarouselWidget';
 import { useDisplayStore } from '../../store';
@@ -72,9 +73,12 @@ describe('PhotoCarouselWidget helpers', () => {
       expect(getBackdropPhotoURL(undefined)).toBe('');
     });
 
-    it('returns =w96-h54-c url when rawUrl is provided', () => {
+    it('returns =w96-h54-c url when rawUrl is provided and appends -k when isGif is true', () => {
       expect(getBackdropPhotoURL('https://example.com/photo.jpg')).toBe(
         'https://example.com/photo.jpg=w96-h54-c',
+      );
+      expect(getBackdropPhotoURL('https://example.com/anim.gif', true)).toBe(
+        'https://example.com/anim.gif=w96-h54-c-k',
       );
     });
   });
@@ -111,17 +115,22 @@ describe('PhotoCarouselWidget helpers', () => {
       }
     });
 
-    it('appends -no suffix when isVideo is true', () => {
+    it('appends -no suffix when isVideo is true and -k suffix when isGif is true', () => {
       expect(getSizedPhotoURL('https://example.com/video.jpg', { width: 800, height: 600 }, true)).toBe('https://example.com/video.jpg=w800-h600-no');
+      expect(getSizedPhotoURL('https://example.com/anim.gif', { width: 800, height: 600 }, false, true)).toBe('https://example.com/anim.gif=w800-h600-k');
     });
   });
 
-  describe('isVideoPhoto and getVideoStreamURL', () => {
-    it('detects video photo and constructs stream URLs with fallback suffixes', () => {
+  describe('isVideoPhoto, isGifPhoto, and getVideoStreamURL', () => {
+    it('detects video and gif photos and constructs stream URLs with fallback suffixes', () => {
       expect(isVideoPhoto(undefined)).toBe(false);
       expect(isVideoPhoto({})).toBe(false);
       expect(isVideoPhoto({ media_type: 'photo' })).toBe(false);
       expect(isVideoPhoto({ media_type: 'video' })).toBe(true);
+      expect(isGifPhoto(undefined)).toBe(false);
+      expect(isGifPhoto({})).toBe(false);
+      expect(isGifPhoto({ media_type: 'photo' })).toBe(false);
+      expect(isGifPhoto({ media_type: 'gif' })).toBe(true);
       expect(getVideoStreamURL('')).toBe('');
       expect(getVideoStreamURL(undefined)).toBe('');
       expect(getVideoStreamURL('https://example.com/vid', 0)).toBe('https://example.com/vid=m22');
@@ -690,13 +699,8 @@ describe('PhotoCarouselWidget component', () => {
         resolveDecode!();
  });
 
-      await vi.waitFor(() => {
-        expect(document.body.dataset.animating).toBe('1');
- });
-
-      act(() => { vi.advanceTimersByTime(850);
- });
-
+      await vi.waitFor(() => { expect(document.body.dataset.animating).toBe('1'); });
+      act(() => { vi.advanceTimersByTime(850); });
       expect(document.body.dataset.animating).toBe('0');
     } finally {
       window.Image = originalImage;
@@ -706,7 +710,6 @@ describe('PhotoCarouselWidget component', () => {
   it('resets document.body.dataset.animating to 0 on early tap commit mid-crossfade', async () => {
     const decodeResolvers: Array<() => void> = [];
     const originalImage = window.Image;
-
     class MockImage {
       src = '';
       decode() { return new Promise<void>((resolve) => { decodeResolvers.push(resolve); }); }
@@ -715,52 +718,24 @@ describe('PhotoCarouselWidget component', () => {
     window.Image = MockImage;
 
     try {
-      setWidgetPhotos(
-        [
-          { url: 'https://example.com/p1.jpg' },
-          { url: 'https://example.com/p2.jpg' },
-          { url: 'https://example.com/p3.jpg' },
-        ],
-        15,
-      );
-
+      setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }, { url: 'https://example.com/p3.jpg' }], 15);
       const { container } = render(
         <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
       );
 
       const root = container.querySelector('.widget-photo-carousel')!;
-      act(() => {
-        fireEvent.click(root);
- });
-
+      act(() => { fireEvent.click(root); });
       expect(decodeResolvers.length).toBe(1);
-      act(() => {
-        decodeResolvers[0]();
- });
-
-      await vi.waitFor(() => {
-        expect(document.body.dataset.animating).toBe('1');
- });
+      act(() => { decodeResolvers[0](); });
+      await vi.waitFor(() => { expect(document.body.dataset.animating).toBe('1'); });
 
       // Tap mid-crossfade: should commit p2 and reset animating to 0 immediately
-      act(() => {
-        fireEvent.click(root);
- });
-
+      act(() => { fireEvent.click(root); });
       expect(document.body.dataset.animating).toBe('0');
       expect(decodeResolvers.length).toBe(2);
-
-      act(() => {
-        decodeResolvers[1]();
- });
-
-      await vi.waitFor(() => {
-        expect(document.body.dataset.animating).toBe('1');
- });
-
-      act(() => { vi.advanceTimersByTime(850);
- });
-
+      act(() => { decodeResolvers[1](); });
+      await vi.waitFor(() => { expect(document.body.dataset.animating).toBe('1'); });
+      act(() => { vi.advanceTimersByTime(850); });
       expect(document.body.dataset.animating).toBe('0');
     } finally {
       window.Image = originalImage;
@@ -770,7 +745,6 @@ describe('PhotoCarouselWidget component', () => {
   it('resets document.body.dataset.animating to 0 on unmount mid-crossfade', async () => {
     let resolveDecode: (() => void) | null = null;
     const originalImage = window.Image;
-
     class MockImage {
       src = '';
       decode() { return new Promise<void>((resolve) => { resolveDecode = resolve; }); }
@@ -780,25 +754,14 @@ describe('PhotoCarouselWidget component', () => {
 
     try {
       setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }], 10);
-
       const { unmount } = render(
         <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
       );
-
-      act(() => { vi.advanceTimersByTime(10000);
- });
-
+      act(() => { vi.advanceTimersByTime(10000); });
       expect(resolveDecode).not.toBeNull();
-      act(() => {
-        resolveDecode!();
- });
-
-      await vi.waitFor(() => {
-        expect(document.body.dataset.animating).toBe('1');
- });
-
+      act(() => { resolveDecode!(); });
+      await vi.waitFor(() => { expect(document.body.dataset.animating).toBe('1'); });
       unmount();
-
       expect(document.body.dataset.animating).toBe('0');
     } finally {
       window.Image = originalImage;
@@ -808,7 +771,6 @@ describe('PhotoCarouselWidget component', () => {
   it('aborts transition when Image.decode() rejects and advances to subsequent valid photo on next cycle', async () => {
     const originalImage = window.Image;
     const decodeCalls: string[] = [];
-
     class MockImage {
       _src = '';
       set src(v: string) { this._src = v; }
@@ -822,11 +784,7 @@ describe('PhotoCarouselWidget component', () => {
     window.Image = MockImage;
 
     try {
-      setWidgetPhotos([
-        { url: 'https://example.com/p1.jpg' },
-        { url: 'https://example.com/p2.jpg' },
-        { url: 'https://example.com/p3.jpg' },
-      ], 10);
+      setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }, { url: 'https://example.com/p3.jpg' }], 10);
 
       const { container } = render(
         <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
@@ -1817,6 +1775,26 @@ describe('PhotoCarouselWidget component', () => {
       } finally {
         window.Image = originalImage;
       }
+    });
+
+    it('renders -k frozen frame and play button for GIFs by default, plays animated GIF inline on click while pausing rotation, and restores -k on click', () => {
+      photoDeckStateById.clear();
+      setWidgetPhotos([{ id: 'g1', url: 'https://example.com/anim1', media_type: 'gif' }, { id: 'p2', url: 'https://example.com/photo2', media_type: 'photo' }], 10);
+      const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
+      const fgImg = container.querySelector('img.photo-layer.photo-current') as HTMLImageElement;
+      expect(fgImg.getAttribute('src')).toBe('https://example.com/anim1=w1024-h768-k');
+      expect(container.querySelector('img.photo-backdrop-current')?.getAttribute('src')).toBe('https://example.com/anim1=w96-h54-c-k');
+      const playBtn = container.querySelector('button.photo-video-play-btn');
+      expect(playBtn?.getAttribute('aria-label')).toBe('Play video');
+      fireEvent.click(playBtn!);
+      expect(container.querySelector('video.photo-video-player')).toBeNull();
+      expect(fgImg.getAttribute('src')).toBe('https://example.com/anim1=w1024-h768');
+      expect(container.querySelector('button.photo-video-play-btn')).toBeNull();
+      act(() => { vi.advanceTimersByTime(15000); });
+      expect(fgImg.getAttribute('src')).toBe('https://example.com/anim1=w1024-h768');
+      fireEvent.click(fgImg);
+      expect(fgImg.getAttribute('src')).toBe('https://example.com/anim1=w1024-h768-k');
+      expect(container.querySelector('button.photo-video-play-btn')).not.toBeNull();
     });
   });
 });

@@ -123,6 +123,11 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		if !ok || videoExtItem.MediaType != "video" {
 			t.Errorf("expected parseMediaItem=true and MediaType='video' for video item with .mp4, got ok=%v, item=%+v", ok, videoExtItem)
 		}
+		gifElem := []any{"g1", []any{"https://lh3.googleusercontent.com/pw/G1", 800, 600}, 1755268200000, map[string]any{"filename": "PXL_20261111-ANIMATION.gif"}}
+		gifItem, ok := parseMediaItem(gifElem)
+		if !ok || gifItem.MediaType != "gif" {
+			t.Errorf("expected parseMediaItem=true and MediaType='gif' for gif item, got ok=%v, item=%+v", ok, gifItem)
+		}
 	})
 
 	t.Run("location enrichment and metadata carryover", func(t *testing.T) {
@@ -148,7 +153,7 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		srvLoc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(r.URL.RawQuery, "rpcids=fDcn4b") {
 				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-				_, _ = w.Write([]byte(")]}'\n\n120\n[[[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_new1\\\",null,null,null,null,null,null,null,null,null,null,null,null,[null,null,[[null,[[\\\"San Francisco, CA\\\",null,1]],\\\"ChIJ123\\\"]]]]]\",null,null,null,\"1\"],[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_noloc\\\"]]\",null,null,null,\"2\"],[\"wrb.fr\",\"fDcn4b\",\"[null]\",null,null,null,\"3\"]]]\n"))
+				_, _ = w.Write([]byte(")]}'\n\n120\n[[[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_new1\\\",null,\\\"PXL_ANIMATION.gif\\\",null,null,null,null,null,null,null,null,null,null,[null,null,[[null,[[\\\"San Francisco, CA\\\",null,1]],\\\"ChIJ123\\\"]]]]]\",null,null,null,\"1\"],[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_noloc\\\",null,\\\"clip.mp4\\\"]]\",null,null,null,\"2\"],[\"wrb.fr\",\"fDcn4b\",\"[null]\",null,null,null,\"3\"]]]\n"))
 				return
 			}
 			w.WriteHeader(http.StatusNotFound)
@@ -156,11 +161,11 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		defer srvLoc.Close()
 
 		enrichPhotoLocations(context.Background(), srvLoc.Client(), srvLoc.URL+"?key=auth123", "auth123", fresh, slog.Default())
-		if fresh[1].Location != "San Francisco, CA" || !fresh[1].LocationChecked {
-			t.Errorf("expected San Francisco, CA for fresh[1], got %+v", fresh[1])
+		if fresh[1].Location != "San Francisco, CA" || !fresh[1].LocationChecked || fresh[1].MediaType != "gif" {
+			t.Errorf("expected San Francisco, CA and MediaType='gif' for fresh[1], got %+v", fresh[1])
 		}
-		if fresh[2].Location != "" || !fresh[2].LocationChecked {
-			t.Errorf("expected checked empty location for fresh[2], got %+v", fresh[2])
+		if fresh[2].Location != "" || !fresh[2].LocationChecked || fresh[2].MediaType != "video" {
+			t.Errorf("expected checked empty location and MediaType='video' for fresh[2], got %+v", fresh[2])
 		}
 		if fresh[3].Location != "" || !fresh[3].LocationChecked {
 			t.Errorf("expected omitted item in valid batch to be marked checked, got %+v", fresh[3])
@@ -180,22 +185,22 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		}
 
 		// Malformed envelopes in parseSingleFDcn4bEnvelope and extractLocationLabel
-		if _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", ""}); ok {
+		if _, _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", ""}); ok {
 			t.Error("expected false for empty innerStr")
 		}
-		if _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", "invalid"}); ok {
+		if _, _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", "invalid"}); ok {
 			t.Error("expected false for invalid JSON")
 		}
-		if _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", `["not-slice"]`}); ok {
+		if _, _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", `["not-slice"]`}); ok {
 			t.Error("expected false for non-slice info")
 		}
-		if _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", `[[123]]`}); ok {
+		if _, _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", `[[123]]`}); ok {
 			t.Error("expected false for non-string id")
 		}
-		locs, checked := parseFDcn4bResponse([]byte(`)]}'
-[[["wrb.fr","fDcn4b","[[\"AF1Qip_single\",null,null,null,null,null,null,null,null,null,null,null,null,[\"https://maps\",\"0x123\",\"ChIJabc\",\"Tokyo, Japan\"]]]",null,null,null,"1"]]]`))
-		if !checked["AF1Qip_single"] || locs["AF1Qip_single"] != "Tokyo, Japan" {
-			t.Errorf("unexpected single-array parse result: locs=%v checked=%v", locs, checked)
+		locs, mediaTypes, checked := parseFDcn4bResponse([]byte(`)]}'
+[[["wrb.fr","fDcn4b","[[\"AF1Qip_single\",null,\"burst-ANIMATION.gif\",null,null,null,null,null,null,null,null,null,null,[\"https://maps\",\"0x123\",\"ChIJabc\",\"Tokyo, Japan\"]]]",null,null,null,"1"]]]`))
+		if !checked["AF1Qip_single"] || locs["AF1Qip_single"] != "Tokyo, Japan" || mediaTypes["AF1Qip_single"] != "gif" {
+			t.Errorf("unexpected single-array parse result: locs=%v mediaTypes=%v checked=%v", locs, mediaTypes, checked)
 		}
 		if got := resolveBatchexecuteBaseURL("https://photos.app.goo.gl/abc123"); got != "https://photos.google.com" {
 			t.Errorf("expected https://photos.google.com for shortlink, got %q", got)

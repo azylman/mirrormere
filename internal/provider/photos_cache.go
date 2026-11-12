@@ -59,13 +59,14 @@ func albumCacheFilename(source, resolvedURL string) string {
 
 // albumDiskCache represents the on-disk JSON cache format for an album.
 type albumDiskCache struct {
-	AlbumName     string      `json:"album_name"`
-	ScrapedTitle  string      `json:"scraped_title"`
-	ResolvedURL   string      `json:"resolved_url"`
-	LastPage1Sync time.Time   `json:"last_page1_sync"`
-	LastFullSync  time.Time   `json:"last_full_sync"`
-	Paginated     bool        `json:"paginated,omitempty"`
-	Photos        []PhotoItem `json:"photos"`
+	AlbumName          string      `json:"album_name"`
+	ScrapedTitle       string      `json:"scraped_title"`
+	ResolvedURL        string      `json:"resolved_url"`
+	LastPage1Sync      time.Time   `json:"last_page1_sync"`
+	LastFullSync       time.Time   `json:"last_full_sync"`
+	Paginated          bool        `json:"paginated,omitempty"`
+	MediaTypesEnriched bool        `json:"media_types_enriched,omitempty"`
+	Photos             []PhotoItem `json:"photos"`
 }
 
 func loadAlbumDiskCache(cacheDir, source, resolvedURL string) (*albumDiskCache, error) {
@@ -80,6 +81,11 @@ func loadAlbumDiskCache(cacheDir, source, resolvedURL string) (*albumDiskCache, 
 	var cached albumDiskCache
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, err
+	}
+	if !cached.MediaTypesEnriched {
+		for i := range cached.Photos {
+			cached.Photos[i].LocationChecked = false
+		}
 	}
 	return &cached, nil
 }
@@ -447,7 +453,7 @@ func enrichPhotoLocations(ctx context.Context, client *http.Client, albumURL, au
 	}
 	var pendingIdx []int
 	for i := range photos {
-		if !photos[i].LocationChecked && photos[i].Location == "" && photos[i].ID != "" && !strings.HasPrefix(photos[i].ID, "photo_") {
+		if !photos[i].LocationChecked && photos[i].ID != "" && !strings.HasPrefix(photos[i].ID, "photo_") {
 			pendingIdx = append(pendingIdx, i)
 		}
 	}
@@ -457,7 +463,7 @@ func enrichPhotoLocations(ctx context.Context, client *http.Client, albumURL, au
 		for i, idx := range batchIdx {
 			ids[i] = photos[idx].ID
 		}
-		locs, checked, err := fetchPhotoLocationsBatch(ctx, client, albumURL, authKey, ids)
+		locs, mediaTypes, checked, err := fetchPhotoLocationsBatch(ctx, client, albumURL, authKey, ids)
 		if err != nil {
 			if logger != nil {
 				logger.Warn("photo-carousel: fDcn4b location enrichment failed", "error", err)
@@ -469,13 +475,18 @@ func enrichPhotoLocations(ctx context.Context, client *http.Client, albumURL, au
 			id := photos[idx].ID
 			if checked[id] || batchValid {
 				photos[idx].LocationChecked = true
-				photos[idx].Location = locs[id]
+				if loc := locs[id]; loc != "" || photos[idx].Location == "" {
+					photos[idx].Location = loc
+				}
+				if mt := mediaTypes[id]; mt != "" && photos[idx].MediaType == "" {
+					photos[idx].MediaType = mt
+				}
 			}
 		}
 	}
 }
 
-func fetchPhotoLocationsBatch(ctx context.Context, client *http.Client, albumURL, authKey string, photoIDs []string) (map[string]string, map[string]bool, error) {
+func fetchPhotoLocationsBatch(ctx context.Context, client *http.Client, albumURL, authKey string, photoIDs []string) (map[string]string, map[string]string, map[string]bool, error) {
 	calls := make([][]any, 0, len(photoIDs))
 	for i, id := range photoIDs {
 		if innerJSON, err := json.Marshal([]any{id, 1, authKey}); err == nil {
@@ -484,13 +495,13 @@ func fetchPhotoLocationsBatch(ctx context.Context, client *http.Client, albumURL
 	}
 	bodyBytes, err := postBatchexecute(ctx, client, albumURL, "fDcn4b", [][][]any{calls})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	locs, checked := parseFDcn4bResponse(bodyBytes)
-	return locs, checked, nil
+	locs, mediaTypes, checked := parseFDcn4bResponse(bodyBytes)
+	return locs, mediaTypes, checked, nil
 }
 
-func parseFDcn4bResponse(bodyBytes []byte) (map[string]string, map[string]bool) {
+func parseFDcn4bResponse(bodyBytes []byte) (map[string]string, map[string]string, map[string]bool) {
 	bodyStr := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(bodyBytes)), ")]}'"))
 	var envelopes [][]any
 	var root any
@@ -505,40 +516,50 @@ func parseFDcn4bResponse(bodyBytes []byte) (map[string]string, map[string]bool) 
 		}
 	}
 	locs := make(map[string]string, len(envelopes))
+	mediaTypes := make(map[string]string, len(envelopes))
 	checked := make(map[string]bool, len(envelopes))
 	for _, elemArr := range envelopes {
-		if id, loc, ok := parseSingleFDcn4bEnvelope(elemArr); ok {
+		if id, loc, mediaType, ok := parseSingleFDcn4bEnvelope(elemArr); ok {
 			checked[id] = true
 			if loc != "" {
 				locs[id] = loc
 			}
+			if mediaType != "" {
+				mediaTypes[id] = mediaType
+			}
 		}
 	}
-	return locs, checked
+	return locs, mediaTypes, checked
 }
 
-func parseSingleFDcn4bEnvelope(elemArr []any) (string, string, bool) {
+func parseSingleFDcn4bEnvelope(elemArr []any) (string, string, string, bool) {
 	innerStr, ok := elemArr[2].(string)
 	if !ok || innerStr == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	var innerArr []any
 	if err := json.Unmarshal([]byte(innerStr), &innerArr); err != nil || len(innerArr) == 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 	info, ok := innerArr[0].([]any)
 	if !ok || len(info) == 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 	id, ok := info[0].(string)
 	if !ok || id == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	var loc string
 	if len(info) > 13 {
 		loc = extractLocationLabel(info[13])
 	}
-	return id, loc, true
+	var mediaType string
+	if hasVideoMarker(info) {
+		mediaType = "video"
+	} else if hasGIFMarker(info) {
+		mediaType = "gif"
+	}
+	return id, loc, mediaType, true
 }
 
 func extractLocationLabel(node any) string {

@@ -5,9 +5,10 @@ import { useDisplayStore } from '../../store';
 export interface PhotoItem {
   id?: string; url?: string; URL?: string; width?: number; height?: number; aspect_ratio?: number;
   timestamp?: string; location?: string; album_name?: string; dominant_color?: string;
-  media_type?: 'photo' | 'video' | string;
+  media_type?: 'photo' | 'video' | 'gif' | string;
 }
 export function isVideoPhoto(photo?: PhotoItem): boolean { return photo?.media_type === 'video'; }
+export function isGifPhoto(photo?: PhotoItem): boolean { return photo?.media_type === 'gif'; }
 export const VIDEO_STREAM_SUFFIXES = ['=m22', '=m18', '=dv'] as const;
 export function getVideoStreamURL(rawUrl?: string, suffixIndex = 0): string {
   if (!rawUrl) return '';
@@ -80,17 +81,18 @@ export function resolvePhotoCarouselSourceAndUrl(config?: PhotoCarouselConfig, d
   }
   return { source: config?.source === 'ember_bridge' ? 'ember_bridge' : 'share_url', albumUrl: (config?.album_url || data?.album_url || '').trim() };
 }
-export function getBackdropPhotoURL(rawUrl?: string): string {
-  return rawUrl ? `${rawUrl}=w96-h54-c` : '';
+export function getBackdropPhotoURL(rawUrl?: string, isGif = false): string {
+  return rawUrl ? `${rawUrl}=w96-h54-c${isGif ? '-k' : ''}` : '';
 }
-export function getSizedPhotoURL(rawUrl?: string, containerSize?: ContainerSize, isVideo = false): string {
+export function getSizedPhotoURL(rawUrl?: string, containerSize?: ContainerSize, isVideo = false, isGif = false): string {
   if (!rawUrl) return '';
   const dpr = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
   const screenWidth = Math.round((((typeof window !== 'undefined' && (window.screen?.width || window.innerWidth)) || 1920) * dpr));
   const screenHeight = Math.round((((typeof window !== 'undefined' && (window.screen?.height || window.innerHeight)) || 1080) * dpr));
   const rectW = Math.round((containerSize?.width || 0) * dpr);
   const rectH = Math.round((containerSize?.height || 0) * dpr);
-  return `${rawUrl}=w${rectW > 0 ? rectW : screenWidth}-h${rectH > 0 ? rectH : screenHeight}${isVideo ? '-no' : ''}`;
+  const suffix = isVideo ? '-no' : isGif ? '-k' : '';
+  return `${rawUrl}=w${rectW > 0 ? rectW : screenWidth}-h${rectH > 0 ? rectH : screenHeight}${suffix}`;
 }
 
 export interface WidgetPhotoDeckState { currentKey: string | null; companionKey: string | null; seenKeys: Set<string>; remainingMs: number | null; }
@@ -380,8 +382,8 @@ export function usePhotoSlideshowTransition({
     const nextSecPhoto = nextSecIdx !== null ? currentPhotos[nextSecIdx] : undefined;
     const nextSecRawUrl = nextSecPhoto?.url ?? nextSecPhoto?.URL;
     const nextSecKey = nextSecIdx !== null ? getPhotoItemKey(nextSecPhoto, nextSecIdx) : null;
-    const nextFgUrl = getSizedPhotoURL(nextRawUrl, containerSizeRef.current, isVideoPhoto(nextPhoto));
-    const nextSecFgUrl = nextSecRawUrl ? getSizedPhotoURL(nextSecRawUrl, containerSizeRef.current, isVideoPhoto(nextSecPhoto)) : '';
+    const nextFgUrl = getSizedPhotoURL(nextRawUrl, containerSizeRef.current, isVideoPhoto(nextPhoto), isGifPhoto(nextPhoto));
+    const nextSecFgUrl = nextSecRawUrl ? getSizedPhotoURL(nextSecRawUrl, containerSizeRef.current, isVideoPhoto(nextSecPhoto), isGifPhoto(nextSecPhoto)) : '';
     const seq = ++cycleSeqRef.current;
     if (transitionTimeoutRef.current) { clearTimeout(transitionTimeoutRef.current); transitionTimeoutRef.current = null; }
 
