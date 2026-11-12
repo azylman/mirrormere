@@ -1,79 +1,32 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState, useSyncExternalStore } from 'react';
 
-export interface Speaker {
-  entity_id: string;
-  name: string;
-}
-
-export interface AccountProfile {
-  id: string;
-  name: string;
-  handle?: string;
-  type: 'email' | 'brand';
-}
-
+export interface Speaker { entity_id: string; name: string }
+export interface AccountProfile { id: string; name: string; handle?: string; type: 'email' | 'brand' }
 export interface SuggestedItem {
-  id: string;
-  title: string;
-  subtitle?: string;
-  kind: 'artist' | 'album';
-  thumb?: string;
-  video_id?: string;
-  playlist_id?: string;
+  id: string; title: string; subtitle?: string; kind: 'artist' | 'album';
+  thumb?: string; video_id?: string; playlist_id?: string;
 }
-
 export interface NowPlaying {
-  title?: string;
-  artist?: string;
-  thumb?: string;
-  state?: string;
-  volume?: number;
-  queue_index?: number;
-  video_id?: string;
+  title?: string; artist?: string; thumb?: string; state?: string;
+  volume?: number; queue_index?: number; video_id?: string;
 }
-
-export interface Playlist {
-  playlist_id: string;
-  title: string;
-  thumb?: string;
-  count?: number;
-}
-
-export interface QueueItem {
-  title: string;
-  artist: string;
-  thumb?: string;
-  id?: string;
-  video_id?: string;
-}
-
-export interface SearchResultItem {
-  video_id: string;
-  title: string;
-  artist: string;
-  thumb?: string;
-  duration?: string;
-}
-
+export interface Playlist { playlist_id: string; title: string; thumb?: string; count?: number }
+export interface QueueItem { title: string; artist: string; thumb?: string; id?: string; video_id?: string }
+export interface SearchResultItem { video_id: string; title: string; artist: string; thumb?: string; duration?: string }
 export interface MusicState {
-  active_speaker?: string;
-  speakers?: Speaker[];
-  now_playing?: NowPlaying;
-  playlists?: Playlist[];
-  queue?: QueueItem[];
-  accounts?: AccountProfile[];
-  active_account?: string;
-  suggestions?: SuggestedItem[];
+  active_speaker?: string; speakers?: Speaker[]; now_playing?: NowPlaying;
+  playlists?: Playlist[]; queue?: QueueItem[]; accounts?: AccountProfile[];
+  active_account?: string; suggestions?: SuggestedItem[];
+}
+export interface SharedYtMusicState {
+  now_playing?: NowPlaying; active_speaker: string; active_account?: string; apiBase: string;
 }
 
 export type YtMusicTab = 'discovery' | 'playlists' | 'queue' | 'search';
 
 export const DEFAULT_ART = 'https://brands.home-assistant.io/_/ytube_music_player/icon.png';
 
-export const LOCAL_SPEAKER: Speaker = {
-  entity_id: 'this_device',
-  name: 'This Device',
-};
+export const LOCAL_SPEAKER: Speaker = { entity_id: 'this_device', name: 'This Device' };
 
 export const DEFAULT_ACCOUNTS: AccountProfile[] = [
   { id: 'primary', name: 'Personal Profile', handle: '@personal', type: 'email' },
@@ -81,48 +34,113 @@ export const DEFAULT_ACCOUNTS: AccountProfile[] = [
 ];
 
 export const DEFAULT_SUGGESTIONS: SuggestedItem[] = [
-  {
-    id: 'sug-supermix',
-    title: 'My Supermix',
-    subtitle: 'Endless personalized mix',
-    kind: 'album',
-    playlist_id: 'RDTMAK5uy_ksetItRFlDrQI5PqO6aoUZgleGC9iAYjk',
-    thumb: DEFAULT_ART,
-  },
-  {
-    id: 'sug-discover',
-    title: 'Discover Mix',
-    subtitle: 'Fresh recommendations',
-    kind: 'album',
-    playlist_id: 'RDTMAK5uy_m-d_fG7e3v8P3i4c7Z4Y0_5c7n-t1x1u0',
-    thumb: DEFAULT_ART,
-  },
-  {
-    id: 'sug-chill',
-    title: 'Chillout Lounge',
-    subtitle: 'Downtempo & lofi beats',
-    kind: 'artist',
-    thumb: DEFAULT_ART,
-  },
-  {
-    id: 'sug-focus',
-    title: 'Deep Focus',
-    subtitle: 'Instrumental & ambient',
-    kind: 'artist',
-    thumb: DEFAULT_ART,
-  },
+  { id: 'sug-supermix', title: 'My Supermix', subtitle: 'Endless personalized mix', kind: 'album', playlist_id: 'RDTMAK5uy_ksetItRFlDrQI5PqO6aoUZgleGC9iAYjk', thumb: DEFAULT_ART },
+  { id: 'sug-discover', title: 'Discover Mix', subtitle: 'Fresh recommendations', kind: 'album', playlist_id: 'RDTMAK5uy_m-d_fG7e3v8P3i4c7Z4Y0_5c7n-t1x1u0', thumb: DEFAULT_ART },
+  { id: 'sug-chill', title: 'Chillout Lounge', subtitle: 'Downtempo & lofi beats', kind: 'artist', thumb: DEFAULT_ART },
+  { id: 'sug-focus', title: 'Deep Focus', subtitle: 'Instrumental & ambient', kind: 'artist', thumb: DEFAULT_ART },
 ];
 
 export const DEFAULT_STATE: MusicState = {
-  active_speaker: 'media_player.home_group',
-  speakers: [],
-  now_playing: {},
-  playlists: [],
-  queue: [],
-  accounts: DEFAULT_ACCOUNTS,
-  active_account: 'primary',
-  suggestions: DEFAULT_SUGGESTIONS,
+  active_speaker: 'media_player.home_group', speakers: [], now_playing: {},
+  playlists: [], queue: [], accounts: DEFAULT_ACCOUNTS,
+  active_account: 'primary', suggestions: DEFAULT_SUGGESTIONS,
 };
+
+const DEFAULT_SHARED_YTM_STATE: SharedYtMusicState = {
+  now_playing: undefined, active_speaker: 'this_device', active_account: undefined, apiBase: '/hearth-api',
+};
+
+let sharedYtMusicState: SharedYtMusicState = DEFAULT_SHARED_YTM_STATE;
+const sharedYtMusicListeners = new Set<() => void>();
+
+export function getSharedYtMusicState(): SharedYtMusicState {
+  return sharedYtMusicState;
+}
+
+export function setSharedYtMusicState(
+  updater: SharedYtMusicState | ((prev: SharedYtMusicState) => SharedYtMusicState),
+): void {
+  const next = typeof updater === 'function' ? updater(sharedYtMusicState) : updater;
+  if (JSON.stringify(sharedYtMusicState) === JSON.stringify(next)) {
+    return;
+  }
+  sharedYtMusicState = next;
+  for (const listener of sharedYtMusicListeners) {
+    listener();
+  }
+}
+
+const ytmInstances = new Map<string, boolean>();
+const ytmPrimaryListeners = new Set<() => void>();
+
+function notifyYtMusicPrimaryListeners(): void {
+  for (const listener of ytmPrimaryListeners) {
+    listener();
+  }
+}
+
+function getPrimaryYtMusicInstanceId(): string | null {
+  let firstId: string | null = null;
+  for (const [id, isCurrent] of ytmInstances.entries()) {
+    if (firstId === null) firstId = id;
+    if (isCurrent) return id;
+  }
+  return firstId;
+}
+
+function subscribeYtMusicPrimary(listener: () => void): () => void {
+  ytmPrimaryListeners.add(listener);
+  return () => {
+    ytmPrimaryListeners.delete(listener);
+  };
+}
+
+export function useYtMusicPrimaryInstance(isCurrentPane: boolean): boolean {
+  const id = useId();
+  useEffect(() => {
+    ytmInstances.set(id, isCurrentPane);
+    notifyYtMusicPrimaryListeners();
+    return () => {
+      ytmInstances.delete(id);
+      notifyYtMusicPrimaryListeners();
+    };
+  }, [id, isCurrentPane]);
+  return useSyncExternalStore(
+    subscribeYtMusicPrimary,
+    () => getPrimaryYtMusicInstanceId() === id,
+    () => isCurrentPane,
+  );
+}
+
+export function resetSharedYtMusicState(): void {
+  ytmInstances.clear();
+  notifyYtMusicPrimaryListeners();
+  setSharedYtMusicState(DEFAULT_SHARED_YTM_STATE);
+}
+
+function subscribeSharedYtMusicState(listener: () => void): () => void {
+  sharedYtMusicListeners.add(listener);
+  return () => {
+    sharedYtMusicListeners.delete(listener);
+  };
+}
+
+export function useSharedYtMusicState(): SharedYtMusicState {
+  return useSyncExternalStore(
+    subscribeSharedYtMusicState,
+    getSharedYtMusicState,
+    getSharedYtMusicState,
+  );
+}
+
+export function isYtMusicLiveIslandActive(np?: NowPlaying | null): boolean {
+  if (!np) return false;
+  const st = (np.state ?? '').trim().toLowerCase();
+  const hasTrack = Boolean(np.title?.trim() || np.video_id?.trim());
+  if (st === 'playing') return true;
+  if (st === 'paused' && hasTrack) return true;
+  return false;
+}
 
 declare global {
   interface Window {
@@ -209,7 +227,47 @@ export function useMusicStatePolling(
   activeAccountId: string | undefined,
 ): [MusicState, React.Dispatch<React.SetStateAction<MusicState>>] {
   'use no memo';
-  const [stateData, setStateData] = useState<MusicState>(DEFAULT_STATE);
+  const [stateData, setStateData] = useState<MusicState>(() => {
+    const shared = getSharedYtMusicState();
+    if (
+      shared.apiBase === apiBase &&
+      (shared.now_playing !== undefined || shared.active_account !== undefined)
+    ) {
+      return {
+        ...DEFAULT_STATE,
+        now_playing: shared.now_playing ?? DEFAULT_STATE.now_playing,
+        active_speaker: shared.active_speaker || DEFAULT_STATE.active_speaker,
+        active_account: shared.active_account ?? DEFAULT_STATE.active_account,
+      };
+    }
+    return DEFAULT_STATE;
+  });
+
+  useEffect(() => {
+    const syncListener = () => {
+      const shared = getSharedYtMusicState();
+      if (shared.apiBase !== apiBase) return;
+      setStateData((prev) => {
+        const nextNp = shared.now_playing ?? {};
+        const nextSpk = shared.active_speaker || prev.active_speaker;
+        const nextAcc = shared.active_account ?? prev.active_account;
+        if (
+          JSON.stringify(prev.now_playing) === JSON.stringify(nextNp) &&
+          prev.active_speaker === nextSpk &&
+          prev.active_account === nextAcc
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          now_playing: nextNp,
+          active_speaker: nextSpk,
+          active_account: nextAcc,
+        };
+      });
+    };
+    return subscribeSharedYtMusicState(syncListener);
+  }, [apiBase]);
 
   useEffect(() => {
     if (!isActive) return;

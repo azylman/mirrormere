@@ -5,31 +5,16 @@ import { useDocumentVisible } from '../../lifecycle/visibility';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import {
-  YtMusicNextIcon,
-  YtMusicPauseIcon,
-  YtMusicPlayIcon,
-  YtMusicPrevIcon,
-  YtMusicSpeakerIcon,
-  YtMusicStopIcon,
+  YtMusicNextIcon, YtMusicPauseIcon, YtMusicPlayIcon,
+  YtMusicPrevIcon, YtMusicSpeakerIcon, YtMusicStopIcon,
 } from './YtMusicIcons';
 import { YtMusicNowPlaying } from './YtMusicNowPlaying';
 import {
-  DEFAULT_ART,
-  postMusicApi,
-  resolveAccounts,
-  resolveSpeakersWithLocal,
-  resolveSuggestions,
-  useEmberAccounts,
-  useMusicStatePolling,
-  type AccountProfile,
-  type MusicState,
-  type NowPlaying,
-  type Playlist,
-  type QueueItem,
-  type SearchResultItem,
-  type Speaker,
-  type SuggestedItem,
-  type YtMusicTab,
+  DEFAULT_ART, DEFAULT_STATE, postMusicApi, resolveAccounts,
+  resolveSpeakersWithLocal, resolveSuggestions, setSharedYtMusicState,
+  useEmberAccounts, useMusicStatePolling, useYtMusicPrimaryInstance,
+  type AccountProfile, type MusicState, type NowPlaying, type Playlist,
+  type QueueItem, type SearchResultItem, type Speaker, type SuggestedItem, type YtMusicTab,
 } from './ytMusicTypes';
 
 export type { MusicState };
@@ -198,19 +183,52 @@ function YtMusicMediaGrid({
   );
 }
 
+function useYtMusicLocalAudio(
+  audioRef: React.RefObject<HTMLAudioElement | null>, shouldPlayLocal: boolean, isPrimaryInstance: boolean,
+  isLocalSpeaker: boolean, np: NowPlaying, activeVideoId: string | undefined, apiBase: string,
+): void {
+  'use no memo';
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.volume = Math.max(0, Math.min(1, (typeof np.volume === 'number' ? np.volume : 35) / 100));
+    if (shouldPlayLocal && activeVideoId) {
+      const streamUrl = `${apiBase}/music/stream/${encodeURIComponent(activeVideoId)}.m4a`;
+      if (audio.getAttribute('data-video-id') !== activeVideoId) {
+        audio.setAttribute('data-video-id', activeVideoId);
+        audio.src = streamUrl;
+      }
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => {});
+    } else {
+      audio.pause();
+      if (!isPrimaryInstance || !isLocalSpeaker || np.state === 'stopped') {
+        audio.removeAttribute('src');
+        audio.removeAttribute('data-video-id');
+      }
+    }
+  }, [audioRef, shouldPlayLocal, isPrimaryInstance, isLocalSpeaker, np.state, np.volume, activeVideoId, apiBase]);
+}
+
+function resolveApiBase(config?: Record<string, unknown>): string {
+  const rawApiBase = config?.api_base ?? config?.apiBase;
+  return typeof rawApiBase === 'string' && rawApiBase.trim() !== '' ? rawApiBase.trim().replace(/\/+$/, '') : '/hearth-api';
+}
+
+function resolveActiveVideoId(np: NowPlaying, queue?: QueueItem[]): string | undefined {
+  return np.video_id || (typeof np.queue_index === 'number' ? queue?.[np.queue_index]?.video_id : undefined) || queue?.[0]?.video_id;
+}
+
 export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponentProps) {
   'use no memo';
   const entry = useWidget(id);
   const config = entry?.meta?.config as Record<string, unknown> | undefined;
-  const rawApiBase = config?.api_base ?? config?.apiBase;
-  const apiBase =
-    typeof rawApiBase === 'string' && rawApiBase.trim() !== ''
-      ? rawApiBase.trim().replace(/\/+$/, '')
-      : '/hearth-api';
+  const apiBase = resolveApiBase(config);
 
   const isCurrentPane = useIsCurrentPane();
+  const isPrimaryInstance = useYtMusicPrimaryInstance(isCurrentPane);
   const isDocumentVisible = useDocumentVisible();
-  const isActive = isCurrentPane && isDocumentVisible;
+  const isActive = isPrimaryInstance && isDocumentVisible;
 
   const [selectedAccountId, setSelectedAccountId] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<YtMusicTab>('playlists');
@@ -229,6 +247,16 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   const accounts = resolveAccounts(stateData, config, emberAccounts);
   const currentActiveSpeaker = stateData.active_speaker && stateData.active_speaker.trim() !== '' ? stateData.active_speaker : (speakers[0]?.entity_id ?? 'this_device');
   const isLocalSpeaker = currentActiveSpeaker === 'this_device' || currentActiveSpeaker === 'local';
+
+  useEffect(() => {
+    if (!isPrimaryInstance || stateData === DEFAULT_STATE) return;
+    setSharedYtMusicState({
+      now_playing: stateData.now_playing,
+      active_speaker: currentActiveSpeaker,
+      active_account: activeAccountId,
+      apiBase,
+    });
+  }, [isPrimaryInstance, stateData, currentActiveSpeaker, activeAccountId, apiBase]);
 
   const postControl = async (action: string, extra: Record<string, unknown> = {}) => {
     const next = await postMusicApi(`${apiBase}/music/control`, {
@@ -351,35 +379,10 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   const np = stateData.now_playing || {};
   const isPlaying = np.state === 'playing';
   const showNowPlaying = !userBrowsing && (isPlaying || startingPlayback);
-  const activeVideoId =
-    np.video_id ||
-    (typeof np.queue_index === 'number' ? stateData.queue?.[np.queue_index]?.video_id : undefined) ||
-    stateData.queue?.[0]?.video_id;
+  const activeVideoId = resolveActiveVideoId(np, stateData.queue);
+  const shouldPlayLocal = isPrimaryInstance && isLocalSpeaker && np.state === 'playing' && Boolean(activeVideoId);
 
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    audio.volume = Math.max(0, Math.min(1, (typeof np.volume === 'number' ? np.volume : 35) / 100));
-
-    if (isLocalSpeaker && isPlaying && activeVideoId) {
-      const streamUrl = `${apiBase}/music/stream/${encodeURIComponent(activeVideoId)}.m4a`;
-      if (audio.getAttribute('data-video-id') !== activeVideoId) {
-        audio.setAttribute('data-video-id', activeVideoId);
-        audio.src = streamUrl;
-      }
-      const playPromise = audio.play();
-      if (playPromise && typeof playPromise.catch === 'function') {
-        playPromise.catch(() => {});
-      }
-    } else {
-      audio.pause();
-      if (!isLocalSpeaker || np.state === 'stopped') {
-        audio.removeAttribute('src');
-        audio.removeAttribute('data-video-id');
-      }
-    }
-  }, [isLocalSpeaker, isPlaying, np.state, np.volume, activeVideoId, apiBase]);
+  useYtMusicLocalAudio(audioRef, shouldPlayLocal, isPrimaryInstance, isLocalSpeaker, np, activeVideoId, apiBase);
 
   return (
     <div className="widget-yt-music">

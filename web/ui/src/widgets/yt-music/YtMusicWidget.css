@@ -603,3 +603,89 @@ body.theme-day .widget-yt-music .btn-browse-library,
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Header Live Island Media Pill */
+.next-event-pill.live-island-pill {
+  padding: 6px 10px 6px 8px;
+  gap: 10px;
+}
+
+.live-island-art {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.live-island-meta {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  flex: 1 1 auto;
+  max-width: 220px;
+  line-height: 1.15;
+}
+
+.live-island-title {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--mm-text-title, #2a2338);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-island-artist {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--mm-text-dim, #8b819f);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-island-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.live-island-btn {
+  border: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  background: rgba(139, 96, 237, 0.12);
+  color: var(--mm-text-title, #2a2338);
+  padding: 0;
+  transition: transform 0.12s ease, background 0.15s ease;
+}
+
+.live-island-btn.play-pause {
+  background: var(--mm-coral, #ff6f59);
+  color: #ffffff;
+}
+
+.live-island-btn:active {
+  transform: scale(0.92);
+}
+
+[data-theme="night"] .live-island-btn {
+  background: rgba(197, 163, 255, 0.18);
+  color: var(--mm-text-title, #f8f8f2);
+}
+
+[data-theme="night"] .live-island-btn.play-pause {
+  background: var(--mm-coral, #ff857f);
+  color: #2b2038;
+}
+

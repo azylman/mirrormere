@@ -328,13 +328,21 @@ export class CarouselController {
     if (!window.location?.origin || window.location.origin === 'null' || event.origin !== window.location.origin) {
       return;
     }
+    if (!event.data || typeof event.data !== 'object') {
+      return;
+    }
     if (
-      event.data &&
-      typeof event.data === 'object' &&
       event.data.type === 'hearth-swipe' &&
       (event.data.direction === 'next' || event.data.direction === 'prev')
     ) {
       this.goTo(neighbourOf(this.shown, this.total(), event.data.direction), event.data.direction);
+      return;
+    }
+    if (
+      event.data.type === 'hearth-screen-select' &&
+      typeof event.data.screen_index === 'number'
+    ) {
+      this.goTo(event.data.screen_index);
     }
   };
 
