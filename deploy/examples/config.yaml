@@ -161,8 +161,8 @@ display:
         expand_on_click: true
         expand_stream_url: "/hearth-api/cameras/doorbell/webrtc"
         expand_stream_type: "webrtc"
-        refresh_interval_seconds: 15
-        background_refresh_interval_seconds: 300
+        refresh_interval_seconds: 60
+        background_refresh_interval_seconds: 0
         stagger_index: 1
 
     - id: cam-isaac

@@ -55,10 +55,10 @@ function parsePositiveNumber(val: unknown): number | undefined {
   return !isNaN(n) && n > 0 ? n : undefined;
 }
 
-function parseNonNegativeInt(val: unknown): number | undefined {
+function parseNonNegativeNumber(val: unknown, floorInt = false): number | undefined {
   if (val === undefined || val === null || val === '') return undefined;
   const n = Number(val);
-  return !isNaN(n) && n >= 0 ? Math.floor(n) : undefined;
+  return !isNaN(n) && n >= 0 ? (floorInt ? Math.floor(n) : n) : undefined;
 }
 
 function parseNonEmptyStr(val: unknown, fallback: string): string {
@@ -86,9 +86,9 @@ export function parseLiveViewConfig(raw: unknown, fallbackId = ''): LiveViewConf
     control_url: typeof obj.control_url === 'string' ? obj.control_url : '',
     expand_stream_url: parseNonEmptyStr(obj.expand_stream_url, streamUrl),
     expand_stream_type: parseNonEmptyStr(obj.expand_stream_type, streamType),
-    refresh_interval_seconds: parsePositiveNumber(obj.refresh_interval_seconds) ?? (isMjpeg ? 15 : undefined),
-    background_refresh_interval_seconds: parsePositiveNumber(obj.background_refresh_interval_seconds) ?? (isMjpeg ? 300 : undefined),
-    stagger_index: parseNonNegativeInt(obj.stagger_index),
+    refresh_interval_seconds: parseNonNegativeNumber(obj.refresh_interval_seconds) ?? (isMjpeg ? 15 : undefined),
+    background_refresh_interval_seconds: parseNonNegativeNumber(obj.background_refresh_interval_seconds) ?? (isMjpeg ? 300 : undefined),
+    stagger_index: parseNonNegativeNumber(obj.stagger_index, true),
   };
 }
 
@@ -266,17 +266,15 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
 
     if (streamType === 'mjpeg') {
       if (imgRef.current) imgRef.current.src = streamUrl;
-      const intervalMs = (refreshIntervalSeconds ?? 15) * 1000;
+      const intervalSec = refreshIntervalSeconds ?? 15;
+      if (intervalSec <= 0) return () => stopDecoders(false);
+      const intervalMs = intervalSec * 1000;
       const staggerMs = computeStaggerDelayMs(id, staggerIndex, 1600);
       let intervalId: ReturnType<typeof setInterval> | null = null;
       const timeoutId = setTimeout(() => {
-        if (imgRef.current) {
-          imgRef.current.src = buildSnapshotUrl(streamUrl, Date.now());
-        }
+        if (imgRef.current) imgRef.current.src = buildSnapshotUrl(streamUrl, Date.now());
         intervalId = setInterval(() => {
-          if (imgRef.current) {
-            imgRef.current.src = buildSnapshotUrl(streamUrl, Date.now());
-          }
+          if (imgRef.current) imgRef.current.src = buildSnapshotUrl(streamUrl, Date.now());
         }, intervalMs);
       }, staggerMs);
       return () => {
@@ -359,7 +357,9 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     if (imgRef.current && !imgRef.current.getAttribute('src')) {
       imgRef.current.src = streamUrl;
     }
-    const bgIntervalMs = (backgroundRefreshIntervalSeconds ?? 300) * 1000;
+    const bgIntervalSec = backgroundRefreshIntervalSeconds ?? 300;
+    if (bgIntervalSec <= 0) return;
+    const bgIntervalMs = bgIntervalSec * 1000;
     const staggerMs = computeStaggerDelayMs(id, staggerIndex, 5000);
     let intervalId: ReturnType<typeof setInterval> | null = null;
     const timeoutId = setTimeout(() => {

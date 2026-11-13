@@ -125,6 +125,14 @@ describe('LiveViewWidget helpers', () => {
       expect(customMjpeg.background_refresh_interval_seconds).toBe(600);
       expect(customMjpeg.stagger_index).toBe(4);
 
+      const zeroRefreshMjpeg = parseLiveViewConfig({
+        stream_type: 'mjpeg',
+        refresh_interval_seconds: 0,
+        background_refresh_interval_seconds: 0,
+      });
+      expect(zeroRefreshMjpeg.refresh_interval_seconds).toBe(0);
+      expect(zeroRefreshMjpeg.background_refresh_interval_seconds).toBe(0);
+
       const webrtcDef = parseLiveViewConfig({ stream_type: 'webrtc' });
       expect(webrtcDef.refresh_interval_seconds).toBeUndefined();
       expect(webrtcDef.background_refresh_interval_seconds).toBeUndefined();
@@ -1582,5 +1590,43 @@ describe('LiveViewWidget component', () => {
       vi.advanceTimersByTime(300000);
     });
     expect(img.getAttribute('src')).toMatch(/^\/hearth-api\/cameras\/rosie_cam\/stream\?quality=high&t=\d+$/);
+  });
+
+  it('disables periodic on-screen and background refresh timers when refresh_interval_seconds and background_refresh_interval_seconds are 0', () => {
+    seedWidget({
+      stream_url: '/hearth-api/cameras/doorbell/stream',
+      stream_type: 'mjpeg',
+      title: 'Doorbell',
+      refresh_interval_seconds: 0,
+      background_refresh_interval_seconds: 0,
+      stagger_index: 1,
+    });
+
+    const { container, rerender } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/doorbell/stream');
+
+    // Advance well past normal 15s on-screen refresh + stagger: img.src must not append ?t=
+    act(() => {
+      vi.advanceTimersByTime(120000);
+    });
+    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/doorbell/stream');
+
+    // Switch off-pane: background_refresh_interval_seconds: 0 must also disable periodic timer
+    rerender(
+      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(600000);
+    });
+    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/doorbell/stream');
   });
 });

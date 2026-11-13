@@ -48,6 +48,7 @@ CAMERA_SLUG_RE = re.compile(r"^[a-z0-9_]+$")
 
 CAMERA_SNAP_CACHE = OrderedDict()
 CAMERA_LAST_GOOD_FRAME = OrderedDict()
+CAMERA_LAST_EVENT_STATE = {}
 CAMERA_SNAP_LOCK = threading.Lock()
 CAMERA_SNAP_TTL = 2.0
 HA_NEST_PLACEHOLDER_LEN = 2689
@@ -1442,6 +1443,8 @@ DEFAULT_CAMERAS = [
         "go2rtc_src": "doorbell",
         "title": "Doorbell",
         "group": "exterior",
+        "battery": True,
+        "event_entities": ["event.doorbell_motion", "event.doorbell_chime"],
     },
     {
         "id": "front_yard_camera",
@@ -1569,6 +1572,11 @@ def resolve_camera_target(camera_key):
         g2r = str(cam.get("go2rtc_src") or cid).lower()
         aliases = [str(a).lower() for a in (cam.get("aliases") or [])]
         if clean in (cid, ent, g2r) or slug in (cid, g2r) or clean in aliases or slug in aliases:
+            event_entities = [
+                str(e).strip().lower()
+                for e in (cam.get("event_entities") or [])
+                if str(e).strip() and HA_ENTITY_ID_RE.match(str(e).strip().lower())
+            ]
             return {
                 "id": cid or slug,
                 "entity_id": ent or f"camera.{slug}",
@@ -1576,6 +1584,8 @@ def resolve_camera_target(camera_key):
                 "title": cam.get("title") or slug.replace("_", " ").title(),
                 "group": cam.get("group") or "general",
                 "aliases": aliases,
+                "battery": bool(cam.get("battery", False)),
+                "event_entities": event_entities,
             }
 
     return {
@@ -1585,6 +1595,8 @@ def resolve_camera_target(camera_key):
         "title": slug.replace("_", " ").title(),
         "group": "general",
         "aliases": [],
+        "battery": False,
+        "event_entities": [],
     }
 
 
@@ -1682,12 +1694,59 @@ def _extract_first_jpeg_from_stream(stream, max_bytes=2 * 1024 * 1024):
     return None
 
 
+def _has_camera_event_changed(target):
+    if not isinstance(target, dict):
+        return False
+    cid = str(target.get("id") or "").strip().lower()
+    event_entities = target.get("event_entities") or []
+    if not cid or not event_entities:
+        return False
+
+    ha_url = str(_cfg("HA_BASE_URL", "")).strip().rstrip("/")
+    ha_tok = str(_cfg("HA_ACCESS_TOKEN", "")).strip()
+    if not ha_url or not ha_tok:
+        return False
+
+    current_states = {}
+    for ent in event_entities:
+        ent_str = str(ent).strip().lower()
+        if not HA_ENTITY_ID_RE.match(ent_str):
+            continue
+        url = f"{ha_url}/api/states/{urllib.parse.quote(ent_str)}"
+        req = urllib.request.Request(
+            url,
+            headers={"Authorization": f"Bearer {ha_tok}", "Accept": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=4) as r:
+                raw = r.read().decode("utf-8")
+                obj = json.loads(raw) if raw.strip() else {}
+                if isinstance(obj, dict):
+                    st = str(obj.get("state") or "").strip()
+                    if st and st not in ("unknown", "unavailable", "none", "null"):
+                        current_states[ent_str] = st
+        except Exception as e:
+            print(f"[HEARTH-Bridge] HA camera event state read warning for {ent_str}: {e}", flush=True)
+
+    if not current_states:
+        return False
+
+    state_sig = tuple(sorted(current_states.items()))
+    with CAMERA_SNAP_LOCK:
+        prev_sig = CAMERA_LAST_EVENT_STATE.get(cid)
+        if prev_sig != state_sig:
+            CAMERA_LAST_EVENT_STATE[cid] = state_sig
+            return True
+    return False
+
+
 def fetch_camera_snapshot(camera_key, force_refresh=False):
     target = resolve_camera_target(camera_key)
     if not target:
         return None, None
 
     cid = target["id"]
+    is_battery = bool(target.get("battery", False))
     now = time.time()
     if not force_refresh:
         with CAMERA_SNAP_LOCK:
@@ -1695,6 +1754,19 @@ def fetch_camera_snapshot(camera_key, force_refresh=False):
             if cached and now - cached[0] < CAMERA_SNAP_TTL:
                 CAMERA_SNAP_CACHE.move_to_end(cid)
                 return cached[1], cached[2]
+
+    event_changed = False
+    if is_battery and not force_refresh:
+        event_changed = _has_camera_event_changed(target)
+        if not event_changed:
+            with CAMERA_SNAP_LOCK:
+                last_good = CAMERA_LAST_GOOD_FRAME.get(cid)
+                if last_good:
+                    CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
+                    if isinstance(last_good, tuple) and len(last_good) == 3:
+                        return last_good[1], last_good[2]
+                    elif isinstance(last_good, tuple) and len(last_good) == 2:
+                        return last_good[0], last_good[1]
 
     ha_url = str(_cfg("HA_BASE_URL", "")).strip().rstrip("/")
     ha_tok = str(_cfg("HA_ACCESS_TOKEN", "")).strip()
@@ -1727,6 +1799,19 @@ def fetch_camera_snapshot(camera_key, force_refresh=False):
                         break
             except Exception as e:
                 print(f"[HEARTH-Bridge] HA camera snapshot warning for {ent}: {e}", flush=True)
+
+    if is_battery and not force_refresh and not event_changed:
+        with CAMERA_SNAP_LOCK:
+            last_good = CAMERA_LAST_GOOD_FRAME.get(cid)
+            if last_good:
+                CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
+                if isinstance(last_good, tuple) and len(last_good) == 3:
+                    return last_good[1], last_good[2]
+                elif isinstance(last_good, tuple) and len(last_good) == 2:
+                    return last_good[0], last_good[1]
+        if ha_fallback_data:
+            return ha_fallback_data, ha_fallback_type
+        return None, None
 
     if go2rtc_base:
         candidate_srcs = [target["go2rtc_src"]]
@@ -1782,7 +1867,8 @@ def fetch_camera_snapshot(camera_key, force_refresh=False):
 def warm_camera_snapshots_once(stagger_sec=2.0):
     warmed = []
     cams = _get_configured_cameras()
-    for idx, cam in enumerate(cams):
+    warm_idx = 0
+    for cam in cams:
         if CAMERA_WARMER_STOP_EVENT.is_set():
             break
         if not isinstance(cam, dict):
@@ -1790,9 +1876,13 @@ def warm_camera_snapshots_once(stagger_sec=2.0):
         cam_id = cam.get("id") or cam.get("entity_id") or ""
         if not cam_id:
             continue
-        if idx > 0 and stagger_sec and stagger_sec > 0:
+        target = resolve_camera_target(cam_id)
+        if target and target.get("battery") and not _has_camera_event_changed(target):
+            continue
+        if warm_idx > 0 and stagger_sec and stagger_sec > 0:
             if CAMERA_WARMER_STOP_EVENT.wait(stagger_sec):
                 break
+        warm_idx += 1
         try:
             data, ctype = fetch_camera_snapshot(cam_id, force_refresh=True)
             if data and len(data) != HA_NEST_PLACEHOLDER_LEN:
