@@ -2580,7 +2580,7 @@ class Handler(BaseHTTPRequestHandler):
             force_val = str((qs.get("force") or [""])[0]).strip().lower()
             force_refresh = force_val in ("1", "true", "yes")
             active_val = str((qs.get("active") or [""])[0]).strip().lower()
-            active_refresh = active_val in ("1", "true", "yes")
+            active_refresh = active_val in ("1", "true", "yes") or bool((qs.get("t") or [""])[0].strip())
             data, ctype = fetch_camera_snapshot(
                 cam_key,
                 force_refresh=force_refresh,

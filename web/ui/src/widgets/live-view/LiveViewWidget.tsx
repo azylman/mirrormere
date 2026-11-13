@@ -23,6 +23,7 @@ export interface LiveViewConfig {
   refresh_interval_seconds?: number;
   background_refresh_interval_seconds?: number;
   stagger_index?: number;
+  idle_timeout_seconds?: number;
 }
 
 export function computeStaggerDelayMs(id: string, staggerIndex?: number, stepMs = 1600): number {
@@ -30,15 +31,12 @@ export function computeStaggerDelayMs(id: string, staggerIndex?: number, stepMs 
     return Math.floor(staggerIndex) * stepMs;
   }
   let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
-  }
+  for (let i = 0; i < id.length; i++) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
   return (Math.abs(hash) % 9) * stepMs;
 }
 
 function buildSnapshotUrl(baseUrl: string, timestamp: number): string {
-  const sep = baseUrl.includes('?') ? '&' : '?';
-  return `${baseUrl}${sep}t=${timestamp}`;
+  return `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}t=${timestamp}`;
 }
 
 function unwrapConfigObject(raw: unknown): Record<string, unknown> {
@@ -89,6 +87,7 @@ export function parseLiveViewConfig(raw: unknown, fallbackId = ''): LiveViewConf
     refresh_interval_seconds: parseNonNegativeNumber(obj.refresh_interval_seconds) ?? (isMjpeg ? 15 : undefined),
     background_refresh_interval_seconds: parseNonNegativeNumber(obj.background_refresh_interval_seconds) ?? (isMjpeg ? 300 : undefined),
     stagger_index: parseNonNegativeNumber(obj.stagger_index, true),
+    idle_timeout_seconds: parsePositiveNumber(obj.idle_timeout_seconds),
   };
 }
 
@@ -105,9 +104,7 @@ function waitForIceGathering(pc: RTCPeerConnection, signal: AbortSignal): Promis
       signal.removeEventListener('abort', cleanup);
       resolve();
     };
-    const onIceChange = () => {
-      if (pc.iceGatheringState === 'complete') cleanup();
-    };
+    const onIceChange = () => { if (pc.iceGatheringState === 'complete') cleanup(); };
     timer = setTimeout(cleanup, 500);
     if (typeof pc.addEventListener === 'function') pc.addEventListener('icegatheringstatechange', onIceChange);
     signal.addEventListener('abort', cleanup);
@@ -178,6 +175,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     refresh_interval_seconds: refreshIntervalSeconds,
     background_refresh_interval_seconds: backgroundRefreshIntervalSeconds,
     stagger_index: staggerIndex,
+    idle_timeout_seconds: idleTimeoutSeconds,
   } = config;
 
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -186,6 +184,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
 
   const [isLoading, setIsLoading] = useState(false);
   const [isIntersecting, setIsIntersecting] = useState(() => true);
+  const [isIdle, setIsIdle] = useState(false);
 
   const epochRef = useRef(0);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -199,12 +198,12 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
   const [prevVideoMode, setPrevVideoMode] = useState(videoMode);
   if (videoMode !== prevVideoMode) {
     setPrevVideoMode(videoMode);
-    if (videoMode === 'video') {
-      if (isLoading) setIsLoading(false);
-    } else if (prevVideoMode === 'video') {
-      setIsIntersecting(true);
-    }
+    if (videoMode === 'video' && isLoading) setIsLoading(false);
+    else if (prevVideoMode === 'video') setIsIntersecting(true);
   }
+
+  const isPaneActive = isCurrentPane && isDocumentVisible && videoMode !== 'video';
+  if (!isPaneActive && isIdle) setIsIdle(false);
 
   useEffect(() => {
     if (videoMode === 'video' && safetyTimerRef.current) {
@@ -212,6 +211,37 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
       safetyTimerRef.current = null;
     }
   }, [videoMode]);
+
+  useEffect(() => {
+    if (!isPaneActive) return;
+    const idleMs = (idleTimeoutSeconds ?? 300) * 1000;
+    if (idleMs <= 0) return;
+
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    const armTimer = () => {
+      if (timerId) clearTimeout(timerId);
+      timerId = setTimeout(() => {
+        setIsIdle(true);
+        const store = useDisplayStore.getState();
+        if (store.screen.currentScreen > 0) {
+          store.setCurrentScreen(0);
+          Promise.resolve(fetch('api/screen/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screen_index: 0 }) })).catch(() => {});
+        }
+      }, idleMs);
+    };
+    const handleActivity = () => { setIsIdle(false); armTimer(); };
+    armTimer();
+    window.addEventListener('pointerdown', handleActivity, { passive: true });
+    window.addEventListener('touchstart', handleActivity, { passive: true });
+    window.addEventListener('keydown', handleActivity, { passive: true });
+
+    return () => {
+      if (timerId) clearTimeout(timerId);
+      window.removeEventListener('pointerdown', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+    };
+  }, [isPaneActive, idleTimeoutSeconds]);
 
   useEffect(() => {
     const el = rootRef.current;
@@ -252,7 +282,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     }
   };
 
-  const shouldPlay = isCurrentPane && isDocumentVisible && isIntersecting && videoMode !== 'video' && Boolean(streamUrl);
+  const shouldPlay = isCurrentPane && isDocumentVisible && isIntersecting && videoMode !== 'video' && !isIdle && Boolean(streamUrl);
   const shouldBackgroundRefresh = !isCurrentPane && isDocumentVisible && videoMode !== 'video' && Boolean(streamUrl) && streamType === 'mjpeg';
 
   useEffect(() => {
@@ -313,33 +343,15 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
         };
 
         const offer = await pc.createOffer();
-        if (epochRef.current !== epoch || ac.signal.aborted) {
-          try { pc.close(); } catch { /* ignore */ }
-          return;
-        }
+        if (epochRef.current !== epoch || ac.signal.aborted) { try { pc.close(); } catch { /* ignore */ } return; }
         await pc.setLocalDescription(offer);
-        if (epochRef.current !== epoch || ac.signal.aborted) {
-          try { pc.close(); } catch { /* ignore */ }
-          return;
-        }
-
+        if (epochRef.current !== epoch || ac.signal.aborted) { try { pc.close(); } catch { /* ignore */ } return; }
         await waitForIceGathering(pc, ac.signal);
-        if (epochRef.current !== epoch || ac.signal.aborted) {
-          try { pc.close(); } catch { /* ignore */ }
-          return;
-        }
-
+        if (epochRef.current !== epoch || ac.signal.aborted) { try { pc.close(); } catch { /* ignore */ } return; }
         const answerSdp = await exchangeWhepSDP(streamUrl, pc.localDescription?.sdp ?? '', ac.signal);
-        if (epochRef.current !== epoch || ac.signal.aborted) {
-          try { pc.close(); } catch { /* ignore */ }
-          return;
-        }
-
+        if (epochRef.current !== epoch || ac.signal.aborted) { try { pc.close(); } catch { /* ignore */ } return; }
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-        if (epochRef.current !== epoch || ac.signal.aborted) {
-          try { pc.close(); } catch { /* ignore */ }
-          return;
-        }
+        if (epochRef.current !== epoch || ac.signal.aborted) { try { pc.close(); } catch { /* ignore */ } return; }
         videoRef.current?.play?.()?.catch?.(() => {});
       } catch (err) {
         if (epochRef.current === epoch && !ac.signal.aborted) {
@@ -354,9 +366,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
 
   useEffect(() => {
     if (!shouldBackgroundRefresh) return;
-    if (imgRef.current && !imgRef.current.getAttribute('src')) {
-      imgRef.current.src = streamUrl;
-    }
+    if (imgRef.current && !imgRef.current.getAttribute('src')) imgRef.current.src = streamUrl;
     const bgIntervalSec = backgroundRefreshIntervalSeconds ?? 300;
     if (bgIntervalSec <= 0) return;
     const bgIntervalMs = bgIntervalSec * 1000;
@@ -364,9 +374,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     let intervalId: ReturnType<typeof setInterval> | null = null;
     const timeoutId = setTimeout(() => {
       intervalId = setInterval(() => {
-        if (imgRef.current) {
-          imgRef.current.src = buildSnapshotUrl(streamUrl, Date.now());
-        }
+        if (imgRef.current) imgRef.current.src = buildSnapshotUrl(streamUrl, Date.now());
       }, bgIntervalMs);
     }, staggerMs);
     return () => {
@@ -403,9 +411,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: streamId, action: 'wake' }),
-      }).catch((err) => {
-        console.warn('[MirrormereLiveView] Wake action failed:', err);
-      });
+      }).catch((err) => { console.warn('[MirrormereLiveView] Wake action failed:', err); });
     }
 
     try {
@@ -425,9 +431,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     }
   };
 
-  const handlePointerDown = (e: React.PointerEvent) => {
-    pointerDownCoordsRef.current = getPointerCoords(e);
-  };
+  const handlePointerDown = (e: React.PointerEvent) => { pointerDownCoordsRef.current = getPointerCoords(e); };
   const handlePointerUp = (e: React.PointerEvent) => {
     const start = pointerDownCoordsRef.current;
     pointerDownCoordsRef.current = null;
@@ -443,13 +447,11 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     void triggerExpand();
   };
 
-  useEffect(() => {
-    return () => {
-      if (safetyTimerRef.current) {
-        clearTimeout(safetyTimerRef.current);
-        safetyTimerRef.current = null;
-      }
-    };
+  useEffect(() => () => {
+    if (safetyTimerRef.current) {
+      clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = null;
+    }
   }, []);
 
   return (

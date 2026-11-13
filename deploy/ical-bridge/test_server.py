@@ -1330,6 +1330,11 @@ class TestHandlerEndpoints(unittest.TestCase):
             h3.send_response.assert_called_with(200)
             mock_fetch.assert_called_with("rosie_cam", force_refresh=False, active_refresh=False)
 
+            h4 = self._create_handler("GET", "/hearth-api/cameras/rosie_cam/stream?t=123456", client_ip="127.0.0.1")
+            h4.do_GET()
+            h4.send_response.assert_called_with(200)
+            mock_fetch.assert_called_with("rosie_cam", force_refresh=False, active_refresh=True)
+
 
 if __name__ == "__main__":
     unittest.main()

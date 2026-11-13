@@ -1629,4 +1629,75 @@ describe('LiveViewWidget component', () => {
     });
     expect(img.getAttribute('src')).toBe('/hearth-api/cameras/doorbell/stream');
   });
+
+  it('pauses on-screen mjpeg refresh after 5-minute idle timeout, returns to screen 0, and resets timer on pointerdown', () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+    } as Response);
+
+    useDisplayStore.setState((s) => ({
+      ...s,
+      screen: { ...s.screen, currentScreen: 1 },
+    }));
+
+    seedWidget({
+      stream_url: '/hearth-api/cameras/rosie_cam/stream',
+      stream_type: 'mjpeg',
+      title: 'Rosie Cam',
+      refresh_interval_seconds: 30,
+      background_refresh_interval_seconds: 0,
+      stagger_index: 0,
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 1 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
+
+    // Advance 4 minutes (240_000 ms): still active, pointerdown resets the 5-minute idle timer
+    act(() => {
+      vi.advanceTimersByTime(240_000);
+    });
+    expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+
+    act(() => {
+      fireEvent.pointerDown(window);
+    });
+
+    // Advance another 4 minutes (240_000 ms): because pointerdown reset the timer, still not idle at 480s total
+    act(() => {
+      vi.advanceTimersByTime(240_000);
+    });
+    expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+
+    const srcBeforeIdle = img.getAttribute('src') ?? '';
+    expect(srcBeforeIdle).toMatch(/^\/hearth-api\/cameras\/rosie_cam\/stream\?t=\d+$/);
+
+    // Advance remaining 60_000 ms to reach 300_000 ms (5 minutes) since last pointerdown
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'api/screen/select',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ screen_index: 0 }),
+      }),
+    );
+
+    const srcAtIdle = img.getAttribute('src') ?? '';
+
+    // Advance another 120_000 ms while idle: MJPEG snapshot refresh is paused
+    act(() => {
+      vi.advanceTimersByTime(120_000);
+    });
+    expect(img.getAttribute('src')).toBe(srcAtIdle);
+  });
 });
