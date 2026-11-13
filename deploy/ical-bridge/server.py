@@ -1444,6 +1444,7 @@ DEFAULT_CAMERAS = [
         "title": "Doorbell",
         "group": "exterior",
         "battery": True,
+        "event_driven": True,
         "event_entities": ["event.doorbell_motion", "event.doorbell_chime"],
     },
     {
@@ -1452,6 +1453,8 @@ DEFAULT_CAMERAS = [
         "go2rtc_src": "front_yard_camera",
         "title": "Front Yard",
         "group": "exterior",
+        "event_driven": True,
+        "event_entities": ["event.front_yard_camera_motion"],
     },
     {
         "id": "sideyard_stairs",
@@ -1459,6 +1462,8 @@ DEFAULT_CAMERAS = [
         "go2rtc_src": "sideyard_stairs",
         "title": "Sideyard Stairs",
         "group": "exterior",
+        "event_driven": True,
+        "event_entities": ["event.sideyard_stairs_motion"],
     },
     {
         "id": "deck_camera",
@@ -1466,6 +1471,8 @@ DEFAULT_CAMERAS = [
         "go2rtc_src": "deck_camera",
         "title": "Deck",
         "group": "exterior",
+        "event_driven": True,
+        "event_entities": ["event.deck_camera_motion"],
     },
     {
         "id": "top_of_the_hill",
@@ -1473,6 +1480,8 @@ DEFAULT_CAMERAS = [
         "go2rtc_src": "top_of_the_hill",
         "title": "Top of the Hill",
         "group": "exterior",
+        "event_driven": True,
+        "event_entities": ["event.top_of_the_hill_motion"],
     },
     {
         "id": "rosie_cam",
@@ -1480,6 +1489,8 @@ DEFAULT_CAMERAS = [
         "go2rtc_src": "rosie_cam",
         "title": "Rosie Cam",
         "group": "kids",
+        "event_driven": True,
+        "event_entities": ["event.rosie_cam_motion"],
     },
     {
         "id": "isaac_cam",
@@ -1487,6 +1498,8 @@ DEFAULT_CAMERAS = [
         "go2rtc_src": "isaac_cam",
         "title": "Isaac Cam",
         "group": "kids",
+        "event_driven": True,
+        "event_entities": ["event.isaac_cam_motion"],
     },
     {
         "id": "eve_cam",
@@ -1504,6 +1517,8 @@ DEFAULT_CAMERAS = [
         ],
         "title": "Eve Cam",
         "group": "kids",
+        "event_driven": True,
+        "event_entities": ["event.bedroom_bedroom_camera_motion", "event.eve_cam_motion"],
     },
     {
         "id": "kitchen_hub",
@@ -1511,6 +1526,8 @@ DEFAULT_CAMERAS = [
         "go2rtc_src": "kitchen_hub",
         "title": "Living Room Hub",
         "group": "indoor",
+        "event_driven": True,
+        "event_entities": ["event.kitchen_hub_motion", "event.living_room_hub_motion"],
     },
     {
         "id": "octoprint_camera",
@@ -1585,6 +1602,7 @@ def resolve_camera_target(camera_key):
                 "group": cam.get("group") or "general",
                 "aliases": aliases,
                 "battery": bool(cam.get("battery", False)),
+                "event_driven": bool(cam.get("event_driven", bool(cam.get("battery", False)) or bool(event_entities))),
                 "event_entities": event_entities,
             }
 
@@ -1596,6 +1614,7 @@ def resolve_camera_target(camera_key):
         "group": "general",
         "aliases": [],
         "battery": False,
+        "event_driven": False,
         "event_entities": [],
     }
 
@@ -1694,7 +1713,7 @@ def _extract_first_jpeg_from_stream(stream, max_bytes=2 * 1024 * 1024):
     return None
 
 
-def _has_camera_event_changed(target):
+def _has_camera_event_changed(target, ha_states_map=None):
     if not isinstance(target, dict):
         return False
     cid = str(target.get("id") or "").strip().lower()
@@ -1702,37 +1721,53 @@ def _has_camera_event_changed(target):
     if not cid or not event_entities:
         return False
 
-    ha_url = str(_cfg("HA_BASE_URL", "")).strip().rstrip("/")
-    ha_tok = str(_cfg("HA_ACCESS_TOKEN", "")).strip()
-    if not ha_url or not ha_tok:
-        return False
-
     current_states = {}
-    for ent in event_entities:
-        ent_str = str(ent).strip().lower()
-        if not HA_ENTITY_ID_RE.match(ent_str):
-            continue
-        url = f"{ha_url}/api/states/{urllib.parse.quote(ent_str)}"
-        req = urllib.request.Request(
-            url,
-            headers={"Authorization": f"Bearer {ha_tok}", "Accept": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=4) as r:
-                raw = r.read().decode("utf-8")
-                obj = json.loads(raw) if raw.strip() else {}
-                if isinstance(obj, dict):
-                    st = str(obj.get("state") or "").strip()
-                    if st and st not in ("unknown", "unavailable", "none", "null"):
-                        current_states[ent_str] = st
-        except Exception as e:
-            print(f"[HEARTH-Bridge] HA camera event state read warning for {ent_str}: {e}", flush=True)
+    if isinstance(ha_states_map, dict):
+        for ent in event_entities:
+            ent_str = str(ent).strip().lower()
+            if not HA_ENTITY_ID_RE.match(ent_str):
+                continue
+            obj = ha_states_map.get(ent_str)
+            if isinstance(obj, dict):
+                st = str(obj.get("state") or "").strip()
+                if st and st not in ("unknown", "unavailable", "none", "null"):
+                    current_states[ent_str] = st
+            elif isinstance(obj, str) and obj.strip() and obj.strip() not in ("unknown", "unavailable", "none", "null"):
+                current_states[ent_str] = obj.strip()
+    else:
+        ha_url = str(_cfg("HA_BASE_URL", "")).strip().rstrip("/")
+        ha_tok = str(_cfg("HA_ACCESS_TOKEN", "")).strip()
+        if not ha_url or not ha_tok:
+            return False
+
+        for ent in event_entities:
+            ent_str = str(ent).strip().lower()
+            if not HA_ENTITY_ID_RE.match(ent_str):
+                continue
+            url = f"{ha_url}/api/states/{urllib.parse.quote(ent_str)}"
+            req = urllib.request.Request(
+                url,
+                headers={"Authorization": f"Bearer {ha_tok}", "Accept": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=4) as r:
+                    raw = r.read().decode("utf-8")
+                    obj = json.loads(raw) if raw.strip() else {}
+                    if isinstance(obj, dict):
+                        st = str(obj.get("state") or "").strip()
+                        if st and st not in ("unknown", "unavailable", "none", "null"):
+                            current_states[ent_str] = st
+            except Exception as e:
+                print(f"[HEARTH-Bridge] HA camera event state read warning for {ent_str}: {e}", flush=True)
 
     if not current_states:
         return False
 
     state_sig = tuple(sorted(current_states.items()))
     with CAMERA_SNAP_LOCK:
+        if cid not in CAMERA_LAST_EVENT_STATE:
+            CAMERA_LAST_EVENT_STATE[cid] = state_sig
+            return False
         prev_sig = CAMERA_LAST_EVENT_STATE.get(cid)
         if prev_sig != state_sig:
             CAMERA_LAST_EVENT_STATE[cid] = state_sig
@@ -1747,6 +1782,7 @@ def fetch_camera_snapshot(camera_key, force_refresh=False):
 
     cid = target["id"]
     is_battery = bool(target.get("battery", False))
+    is_event_driven = bool(target.get("event_driven", is_battery))
     now = time.time()
     if not force_refresh:
         with CAMERA_SNAP_LOCK:
@@ -1756,7 +1792,7 @@ def fetch_camera_snapshot(camera_key, force_refresh=False):
                 return cached[1], cached[2]
 
     event_changed = False
-    if is_battery and not force_refresh:
+    if is_event_driven and not force_refresh:
         event_changed = _has_camera_event_changed(target)
         if not event_changed:
             with CAMERA_SNAP_LOCK:
@@ -1877,8 +1913,17 @@ def warm_camera_snapshots_once(stagger_sec=2.0):
         if not cam_id:
             continue
         target = resolve_camera_target(cam_id)
-        if target and target.get("battery") and not _has_camera_event_changed(target):
+        if not target:
             continue
+        cid = target["id"]
+        is_battery = bool(target.get("battery", False))
+        is_event_driven = bool(target.get("event_driven", is_battery))
+        if is_event_driven:
+            event_changed = _has_camera_event_changed(target)
+            with CAMERA_SNAP_LOCK:
+                has_good_frame = cid in CAMERA_LAST_GOOD_FRAME
+            if not event_changed and (is_battery or has_good_frame):
+                continue
         if warm_idx > 0 and stagger_sec and stagger_sec > 0:
             if CAMERA_WARMER_STOP_EVENT.wait(stagger_sec):
                 break
@@ -1892,7 +1937,7 @@ def warm_camera_snapshots_once(stagger_sec=2.0):
     return warmed
 
 
-def _camera_warmer_loop(interval_sec=300, stagger_sec=2.0):
+def _camera_warmer_loop(interval_sec=15, stagger_sec=1.5):
     while not CAMERA_WARMER_STOP_EVENT.is_set():
         try:
             warm_camera_snapshots_once(stagger_sec=stagger_sec)
@@ -1902,7 +1947,7 @@ def _camera_warmer_loop(interval_sec=300, stagger_sec=2.0):
             break
 
 
-def _start_camera_warmer_daemon(interval_sec=300, stagger_sec=2.0):
+def _start_camera_warmer_daemon(interval_sec=15, stagger_sec=1.5):
     t = threading.Thread(
         target=_camera_warmer_loop,
         kwargs={"interval_sec": interval_sec, "stagger_sec": stagger_sec},
@@ -2490,7 +2535,9 @@ class Handler(BaseHTTPRequestHandler):
             if not target:
                 self._send_json_error(400, "Invalid camera identifier")
                 return
-            data, ctype = fetch_camera_snapshot(cam_key)
+            force_val = str((qs.get("force") or [""])[0]).strip().lower()
+            force_refresh = force_val in ("1", "true", "yes")
+            data, ctype = fetch_camera_snapshot(cam_key, force_refresh=force_refresh)
             if data:
                 self.send_response(200)
                 self.send_header("Content-Type", ctype or "image/jpeg")
@@ -2651,7 +2698,7 @@ if __name__ == "__main__":
     socket.getaddrinfo = _ipv4_getaddrinfo
 
     threading.Thread(target=_music_auto_advance_loop, daemon=True).start()
-    _start_camera_warmer_daemon(interval_sec=300, stagger_sec=2.0)
+    _start_camera_warmer_daemon(interval_sec=15, stagger_sec=1.5)
     srv = ThreadingHTTPServer(("0.0.0.0", 8099), Handler)
     print("[HEARTH-Bridge] Listening on :8099", flush=True)
     srv.serve_forever()
