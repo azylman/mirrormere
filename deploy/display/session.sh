@@ -122,6 +122,7 @@ if [[ "$SOCKET_READY" -ne 1 ]]; then
     echo "[Mirrormere Session] Error: Wayland display socket (${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}) timed out after 5s" >&2
     exit 1
 fi
+chmod 0666 "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" 2>/dev/null || true
 
 # Launch kanshi daemon with FD isolation if configuration exists
 if [[ -f "${HOME}/.config/kanshi/config" ]] && command -v kanshi >/dev/null 2>&1; then
@@ -145,10 +146,34 @@ for _ in $(seq 1 25); do
 done
 OUTPUT="${OUTPUT:-HDMI-A-1}"
 
+# Resolve Chrome user data directory
+if [[ -n "${MIRRORMERE_CHROME_USER_DATA_DIR:-}" ]]; then
+    CHROME_USER_DATA_DIR="${MIRRORMERE_CHROME_USER_DATA_DIR}"
+elif [[ -d "/data/chrome-profile" && -w "/data/chrome-profile" ]]; then
+    CHROME_USER_DATA_DIR="/data/chrome-profile"
+else
+    CHROME_USER_DATA_DIR="${HOME}/.config/mirrormere-chrome"
+fi
+
 # Apply display output scaling
 SCALE_FACTOR="${MIRRORMERE_SCALE_FACTOR:-1.0}"
+CHROME_DEVICE_SCALE="${SCALE_FACTOR}"
+WLR_SCALE_OK=0
 if command -v wlr-randr >/dev/null 2>&1; then
-    wlr-randr --output "$OUTPUT" --scale "$SCALE_FACTOR" 2>/dev/null || true
+    if wlr-randr --output "$OUTPUT" --scale "$SCALE_FACTOR" 2>/dev/null; then
+        WLR_SCALE_OK=1
+    fi
+fi
+
+if [[ "$SCALE_FACTOR" != "1.0" && "$SCALE_FACTOR" != "1" ]]; then
+    mkdir -p "${CHROME_USER_DATA_DIR}/Default"
+    if [[ "$WLR_SCALE_OK" -eq 1 ]]; then
+        printf '{"partition":{"default_zoom_level":{"x":0.0}},"profile":{"default_zoom_level":0.0}}\n' > "${CHROME_USER_DATA_DIR}/Default/Preferences"
+    else
+        CHROME_DEVICE_SCALE="1.0"
+        ZOOM_LEVEL="$(awk -v s="$SCALE_FACTOR" 'BEGIN { printf "%.16f", log(s)/log(1.2) }')"
+        printf '{"partition":{"default_zoom_level":{"x":%s}},"profile":{"default_zoom_level":%s}}\n' "$ZOOM_LEVEL" "$ZOOM_LEVEL" > "${CHROME_USER_DATA_DIR}/Default/Preferences"
+    fi
 fi
 
 # Wake and set DDC brightness if hardware tool is available (VCP 0x10 is display luminance)
@@ -164,7 +189,7 @@ run_swayidle() {
     while true; do
         swayidle -w \
             timeout "$IDLE_TIMEOUT_SECONDS" "wlr-randr --output ${OUTPUT} --off" \
-            resume "wlr-randr --output ${OUTPUT} --on" || true
+            resume "wlr-randr --output ${OUTPUT} --on --scale ${SCALE_FACTOR} || wlr-randr --output ${OUTPUT} --on" || true
         sleep 0.5 2>/dev/null || python3 -c "import time; time.sleep(0.5)" 2>/dev/null || true
     done
 }
@@ -198,7 +223,6 @@ if command -v wlr-randr >/dev/null 2>&1; then
 fi
 
 # Clean up any stale Chrome singleton locks from past crashes
-CHROME_USER_DATA_DIR="${HOME}/.config/mirrormere-chrome"
 rm -f "${CHROME_USER_DATA_DIR}/Singleton"* "${HOME}/.config/google-chrome/Singleton"* "${HOME}/.config/chromium/Singleton"* 2>/dev/null || true
 
 # Locate Google Chrome or Chromium binary
@@ -220,7 +244,7 @@ CHROME_FLAGS=(
     --noerrdialogs
     --ozone-platform=wayland
     "--enable-features=UseOzonePlatform,OverlayScrollbar"
-    --force-device-scale-factor="${SCALE_FACTOR}"
+    --force-device-scale-factor="${CHROME_DEVICE_SCALE}"
     --no-first-run
     --no-default-browser-check
     --disable-infobars
@@ -235,6 +259,15 @@ CHROME_FLAGS=(
     --disable-sync
     --user-data-dir="${CHROME_USER_DATA_DIR}"
 )
+
+if [[ "$CHROME_BIN" == *chromium* || "${XDG_RUNTIME_DIR:-}" == "/run/kiosk" ]]; then
+    CHROME_FLAGS+=(
+        --no-sandbox
+        --test-type
+        --disable-dev-shm-usage
+    )
+    MIRRORMERE_REMOTE_DEBUGGING_PORT="${MIRRORMERE_REMOTE_DEBUGGING_PORT:-9222}"
+fi
 
 if [[ -n "${MIRRORMERE_REMOTE_DEBUGGING_PORT:-}" ]]; then
     CHROME_FLAGS+=(
