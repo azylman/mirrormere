@@ -1136,8 +1136,8 @@ class TestHandlerEndpoints(unittest.TestCase):
             "top_of_the_hill": ["event.top_of_the_hill_motion"],
             "rosie_cam": ["event.rosie_cam_motion"],
             "isaac_cam": ["event.isaac_cam_motion"],
-            "eve_cam": ["event.bedroom_bedroom_camera_motion", "event.eve_cam_motion"],
-            "kitchen_hub": ["event.kitchen_hub_motion", "event.living_room_hub_motion"],
+            "eve_cam": ["event.bedroom_bedroom_camera_motion"],
+            "kitchen_hub": ["event.kitchen_hub_motion"],
         }
 
         for cam_id, ents in expected_events.items():

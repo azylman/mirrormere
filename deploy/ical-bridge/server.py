@@ -1519,7 +1519,7 @@ DEFAULT_CAMERAS = [
         "title": "Eve Cam",
         "group": "kids",
         "event_driven": True,
-        "event_entities": ["event.bedroom_bedroom_camera_motion", "event.eve_cam_motion"],
+        "event_entities": ["event.bedroom_bedroom_camera_motion"],
     },
     {
         "id": "kitchen_hub",
@@ -1528,15 +1528,7 @@ DEFAULT_CAMERAS = [
         "title": "Living Room Hub",
         "group": "indoor",
         "event_driven": True,
-        "event_entities": ["event.kitchen_hub_motion", "event.living_room_hub_motion"],
-    },
-    {
-        "id": "octoprint_camera",
-        "entity_id": "camera.octoprint_camera",
-        "go2rtc_src": "octoprint",
-        "aliases": ["octoprint", "camera.octoprint"],
-        "title": "OctoPrint Camera",
-        "group": "indoor",
+        "event_entities": ["event.kitchen_hub_motion"],
     },
 ]
 
