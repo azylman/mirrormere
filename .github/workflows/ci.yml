@@ -45,6 +45,7 @@ jobs:
       ear: ${{ steps.filter.outputs.mirrormere-ear }}
       remote: ${{ steps.filter.outputs.mirrormere-remote }}
       ember: ${{ steps.filter.outputs.ember }}
+      display: ${{ steps.filter.outputs.mirrormere-display }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
@@ -111,6 +112,8 @@ jobs:
               - 'client/remote/**'
             ember:
               - 'client/ember/**'
+            mirrormere-display:
+              - 'deploy/display/**'
             mirrormere-hass-proxy:
               - '.dockerignore'
               - 'go.mod'
@@ -128,7 +131,8 @@ jobs:
               "mirrormere-voice-fingerprinter": "${{ steps.filter.outputs.mirrormere-voice-fingerprinter }}",
               "mirrormere-ear": "${{ steps.filter.outputs.mirrormere-ear }}",
               "mirrormere-remote": "${{ steps.filter.outputs.mirrormere-remote }}",
-              "mirrormere-hass-proxy": "${{ steps.filter.outputs.mirrormere-hass-proxy }}"
+              "mirrormere-hass-proxy": "${{ steps.filter.outputs.mirrormere-hass-proxy }}",
+              "mirrormere-display": "${{ steps.filter.outputs.mirrormere-display }}"
             };
 
             const catalog = [
@@ -138,7 +142,8 @@ jobs:
               { service: "mirrormere-voice-fingerprinter", context: "./sidecars/voice-fingerprinter", file: "./sidecars/voice-fingerprinter/Dockerfile", image_name: "mirrormere-voice-fingerprinter" },
               { service: "mirrormere-ear", context: "./client/ear", file: "./client/ear/Dockerfile", image_name: "mirrormere-ear" },
               { service: "mirrormere-remote", context: "./client/remote", file: "./client/remote/Dockerfile", image_name: "mirrormere-remote" },
-              { service: "mirrormere-hass-proxy", context: ".", file: "./sidecars/hass-proxy/Dockerfile", image_name: "mirrormere-hass-proxy" }
+              { service: "mirrormere-hass-proxy", context: ".", file: "./sidecars/hass-proxy/Dockerfile", image_name: "mirrormere-hass-proxy" },
+              { service: "mirrormere-display", context: "./deploy/display", file: "./deploy/display/Dockerfile", image_name: "mirrormere-display" }
             ];
 
             const forceAll = "${{ inputs.force_all }}" === "true";
