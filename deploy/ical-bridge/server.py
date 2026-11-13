@@ -51,6 +51,7 @@ CAMERA_LAST_GOOD_FRAME = OrderedDict()
 CAMERA_LAST_EVENT_STATE = {}
 CAMERA_SNAP_LOCK = threading.Lock()
 CAMERA_SNAP_TTL = 2.0
+CAMERA_ACTIVE_INTERVAL_SEC = 25.0
 HA_NEST_PLACEHOLDER_LEN = 2689
 CAMERA_WARMER_STOP_EVENT = threading.Event()
 
@@ -1563,6 +1564,20 @@ def _get_configured_cameras():
     return DEFAULT_CAMERAS
 
 
+def is_battery_camera(camera_key=None, target=None):
+    if target is None and camera_key is not None:
+        target = resolve_camera_target(camera_key)
+    if isinstance(target, dict):
+        if target.get("battery") or target.get("battery_powered"):
+            return True
+        cid = str(target.get("id") or "").strip().lower()
+        if cid in ("doorbell", "front_doorbell"):
+            return True
+    if isinstance(camera_key, str) and camera_key.strip().lower() in ("doorbell", "front_doorbell", "camera.doorbell", "camera.front_doorbell"):
+        return True
+    return False
+
+
 def resolve_camera_target(camera_key):
     if not camera_key or not isinstance(camera_key, str):
         return None
@@ -1588,12 +1603,17 @@ def resolve_camera_target(camera_key):
         ent = str(cam.get("entity_id") or "").lower()
         g2r = str(cam.get("go2rtc_src") or cid).lower()
         aliases = [str(a).lower() for a in (cam.get("aliases") or [])]
+        if cid == "doorbell":
+            for extra_alias in ("front_doorbell", "camera.front_doorbell"):
+                if extra_alias not in aliases:
+                    aliases.append(extra_alias)
         if clean in (cid, ent, g2r) or slug in (cid, g2r) or clean in aliases or slug in aliases:
             event_entities = [
                 str(e).strip().lower()
                 for e in (cam.get("event_entities") or [])
                 if str(e).strip() and HA_ENTITY_ID_RE.match(str(e).strip().lower())
             ]
+            is_bat = bool(cam.get("battery", cam.get("battery_powered", False)))
             return {
                 "id": cid or slug,
                 "entity_id": ent or f"camera.{slug}",
@@ -1601,8 +1621,9 @@ def resolve_camera_target(camera_key):
                 "title": cam.get("title") or slug.replace("_", " ").title(),
                 "group": cam.get("group") or "general",
                 "aliases": aliases,
-                "battery": bool(cam.get("battery", False)),
-                "event_driven": bool(cam.get("event_driven", bool(cam.get("battery", False)) or bool(event_entities))),
+                "battery": is_bat,
+                "battery_powered": is_bat,
+                "event_driven": bool(cam.get("event_driven", is_bat or bool(event_entities))),
                 "event_entities": event_entities,
             }
 
@@ -1614,6 +1635,7 @@ def resolve_camera_target(camera_key):
         "group": "general",
         "aliases": [],
         "battery": False,
+        "battery_powered": False,
         "event_driven": False,
         "event_entities": [],
     }
@@ -1775,15 +1797,21 @@ def _has_camera_event_changed(target, ha_states_map=None):
     return False
 
 
-def fetch_camera_snapshot(camera_key, force_refresh=False):
+def fetch_camera_snapshot(camera_key, force_refresh=False, active_refresh=False):
     target = resolve_camera_target(camera_key)
     if not target:
         return None, None
 
     cid = target["id"]
-    is_battery = bool(target.get("battery", False))
+    is_battery = is_battery_camera(camera_key, target)
     is_event_driven = bool(target.get("event_driven", is_battery))
     now = time.time()
+
+    try:
+        active_interval_sec = float(_cfg("CAMERA_ACTIVE_INTERVAL_SEC", CAMERA_ACTIVE_INTERVAL_SEC))
+    except (ValueError, TypeError):
+        active_interval_sec = CAMERA_ACTIVE_INTERVAL_SEC
+
     if not force_refresh:
         with CAMERA_SNAP_LOCK:
             cached = CAMERA_SNAP_CACHE.get(cid)
@@ -1791,8 +1819,22 @@ def fetch_camera_snapshot(camera_key, force_refresh=False):
                 CAMERA_SNAP_CACHE.move_to_end(cid)
                 return cached[1], cached[2]
 
+    if active_refresh and not is_battery and not force_refresh:
+        with CAMERA_SNAP_LOCK:
+            last_good = CAMERA_LAST_GOOD_FRAME.get(cid)
+            cached = CAMERA_SNAP_CACHE.get(cid)
+            entry = last_good or cached
+            if entry and isinstance(entry, tuple) and len(entry) >= 3:
+                cached_ts, cached_data, cached_ctype = entry[0], entry[1], entry[2]
+                if now - cached_ts < active_interval_sec:
+                    if last_good:
+                        CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
+                    if cached:
+                        CAMERA_SNAP_CACHE.move_to_end(cid)
+                    return cached_data, cached_ctype
+
     event_changed = False
-    if is_event_driven and not force_refresh:
+    if is_event_driven and not force_refresh and (is_battery or not active_refresh):
         event_changed = _has_camera_event_changed(target)
         if not event_changed:
             with CAMERA_SNAP_LOCK:
@@ -2537,7 +2579,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             force_val = str((qs.get("force") or [""])[0]).strip().lower()
             force_refresh = force_val in ("1", "true", "yes")
-            data, ctype = fetch_camera_snapshot(cam_key, force_refresh=force_refresh)
+            active_val = str((qs.get("active") or [""])[0]).strip().lower()
+            active_refresh = active_val in ("1", "true", "yes")
+            data, ctype = fetch_camera_snapshot(
+                cam_key,
+                force_refresh=force_refresh,
+                active_refresh=active_refresh,
+            )
             if data:
                 self.send_response(200)
                 self.send_header("Content-Type", ctype or "image/jpeg")
