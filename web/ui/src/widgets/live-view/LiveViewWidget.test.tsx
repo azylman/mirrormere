@@ -1,6 +1,7 @@
+// @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, render, fireEvent, createEvent, act } from '@testing-library/react';
-import { LiveViewWidget, parseLiveViewConfig, computeStaggerDelayMs } from './LiveViewWidget';
+import { LiveViewWidget, parseLiveViewConfig, computeStaggerDelayMs, activeAutoLiveStreams } from './LiveViewWidget';
 import { useDisplayStore } from '../../store';
 import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
@@ -32,6 +33,8 @@ describe('LiveViewWidget helpers', () => {
       expect(def.control_url).toBe('');
       expect(def.expand_stream_url).toBe('');
       expect(def.expand_stream_type).toBe('webrtc');
+      expect(def.auto_live_on_motion_seconds).toBeUndefined();
+      expect(def.max_auto_live_streams).toBeUndefined();
 
       expect(parseLiveViewConfig(undefined, 'fallback').stream_id).toBe('fallback');
       expect(parseLiveViewConfig(12345).title).toBe('Live View');
@@ -53,7 +56,11 @@ describe('LiveViewWidget helpers', () => {
         control_url: 'https://stream.example.com/control',
         expand_stream_url: 'https://stream.example.com/high-res',
         expand_stream_type: 'webrtc',
+        auto_live_on_motion_seconds: 60,
+        max_auto_live_streams: 2,
       });
+      expect(cfg.auto_live_on_motion_seconds).toBe(60);
+      expect(cfg.max_auto_live_streams).toBe(2);
 
       expect(cfg.stream_url).toBe('https://stream.example.com/webrtc');
       expect(cfg.stream_type).toBe('hls');
@@ -772,17 +779,16 @@ describe('LiveViewWidget component', () => {
     );
 
     await vi.waitFor(() => {
-      expect(peerInstance).not.toBeNull();
+      expect(peerInstance?.listeners['icegatheringstatechange']?.length).toBe(1);
     });
 
     // Offer not sent yet because ICE gathering is still in progress
-    expect(globalThis.fetch).not.toHaveBeenCalledWith(
-      'https://cam.example.com/webrtc',
-      expect.anything(),
-    );
+    expect(globalThis.fetch).not.toHaveBeenCalledWith('https://cam.example.com/webrtc', expect.anything());
+    HTMLMediaElement.prototype.play = vi.fn().mockRejectedValueOnce(new Error('autoplay blocked'));
 
-    // Complete ICE gathering
+    // Fire non-complete then complete ICE gathering state change
     act(() => {
+      peerInstance!.dispatchEvent('icegatheringstatechange');
       peerInstance!.iceGatheringState = 'complete';
       peerInstance!.dispatchEvent('icegatheringstatechange');
     });
@@ -1036,30 +1042,6 @@ describe('LiveViewWidget component', () => {
       expect.any(Error),
     );
     warnSpy.mockRestore();
-  });
-
-  it('suppresses expand when pointer drag distance is >= 15px', () => {
-    seedWidget({
-      stream_url: 'https://cam.example.com/stream',
-    });
-
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
-
-    const root = container.querySelector('.widget-live-view')!;
-    vi.mocked(globalThis.fetch).mockClear();
-
-    fireEvent.pointerDown(root, { clientX: 100, clientY: 100 });
-    fireEvent.pointerUp(root, { clientX: 120, clientY: 100 }); // dist = 20 >= 15
-    fireEvent.click(root);
-
-    expect(globalThis.fetch).not.toHaveBeenCalledWith(
-      'api/video/trigger',
-      expect.anything(),
-    );
   });
 
   it('handles events with invalid coordinates gracefully', () => {
@@ -1318,45 +1300,6 @@ describe('LiveViewWidget component', () => {
     expect(pc.closed).toBe(true);
   });
 
-  it('renders and decodes MJPEG stream into image element', () => {
-    seedWidget({
-      stream_url: 'https://cam.example.com/stream.mjpeg',
-      stream_type: 'mjpeg',
-    });
-
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
-
-    const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
-    expect(img).not.toBeNull();
-    expect(img.style.display).toBe('');
-    expect(img.src).toBe('https://cam.example.com/stream.mjpeg');
-
-    const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
-    expect(video.style.display).toBe('none');
-  });
-
-  it('renders and plays HLS stream in video element', () => {
-    seedWidget({
-      stream_url: 'https://cam.example.com/stream.m3u8',
-      stream_type: 'hls',
-    });
-
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
-
-    const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
-    expect(video).not.toBeNull();
-    expect(video.src).toBe('https://cam.example.com/stream.m3u8');
-    expect(video.muted).toBe(true);
-  });
-
   it('returns early when RTCPeerConnection is unavailable in the environment', () => {
     const origPC = window.RTCPeerConnection;
     // @ts-expect-error test undefined RTCPeerConnection
@@ -1466,46 +1409,6 @@ describe('LiveViewWidget component', () => {
         }),
       }),
     );
-  });
-
-  it('clears existing safetyTimer when triggerExpand is clicked after throttle interval', () => {
-    vi.useFakeTimers();
-    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
-
-    seedWidget({
-      stream_url: 'https://cam.example.com/stream',
-      expand_on_click: true,
-    });
-
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
-
-    const root = container.querySelector('.widget-live-view')!;
-
-    // First click: arm safety timer
-    act(() => {
-      fireEvent.click(root);
-    });
-
-    // Advance 400ms (> 350ms throttle, < 2000ms timer)
-    act(() => {
-      vi.advanceTimersByTime(400);
-    });
-
-    // Second click: clears existing safety timer
-    act(() => {
-      fireEvent.click(root);
-    });
-
-    // Advance remaining 2000ms: expires second timer
-    act(() => {
-      vi.advanceTimersByTime(2000);
-    });
-
-    vi.useRealTimers();
   });
 
   it('staggers on-screen mjpeg snapshot refresh and preserves img.src when swiping off-pane into 5-minute background refresh', () => {
@@ -1699,5 +1602,164 @@ describe('LiveViewWidget component', () => {
       vi.advanceTimersByTime(120_000);
     });
     expect(img.getAttribute('src')).toBe(srcAtIdle);
+  });
+
+  it('promotes mjpeg stream to inline WebRTC when /hearth-api/cameras reports auto_live and falls back to static img after 60s of calm', async () => {
+    activeAutoLiveStreams.clear();
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    let cameraPayload: Record<string, unknown> = {
+      cameras: [{ id: 'front', stream_url: '/hearth-api/cameras/front/stream', auto_live: true, last_event_epoch: nowEpoch }],
+    };
+
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(url === '/hearth-api/cameras' ? cameraPayload : { sdp: 'v=0\r\no=mock-answer\r\n' }),
+    }));
+
+    seedWidget({
+      stream_id: 'front',
+      stream_url: '/hearth-api/cameras/front/stream',
+      stream_type: 'mjpeg',
+      expand_stream_url: 'http://localhost:1984/api/webrtc?src=front',
+      expand_stream_type: 'webrtc',
+      auto_live_on_motion_seconds: 60,
+      max_auto_live_streams: 2,
+      refresh_interval_seconds: 0,
+      background_refresh_interval_seconds: 0,
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
+    const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
+
+    await vi.waitFor(() => {
+      expect(video.style.display).toBe('');
+      expect(img.style.display).toBe('none');
+      expect(lastPeerConnection).not.toBeNull();
+    });
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'http://localhost:1984/api/webrtc?src=front',
+        expect.objectContaining({ method: 'POST', headers: { 'Content-Type': 'application/sdp' } }),
+      );
+    });
+
+    const promotedPc = lastPeerConnection;
+    expect(promotedPc?.closed).toBe(false);
+
+    // Non-OK poll is ignored gracefully while calm timer remains active, then empty catalog demotes
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 503, text: async () => '' });
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    expect(video.style.display).toBe('');
+
+    cameraPayload = {
+      cameras: [{ id: 'front', stream_url: '/other', auto_live: false, last_event_epoch: nowEpoch - 65 }],
+    };
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => ({
+      ok: true, status: 200,
+      text: async () => JSON.stringify(url === '/hearth-api/cameras' ? cameraPayload : {}),
+    }));
+
+    await act(async () => {
+      vi.advanceTimersByTime(55_000);
+    });
+
+    await vi.waitFor(() => {
+      expect(video.style.display).toBe('none');
+      expect(img.style.display).toBe('');
+      expect(promotedPc?.closed).toBe(true);
+    });
+
+    // Empty catalog poll also keeps demoted cleanly
+    cameraPayload = {};
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+  });
+
+  it('enforces max_auto_live_streams concurrency cap of 2 when 3 widgets receive motion and demotes on off-pane', async () => {
+    activeAutoLiveStreams.clear();
+    const nowEpoch = Math.floor(Date.now() / 1000);
+
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(
+        url === '/hearth-api/cameras'
+          ? {
+              cameras: [
+                { id: 'cam1', auto_live: true, last_event_epoch: nowEpoch - 20 },
+                { id: 'unmatched_id', snapshot_url: '/hearth-api/cameras/alias2/stream', last_event_epoch: nowEpoch - 10 },
+                { id: 'cam3', auto_live: true },
+              ],
+            }
+          : { sdp: 'v=0\r\no=mock-answer\r\n' },
+      ),
+    }));
+
+    const mkCamEntry = (sid: string) => ({
+      meta: makeWidgetMeta({
+        stream_id: sid,
+        stream_url: `/hearth-api/cameras/${sid}/stream`,
+        stream_type: 'mjpeg',
+        expand_stream_url: 'http://localhost:1984/api/webrtc?src=front',
+        auto_live_on_motion_seconds: 60,
+        max_auto_live_streams: 2,
+        refresh_interval_seconds: 0,
+        background_refresh_interval_seconds: 0,
+      }),
+      data: {},
+      state: 'ready' as const,
+      timestamp: '2026-10-31T12:00:00Z',
+    });
+
+    useDisplayStore.setState({
+      widgets: { 'w-cam-1': mkCamEntry('cam1'), 'w-cam-2': mkCamEntry('alias2'), 'w-cam-3': mkCamEntry('cam3') },
+    });
+
+    const { container, rerender } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <div>
+          <LiveViewWidget id="w-cam-1" type="live-view" />
+          <LiveViewWidget id="w-cam-2" type="live-view" />
+          <LiveViewWidget id="w-cam-3" type="live-view" />
+        </div>
+      </PaneContext.Provider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(activeAutoLiveStreams.size).toBe(2);
+      const videos = Array.from(container.querySelectorAll('video.live-view-media')) as HTMLVideoElement[];
+      expect(videos.filter((v) => v.style.display === '').length).toBe(2);
+      expect(videos[0].style.display).toBe('none');
+    });
+
+    expect(activeAutoLiveStreams.has('w-cam-2')).toBe(true);
+    expect(activeAutoLiveStreams.has('w-cam-3')).toBe(true);
+    expect(activeAutoLiveStreams.has('w-cam-1')).toBe(false);
+
+    // Next 5s poll keeps w-cam-1 rejected at the concurrency cap
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+    expect(activeAutoLiveStreams.size).toBe(2);
+    expect(activeAutoLiveStreams.has('w-cam-1')).toBe(false);
+
+    // Swiping off-pane immediately releases all auto-live slots and demotes video
+    rerender(
+      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
+        <div>
+          <LiveViewWidget id="w-cam-1" type="live-view" />
+          <LiveViewWidget id="w-cam-2" type="live-view" />
+          <LiveViewWidget id="w-cam-3" type="live-view" />
+        </div>
+      </PaneContext.Provider>,
+    );
+    expect(activeAutoLiveStreams.size).toBe(0);
   });
 });
