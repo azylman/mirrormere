@@ -1335,6 +1335,119 @@ class TestHandlerEndpoints(unittest.TestCase):
             h4.send_response.assert_called_with(200)
             mock_fetch.assert_called_with("rosie_cam", force_refresh=False, active_refresh=True)
 
+    def test_get_cameras_status_auto_live_60s_cap_and_reset(self):
+        mock_states = [
+            {"entity_id": "camera.doorbell", "state": "idle", "attributes": {"friendly_name": "Doorbell"}},
+            {"entity_id": "camera.front_yard_camera", "state": "streaming", "attributes": {"friendly_name": "Front Yard"}},
+            {"entity_id": "camera.rosie_cam", "state": "streaming", "attributes": {"friendly_name": "Rosie Cam"}},
+            {"entity_id": "camera.isaac_cam", "state": "streaming", "attributes": {"friendly_name": "Isaac Cam"}},
+        ]
+        t0 = 1794585000.0
+        with patch.dict(srv.CACHE, {}, clear=True):
+            with patch.dict(srv._CAMERA_EVENT_EPOCH, {}, clear=True):
+                with patch.dict(srv.CAMERA_LAST_EVENT_STATE, {}, clear=True):
+                    with patch.object(srv, "_ha_request", return_value=mock_states):
+                        # 1. Single camera motion within 60s -> auto_live: True
+                        srv._CAMERA_EVENT_EPOCH["rosie_cam"] = t0 - 15.0
+                        with patch.object(srv.time, "time", return_value=t0):
+                            cams = srv.get_cameras_status()
+                            by_id = {c["id"]: c for c in cams}
+                            self.assertTrue(by_id["rosie_cam"]["auto_live"])
+                            self.assertEqual(by_id["rosie_cam"]["last_event_epoch"], t0 - 15.0)
+                            self.assertFalse(by_id["doorbell"]["auto_live"])
+                            self.assertEqual(by_id["doorbell"]["last_event_epoch"], 0.0)
+
+                        # 2. 3+ cameras with motion within 60s -> caps auto_live: True at the 2 most recent
+                        srv._CAMERA_EVENT_EPOCH["doorbell"] = t0 - 5.0
+                        srv._CAMERA_EVENT_EPOCH["front_yard_camera"] = t0 - 10.0
+                        srv._CAMERA_EVENT_EPOCH["rosie_cam"] = t0 - 20.0
+                        srv._CAMERA_EVENT_EPOCH["isaac_cam"] = t0 - 30.0
+                        with patch.object(srv.time, "time", return_value=t0):
+                            cams = srv.get_cameras_status()
+                            by_id = {c["id"]: c for c in cams}
+                            auto_live_ids = [c["id"] for c in cams if c["auto_live"]]
+                            self.assertEqual(len(auto_live_ids), 2)
+                            self.assertCountEqual(auto_live_ids, ["doorbell", "front_yard_camera"])
+                            self.assertTrue(by_id["doorbell"]["auto_live"])
+                            self.assertTrue(by_id["front_yard_camera"]["auto_live"])
+                            self.assertFalse(by_id["rosie_cam"]["auto_live"])
+                            self.assertFalse(by_id["isaac_cam"]["auto_live"])
+                            self.assertEqual(by_id["rosie_cam"]["last_event_epoch"], t0 - 20.0)
+
+                        # 3. Once 60 seconds pass without new motion -> resets auto_live: False
+                        with patch.object(srv.time, "time", return_value=t0 + 61.0):
+                            cams_expired = srv.get_cameras_status()
+                            for c in cams_expired:
+                                self.assertFalse(c["auto_live"], f"Expected auto_live False for {c['id']} after >60s")
+
+    def test_check_camera_motion_updated_seeds_recent_iso_and_updates_epoch_and_headers(self):
+        t0 = 1794585000.0
+        recent_iso = srv.datetime.datetime.fromtimestamp(t0 - 12.0, tz=srv.UTC).isoformat()
+        stale_iso = srv.datetime.datetime.fromtimestamp(t0 - 300.0, tz=srv.UTC).isoformat()
+        next_iso = srv.datetime.datetime.fromtimestamp(t0 + 5.0, tz=srv.UTC).isoformat()
+
+        with patch.dict(srv.CAMERA_LAST_EVENT_STATE, {}, clear=True):
+            with patch.dict(srv._CAMERA_EVENT_EPOCH, {}, clear=True):
+                with patch.object(srv.time, "time", return_value=t0):
+                    # First seed with recent ISO (<60s) populates _CAMERA_EVENT_EPOCH
+                    changed_recent = srv.check_camera_motion_updated(
+                        "rosie_cam",
+                        ha_states_map={"event.rosie_cam_motion": {"state": recent_iso}},
+                    )
+                    self.assertFalse(changed_recent)
+                    self.assertEqual(srv._CAMERA_EVENT_EPOCH.get("rosie_cam"), t0)
+
+                    # First seed with stale ISO (>60s) does NOT populate _CAMERA_EVENT_EPOCH
+                    changed_stale = srv.check_camera_motion_updated(
+                        "isaac_cam",
+                        ha_states_map={"event.isaac_cam_motion": {"state": stale_iso}},
+                    )
+                    self.assertFalse(changed_stale)
+                    self.assertNotIn("isaac_cam", srv._CAMERA_EVENT_EPOCH)
+
+                # Subsequent change updates _CAMERA_EVENT_EPOCH to new time.time()
+                with patch.object(srv.time, "time", return_value=t0 + 5.0):
+                    changed_next = srv.check_camera_motion_updated(
+                        "isaac_cam",
+                        ha_states_map={"event.isaac_cam_motion": {"state": next_iso}},
+                    )
+                    self.assertTrue(changed_next)
+                    self.assertEqual(srv._CAMERA_EVENT_EPOCH.get("isaac_cam"), t0 + 5.0)
+
+                    # Verify GET /cameras and GET /cameras/snapshot headers
+                    fake_jpeg = b"\xff\xd8\xff\xe0test_snap\xff\xd9"
+                    with patch.object(srv, "fetch_camera_snapshot", return_value=(fake_jpeg, "image/jpeg")):
+                        h_snap = self._create_handler(
+                            "GET",
+                            "/cameras/snapshot?camera=isaac_cam",
+                            client_ip="127.0.0.1",
+                        )
+                        h_snap.do_GET()
+                        h_snap.send_response.assert_called_with(200)
+                        h_snap.send_header.assert_any_call("X-Camera-Auto-Live", "1")
+                        h_snap.send_header.assert_any_call("X-Camera-Last-Event-Epoch", str(int(t0 + 5.0)))
+
+                        h_snap_inactive = self._create_handler(
+                            "GET",
+                            "/hearth-api/cameras/deck_camera/snapshot",
+                            client_ip="127.0.0.1",
+                        )
+                        h_snap_inactive.do_GET()
+                        h_snap_inactive.send_response.assert_called_with(200)
+                        h_snap_inactive.send_header.assert_any_call("X-Camera-Auto-Live", "0")
+                        h_snap_inactive.send_header.assert_any_call("X-Camera-Last-Event-Epoch", "0")
+
+                    with patch.dict(srv.CACHE, {}, clear=True):
+                        with patch.object(srv, "_ha_request", return_value=[]):
+                            h_cams = self._create_handler("GET", "/cameras", client_ip="127.0.0.1")
+                            h_cams.do_GET()
+                            h_cams.send_response.assert_called_with(200)
+                            payload = json.loads(h_cams.wfile.getvalue().decode("utf-8"))
+                            by_id = {c["id"]: c for c in payload["cameras"]}
+                            self.assertTrue(by_id["isaac_cam"]["auto_live"])
+                            self.assertTrue(by_id["rosie_cam"]["auto_live"])
+                            self.assertFalse(by_id["deck_camera"]["auto_live"])
+
 
 if __name__ == "__main__":
     unittest.main()

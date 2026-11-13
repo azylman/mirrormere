@@ -143,6 +143,8 @@ display:
         expand_on_click: true
         expand_stream_url: "/hearth-api/cameras/rosie_cam/webrtc"
         expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
         refresh_interval_seconds: 30
         background_refresh_interval_seconds: 0
         timeout_seconds: 90
@@ -162,6 +164,8 @@ display:
         expand_on_click: true
         expand_stream_url: "/hearth-api/cameras/doorbell/webrtc"
         expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
         battery_powered: true
         refresh_interval_seconds: 15
         background_refresh_interval_seconds: 0
@@ -182,6 +186,8 @@ display:
         expand_on_click: true
         expand_stream_url: "/hearth-api/cameras/isaac_cam/webrtc"
         expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
         refresh_interval_seconds: 30
         background_refresh_interval_seconds: 0
         timeout_seconds: 90
@@ -201,6 +207,8 @@ display:
         expand_on_click: true
         expand_stream_url: "/hearth-api/cameras/eve_cam/webrtc"
         expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
         refresh_interval_seconds: 30
         background_refresh_interval_seconds: 0
         timeout_seconds: 90
@@ -220,6 +228,8 @@ display:
         expand_on_click: true
         expand_stream_url: "/hearth-api/cameras/kitchen_hub/webrtc"
         expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
         refresh_interval_seconds: 30
         background_refresh_interval_seconds: 0
         timeout_seconds: 90
@@ -239,6 +249,8 @@ display:
         expand_on_click: true
         expand_stream_url: "/hearth-api/cameras/front_yard_camera/webrtc"
         expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
         refresh_interval_seconds: 30
         background_refresh_interval_seconds: 0
         timeout_seconds: 90
@@ -258,6 +270,8 @@ display:
         expand_on_click: true
         expand_stream_url: "/hearth-api/cameras/sideyard_stairs/webrtc"
         expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
         refresh_interval_seconds: 30
         background_refresh_interval_seconds: 0
         timeout_seconds: 90
@@ -277,6 +291,8 @@ display:
         expand_on_click: true
         expand_stream_url: "/hearth-api/cameras/deck_camera/webrtc"
         expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
         refresh_interval_seconds: 30
         background_refresh_interval_seconds: 0
         timeout_seconds: 90
@@ -296,6 +312,8 @@ display:
         expand_on_click: true
         expand_stream_url: "/hearth-api/cameras/top_of_the_hill/webrtc"
         expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
         refresh_interval_seconds: 30
         background_refresh_interval_seconds: 0
         timeout_seconds: 90

@@ -49,9 +49,12 @@ CAMERA_SLUG_RE = re.compile(r"^[a-z0-9_]+$")
 CAMERA_SNAP_CACHE = OrderedDict()
 CAMERA_LAST_GOOD_FRAME = OrderedDict()
 CAMERA_LAST_EVENT_STATE = {}
+_CAMERA_EVENT_EPOCH: dict[str, float] = {}
 CAMERA_SNAP_LOCK = threading.Lock()
 CAMERA_SNAP_TTL = 2.0
 CAMERA_ACTIVE_INTERVAL_SEC = 25.0
+AUTO_LIVE_WINDOW_SECONDS = 60
+MAX_AUTO_LIVE_STREAMS = 2
 HA_NEST_PLACEHOLDER_LEN = 2689
 CAMERA_WARMER_STOP_EVENT = threading.Event()
 
@@ -1636,59 +1639,135 @@ def resolve_camera_target(camera_key):
 def fetch_cameras_catalog():
     key = "cameras:catalog"
     now = time.time()
+    base_catalog = None
     with CACHE_LOCK:
         if key in CACHE and now - CACHE[key][0] < 15:
-            return CACHE[key][1]
+            base_catalog = CACHE[key][1]
 
-    ha_states = _ha_request("GET", "/api/states", timeout=5)
-    state_map = {}
-    if isinstance(ha_states, list):
-        for st in ha_states:
-            if isinstance(st, dict):
-                eid = str(st.get("entity_id") or "").lower()
-                if eid.startswith("camera."):
-                    state_map[eid] = st
+    ha_states = None
+    ha_states_map = {}
+    if base_catalog is None:
+        ha_states = _ha_request("GET", "/api/states", timeout=5)
+        state_map = {}
+        if isinstance(ha_states, list):
+            for st in ha_states:
+                if isinstance(st, dict):
+                    eid = str(st.get("entity_id") or "").lower()
+                    if eid:
+                        ha_states_map[eid] = st
+                    if eid.startswith("camera."):
+                        state_map[eid] = st
 
+        base_catalog = []
+        for raw_cam in _get_configured_cameras():
+            if not isinstance(raw_cam, dict):
+                continue
+            target = resolve_camera_target(raw_cam.get("id") or raw_cam.get("entity_id") or "")
+            if not target:
+                continue
+            cid = target["id"]
+            eid = target["entity_id"]
+            st_obj = state_map.get(eid)
+            if not st_obj and target.get("aliases"):
+                for alias in target["aliases"]:
+                    cand = alias if alias.startswith("camera.") else f"camera.{alias}"
+                    if cand in state_map:
+                        st_obj = state_map[cand]
+                        eid = cand
+                        break
+
+            if st_obj:
+                state_str = str(st_obj.get("state") or "streaming")
+                attrs = st_obj.get("attributes") or {}
+                title = raw_cam.get("title") or attrs.get("friendly_name") or target["title"]
+            else:
+                state_str = "standby" if cid == "eve_cam" else "idle"
+                title = target["title"]
+
+            if ha_states_map:
+                check_camera_motion_updated(target, ha_states_map=ha_states_map)
+
+            base_catalog.append({
+                "id": cid,
+                "entity_id": eid,
+                "title": title,
+                "group": target["group"],
+                "state": state_str,
+                "snapshot_url": f"/hearth-api/cameras/{cid}/snapshot",
+                "stream_url": f"/hearth-api/cameras/{cid}/stream",
+                "webrtc_url": f"/hearth-api/cameras/{cid}/webrtc",
+            })
+
+        with CACHE_LOCK:
+            CACHE[key] = (now, base_catalog)
+
+    active_ids, epoch_map = _get_auto_live_camera_ids(now=now)
     catalog = []
-    for raw_cam in _get_configured_cameras():
-        if not isinstance(raw_cam, dict):
-            continue
-        target = resolve_camera_target(raw_cam.get("id") or raw_cam.get("entity_id") or "")
-        if not target:
-            continue
-        cid = target["id"]
-        eid = target["entity_id"]
-        st_obj = state_map.get(eid)
-        if not st_obj and target.get("aliases"):
-            for alias in target["aliases"]:
-                cand = alias if alias.startswith("camera.") else f"camera.{alias}"
-                if cand in state_map:
-                    st_obj = state_map[cand]
-                    eid = cand
-                    break
-
-        if st_obj:
-            state_str = str(st_obj.get("state") or "streaming")
-            attrs = st_obj.get("attributes") or {}
-            title = raw_cam.get("title") or attrs.get("friendly_name") or target["title"]
-        else:
-            state_str = "standby" if cid == "eve_cam" else "idle"
-            title = target["title"]
-
-        catalog.append({
-            "id": cid,
-            "entity_id": eid,
-            "title": title,
-            "group": target["group"],
-            "state": state_str,
-            "snapshot_url": f"/hearth-api/cameras/{cid}/snapshot",
-            "stream_url": f"/hearth-api/cameras/{cid}/stream",
-            "webrtc_url": f"/hearth-api/cameras/{cid}/webrtc",
-        })
-
-    with CACHE_LOCK:
-        CACHE[key] = (now, catalog)
+    for item in base_catalog:
+        cid = item["id"]
+        entry = dict(item)
+        entry["last_event_epoch"] = float(epoch_map.get(cid, 0.0) or 0.0)
+        entry["auto_live"] = cid in active_ids
+        catalog.append(entry)
     return catalog
+
+
+def get_cameras_status():
+    return fetch_cameras_catalog()
+
+
+def _parse_iso_epoch(val):
+    if not val or not isinstance(val, str):
+        return None
+    s = val.strip()
+    if not s or s.lower() in ("unknown", "unavailable", "none", "null", "off", "clear"):
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return float(dt.timestamp())
+    except Exception:
+        return None
+
+
+def _get_auto_live_camera_ids(now=None):
+    if now is None:
+        now = time.time()
+    try:
+        window_sec = float(_cfg("AUTO_LIVE_WINDOW_SECONDS", AUTO_LIVE_WINDOW_SECONDS))
+    except (ValueError, TypeError):
+        window_sec = float(AUTO_LIVE_WINDOW_SECONDS)
+    try:
+        max_streams = int(_cfg("MAX_AUTO_LIVE_STREAMS", MAX_AUTO_LIVE_STREAMS))
+    except (ValueError, TypeError):
+        max_streams = int(MAX_AUTO_LIVE_STREAMS)
+
+    with CAMERA_SNAP_LOCK:
+        epoch_map = dict(_CAMERA_EVENT_EPOCH)
+
+    active_candidates = []
+    for cid, last_epoch in epoch_map.items():
+        try:
+            ep = float(last_epoch or 0.0)
+        except (ValueError, TypeError):
+            ep = 0.0
+        if ep > 0 and (now - ep) <= window_sec:
+            active_candidates.append((ep, cid))
+
+    active_candidates.sort(key=lambda x: x[0], reverse=True)
+    top_ids = {cid for _, cid in active_candidates[:max(0, max_streams)]}
+    return top_ids, epoch_map
+
+
+def is_camera_auto_live(cam_key, now=None):
+    target = resolve_camera_target(cam_key) if isinstance(cam_key, str) else cam_key
+    if not isinstance(target, dict):
+        return False, 0.0
+    cid = target["id"]
+    top_ids, epoch_map = _get_auto_live_camera_ids(now=now)
+    last_epoch = float(epoch_map.get(cid, 0.0) or 0.0)
+    return (cid in top_ids), last_epoch
 
 
 def _store_camera_good_frame(cid, data, ctype):
@@ -1727,7 +1806,12 @@ def _extract_first_jpeg_from_stream(stream, max_bytes=2 * 1024 * 1024):
     return None
 
 
-def _has_camera_event_changed(target, ha_states_map=None):
+def check_camera_motion_updated(cam_id_or_target, ha_states_map=None):
+    target = (
+        cam_id_or_target
+        if isinstance(cam_id_or_target, dict)
+        else resolve_camera_target(cam_id_or_target)
+    )
     if not isinstance(target, dict):
         return False
     cid = str(target.get("id") or "").strip().lower()
@@ -1777,16 +1861,30 @@ def _has_camera_event_changed(target, ha_states_map=None):
     if not current_states:
         return False
 
+    now = time.time()
     state_sig = tuple(sorted(current_states.items()))
     with CAMERA_SNAP_LOCK:
         if cid not in CAMERA_LAST_EVENT_STATE:
             CAMERA_LAST_EVENT_STATE[cid] = state_sig
+            recent_seed = False
+            for st_val in current_states.values():
+                parsed_ep = _parse_iso_epoch(st_val)
+                if parsed_ep is not None and 0 <= (now - parsed_ep) <= AUTO_LIVE_WINDOW_SECONDS:
+                    recent_seed = True
+                    break
+            if recent_seed:
+                _CAMERA_EVENT_EPOCH[cid] = now
             return False
         prev_sig = CAMERA_LAST_EVENT_STATE.get(cid)
         if prev_sig != state_sig:
             CAMERA_LAST_EVENT_STATE[cid] = state_sig
+            _CAMERA_EVENT_EPOCH[cid] = now
             return True
     return False
+
+
+def _has_camera_event_changed(target, ha_states_map=None):
+    return check_camera_motion_updated(target, ha_states_map=ha_states_map)
 
 
 def fetch_camera_snapshot(camera_key, force_refresh=False, active_refresh=False):
@@ -2537,8 +2635,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(payload)
             return
 
-        if path in ("/hearth-api/cameras", "/hearth-api/cameras/"):
-            cams = fetch_cameras_catalog()
+        if path in ("/cameras", "/cameras/", "/hearth-api/cameras", "/hearth-api/cameras/"):
+            if not self._is_internal_caller():
+                self._send_json_error(403, "Forbidden: internal callers only")
+                return
+            cams = get_cameras_status()
             payload = json.dumps({"cameras": cams, "items": cams}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -2553,8 +2654,24 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         cam_key = None
-        if path.startswith("/hearth-api/cameras/"):
+        if path in ("/cameras/snapshot", "/hearth-api/cameras/snapshot"):
+            if not self._is_internal_caller():
+                self._send_json_error(403, "Forbidden: internal callers only")
+                return
+            cam_key = (
+                (qs.get("camera") or qs.get("id") or qs.get("src") or qs.get("stream_id") or [""])[0]
+            ).strip()
+        elif path.startswith("/hearth-api/cameras/"):
             parts = [p for p in path[len("/hearth-api/cameras/"):].split("/") if p]
+            if len(parts) == 2 and parts[1] in ("snapshot", "stream", "snapshot.jpg", "stream.mjpeg"):
+                cam_key = parts[0]
+            elif len(parts) == 1:
+                cam_key = parts[0]
+        elif path.startswith("/cameras/"):
+            if not self._is_internal_caller():
+                self._send_json_error(403, "Forbidden: internal callers only")
+                return
+            parts = [p for p in path[len("/cameras/"):].split("/") if p]
             if len(parts) == 2 and parts[1] in ("snapshot", "stream", "snapshot.jpg", "stream.mjpeg"):
                 cam_key = parts[0]
             elif len(parts) == 1:
@@ -2579,9 +2696,12 @@ class Handler(BaseHTTPRequestHandler):
                 active_refresh=active_refresh,
             )
             if data:
+                auto_live, last_epoch = is_camera_auto_live(target)
                 self.send_response(200)
                 self.send_header("Content-Type", ctype or "image/jpeg")
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("X-Camera-Auto-Live", "1" if auto_live else "0")
+                self.send_header("X-Camera-Last-Event-Epoch", str(int(last_epoch)) if last_epoch else "0")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 if not is_head:
