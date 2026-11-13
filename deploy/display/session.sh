@@ -4,13 +4,15 @@
 # strict file descriptor isolation, and hardware-accelerated Chrome presentation.
 set -euo pipefail
 
-# Source configuration overrides if present
-if [[ -f /etc/default/mirrormere-display ]]; then
-    # shellcheck source=/dev/null
-    source /etc/default/mirrormere-display
-elif [[ -f /etc/default/mirrormere-kiosk ]]; then
-    # shellcheck source=/dev/null
-    source /etc/default/mirrormere-kiosk
+# Source host systemd configuration overrides only when not running inside the /run/kiosk container runtime
+if [[ "${XDG_RUNTIME_DIR:-}" != "/run/kiosk" ]]; then
+    if [[ -f /etc/default/mirrormere-display ]]; then
+        # shellcheck source=/dev/null
+        source /etc/default/mirrormere-display
+    elif [[ -f /etc/default/mirrormere-kiosk ]]; then
+        # shellcheck source=/dev/null
+        source /etc/default/mirrormere-kiosk
+    fi
 fi
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
@@ -278,7 +280,7 @@ if [[ -n "${MIRRORMERE_REMOTE_DEBUGGING_PORT:-}" ]]; then
 fi
 
 echo "[Mirrormere Session] Executing Chrome supervisor (scale=${SCALE_FACTOR}, output=${OUTPUT})..."
-"$CHROME_BIN" "${CHROME_FLAGS[@]}" "$DISPLAY_URL" &
+"$CHROME_BIN" "${CHROME_FLAGS[@]}" "--app=${DISPLAY_URL}" &
 CHROME_PID=$!
 
 # Start parent-death watchdog with FD isolation: if Cage compositor dies unexpectedly, kill Chrome

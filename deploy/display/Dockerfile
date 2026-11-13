@@ -9,6 +9,7 @@ RUN apk add --no-cache \
         tzdata \
         cage \
         chromium \
+        grim \
         wlr-randr \
         swayidle \
         kanshi \
@@ -57,10 +58,8 @@ RUN mkdir -p /opt/mirrormere/display \
     chown -R 10001:10001 /run/kiosk /data/chrome-profile /home/kiosk
 
 COPY entrypoint.sh launch.sh session.sh dpms.sh /opt/mirrormere/display/
-COPY default-mirrormere-display /etc/default/mirrormere-display
 
-RUN chmod 0755 /opt/mirrormere/display/*.sh && \
-    chmod 0644 /etc/default/mirrormere-display
+RUN chmod 0755 /opt/mirrormere/display/*.sh
 
 ENV XDG_RUNTIME_DIR=/run/kiosk \
     WAYLAND_DISPLAY=wayland-0 \
