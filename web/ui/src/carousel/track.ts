@@ -48,7 +48,7 @@ export class TrackAnimator {
     if (this.frame !== null) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
-      this.track.style.transform = `translate3d(${this.dragPx}px,0,0)`;
+      this.track.style.transform = `translate3d(${this.dragPx}px, 0px, 0px)`;
     });
   }
 
@@ -72,7 +72,7 @@ export class TrackAnimator {
     this.track.style.transition = `transform ${SETTLE_MS}ms ${SETTLE_EASING}`;
     // Flush the style so the transition starts from the current transform.
     void this.track.offsetWidth;
-    this.track.style.transform = `translate3d(${px}px,0,0)`;
+    this.track.style.transform = `translate3d(${px}px, 0px, 0px)`;
 
     let timer: ReturnType<typeof setTimeout> | null = null;
     const onEnd = (event: TransitionEvent): void => {

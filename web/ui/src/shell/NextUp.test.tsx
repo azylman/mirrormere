@@ -1407,5 +1407,58 @@ describe('NextUp component', () => {
 
       vi.unstubAllGlobals();
     });
+
+    it('covers all sports leagues, allowlist patterns, timer formats, and fallback icons', () => {
+      const refNow = new Date('2026-10-31T10:00:00Z');
+      expect(formatTimerCountdown({ finishes_at: 'invalid-date' }, refNow)).toBe('Timer active');
+      expect(formatTimerCountdown({ remaining: '0:04:15.500' }, refNow)).toBe('4:15 left');
+      expect(formatTimerCountdown({ remaining: '25.5' }, refNow)).toBe('25 left');
+
+      const activities = selectHomeAssistantLiveActivities(
+        {
+          'ha-sports': {
+            meta: {
+              type: 'home-assistant',
+              origin: [0, 0],
+              dimensions: [3, 2],
+              config: { live_island_teams: '*, NFL:GB, NBA:GSW, NHL:SJS, MLS:SJE, TENNIS:FED' },
+              assets_base: '',
+            },
+            state: 'ok',
+            timestamp: '2026-10-31T10:00:00Z',
+            data: {
+              entities: {
+                'sensor.nba': {
+                  entity_id: 'sensor.nba',
+                  state: 'in_progress',
+                  attributes: { league: 'NBA', sport: 'basketball', team_abbr: 'GSW', opponent_abbr: 'LAL', quarter: 'Q2' },
+                },
+                'sensor.nhl': {
+                  entity_id: 'sensor.nhl',
+                  state: 'live',
+                  attributes: { league: 'NHL', sport: 'hockey', team_abbr: 'SJS', opponent_abbr: 'VGK', period: 'P1' },
+                },
+                'sensor.mls': {
+                  entity_id: 'sensor.mls',
+                  state: 'in',
+                  attributes: { league: 'MLS', sport: 'soccer', team_abbr: 'SJE', opponent_abbr: 'LAFC', inning: '1H' },
+                },
+                'sensor.tennis': {
+                  entity_id: 'sensor.tennis',
+                  state: 'in',
+                  attributes: { league: 'ATP', sport: 'tennis', team_abbr: 'FED', opponent_abbr: 'NAD' },
+                },
+              },
+            },
+          },
+        },
+        refNow,
+      );
+
+      expect(activities.find((a) => a.entityId === 'sensor.nba')?.icon).toBe('🏀');
+      expect(activities.find((a) => a.entityId === 'sensor.nhl')?.icon).toBe('🏒');
+      expect(activities.find((a) => a.entityId === 'sensor.mls')?.icon).toBe('⚽');
+      expect(activities.find((a) => a.entityId === 'sensor.tennis')?.icon).toBe('🏆');
+    });
   });
 });
