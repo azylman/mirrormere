@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
 )
 
@@ -89,18 +90,64 @@ func TestNewGTasksAdapter_Validation(t *testing.T) {
 	}
 }
 
+type gtasksFetchCase struct {
+	name      string
+	routes    map[string]mockRoute
+	closeSrv  bool
+	wantName  string
+	wantItems int
+	checkSub  bool
+	wantErr   string
+	wantErrIs error
+}
+
+func runGTasksFetchListCase(t *testing.T, tc gtasksFetchCase) {
+	t.Helper()
+	srv := newRouteServer(t, tc.routes, nil)
+	if tc.closeSrv {
+		srv.Close()
+	}
+	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+		TaskListID: "l1", Token: "static-tok", BaseURL: srv.URL, Client: srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("failed to create adapter: %v", err)
+	}
+	list, items, err := ad.FetchList(context.Background())
+	assertGTasksFetchResult(t, tc, list, items, err)
+}
+
+func assertGTasksFetchResult(t *testing.T, tc gtasksFetchCase, list *tasks.List, items []tasks.ListItem, err error) {
+	t.Helper()
+	if tc.wantErrIs != nil {
+		if !errors.Is(err, tc.wantErrIs) {
+			t.Fatalf("expected error %v, got %v", tc.wantErrIs, err)
+		}
+		return
+	}
+	if tc.wantErr != "" {
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if list.Name != tc.wantName {
+		t.Errorf("list name = %q, want %q", list.Name, tc.wantName)
+	}
+	if len(items) != tc.wantItems {
+		t.Errorf("items count = %d, want %d", len(items), tc.wantItems)
+	}
+	if tc.checkSub && (len(items) < 2 || items[1].ID != "t2") {
+		t.Errorf("expected items[1].ID == 't2', got %+v", items)
+	}
+}
+
 func TestGTasksAdapter_FetchList(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name      string
-		routes    map[string]mockRoute
-		closeSrv  bool
-		wantName  string
-		wantItems int
-		checkSub  bool
-		wantErr   string
-		wantErrIs error
-	}{
+	tests := []gtasksFetchCase{
 		{
 			name: "standard_fetch_soft_deleted",
 			routes: map[string]mockRoute{
@@ -152,41 +199,7 @@ func TestGTasksAdapter_FetchList(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			srv := newRouteServer(t, tc.routes, nil)
-			if tc.closeSrv {
-				srv.Close()
-			}
-			ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-				TaskListID: "l1", Token: "static-tok", BaseURL: srv.URL, Client: srv.Client(),
-			})
-			if err != nil {
-				t.Fatalf("failed to create adapter: %v", err)
-			}
-			list, items, err := ad.FetchList(context.Background())
-			if tc.wantErrIs != nil {
-				if !errors.Is(err, tc.wantErrIs) {
-					t.Fatalf("expected error %v, got %v", tc.wantErrIs, err)
-				}
-				return
-			}
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if list.Name != tc.wantName {
-				t.Errorf("list name = %q, want %q", list.Name, tc.wantName)
-			}
-			if len(items) != tc.wantItems {
-				t.Errorf("items count = %d, want %d", len(items), tc.wantItems)
-			}
-			if tc.checkSub && (len(items) < 2 || items[1].ID != "t2") {
-				t.Errorf("expected items[1].ID == 't2', got %+v", items)
-			}
+			runGTasksFetchListCase(t, tc)
 		})
 	}
 }

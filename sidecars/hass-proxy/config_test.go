@@ -7,22 +7,74 @@ import (
 	"testing"
 )
 
+type loadConfigCase struct {
+	name       string
+	yaml       string
+	envKey     string
+	envVal     string
+	nonExist   bool
+	wantErrSub string
+	wantPort   int
+	wantURL    string
+	wantToken  string
+	wantLang   string
+	wantDevID  string
+	wantNodeCt int
+}
+
+func assertLoadConfigResult(t *testing.T, tc loadConfigCase, cfg *Config, err error) {
+	t.Helper()
+	if tc.wantErrSub != "" {
+		if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+			t.Fatalf("err=%v, want substring %q", err, tc.wantErrSub)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Server.Port != tc.wantPort {
+		t.Errorf("port=%d, want %d", cfg.Server.Port, tc.wantPort)
+	}
+	if cfg.HomeAssistant.URL != tc.wantURL {
+		t.Errorf("url=%q, want %q", cfg.HomeAssistant.URL, tc.wantURL)
+	}
+	if tc.wantToken != "" && cfg.HomeAssistant.Token != tc.wantToken {
+		t.Errorf("token=%q, want %q", cfg.HomeAssistant.Token, tc.wantToken)
+	}
+	if tc.wantLang != "" && cfg.HomeAssistant.Language != tc.wantLang {
+		t.Errorf("lang=%q, want %q", cfg.HomeAssistant.Language, tc.wantLang)
+	}
+	if tc.wantDevID != "" && cfg.HomeAssistant.DeviceID != tc.wantDevID {
+		t.Errorf("deviceID=%q, want %q", cfg.HomeAssistant.DeviceID, tc.wantDevID)
+	}
+	if tc.wantNodeCt > 0 && len(cfg.HomeAssistant.NodeDevices) != tc.wantNodeCt {
+		t.Errorf("nodeDevices=%d, want %d", len(cfg.HomeAssistant.NodeDevices), tc.wantNodeCt)
+	}
+}
+
+func runLoadConfigCase(t *testing.T, tmpDir string, tc loadConfigCase) {
+	t.Helper()
+	path := filepath.Join(tmpDir, tc.name+".yaml")
+	if tc.nonExist {
+		path = filepath.Join(tmpDir, "does-not-exist.yaml")
+	} else if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	if tc.envKey != "" {
+		t.Setenv("HASS_TOKEN", "")
+		t.Setenv("HOMEASSISTANT_TOKEN", "")
+		t.Setenv(tc.envKey, tc.envVal)
+	}
+
+	cfg, err := LoadConfig(path)
+	assertLoadConfigResult(t, tc, cfg, err)
+}
+
 func TestLoadConfig(t *testing.T) {
 	tmpDir := t.TempDir()
-	tests := []struct {
-		name       string
-		yaml       string
-		envKey     string
-		envVal     string
-		nonExist   bool
-		wantErrSub string
-		wantPort   int
-		wantURL    string
-		wantToken  string
-		wantLang   string
-		wantDevID  string
-		wantNodeCt int
-	}{
+	tests := []loadConfigCase{
 		{
 			name:     "valid_full",
 			yaml:     "server:\n  host: 127.0.0.1\n  port: 8099\n  read_timeout_seconds: 15\n  write_timeout_seconds: 20\nhomeassistant:\n  url: http://ha.local:8123\n  token: secret-token\n  agent_id: ag\n  language: fr\n  timeout_ms: 3500\n  conversation_path: /api/conv\n  device_id: fallback-dev-999\n  node_devices:\n    kiosk: dev-1\n    office: dev-2\n",
@@ -59,47 +111,7 @@ func TestLoadConfig(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(tmpDir, tc.name+".yaml")
-			if tc.nonExist {
-				path = filepath.Join(tmpDir, "does-not-exist.yaml")
-			} else if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
-				t.Fatalf("failed to write test yaml: %v", err)
-			}
-
-			if tc.envKey != "" {
-				t.Setenv("HASS_TOKEN", "")
-				t.Setenv("HOMEASSISTANT_TOKEN", "")
-				t.Setenv(tc.envKey, tc.envVal)
-			}
-
-			cfg, err := LoadConfig(path)
-			if tc.wantErrSub != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
-					t.Fatalf("err=%v, want substring %q", err, tc.wantErrSub)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if cfg.Server.Port != tc.wantPort {
-				t.Errorf("port=%d, want %d", cfg.Server.Port, tc.wantPort)
-			}
-			if cfg.HomeAssistant.URL != tc.wantURL {
-				t.Errorf("url=%q, want %q", cfg.HomeAssistant.URL, tc.wantURL)
-			}
-			if tc.wantToken != "" && cfg.HomeAssistant.Token != tc.wantToken {
-				t.Errorf("token=%q, want %q", cfg.HomeAssistant.Token, tc.wantToken)
-			}
-			if tc.wantLang != "" && cfg.HomeAssistant.Language != tc.wantLang {
-				t.Errorf("lang=%q, want %q", cfg.HomeAssistant.Language, tc.wantLang)
-			}
-			if tc.wantDevID != "" && cfg.HomeAssistant.DeviceID != tc.wantDevID {
-				t.Errorf("deviceID=%q, want %q", cfg.HomeAssistant.DeviceID, tc.wantDevID)
-			}
-			if tc.wantNodeCt > 0 && len(cfg.HomeAssistant.NodeDevices) != tc.wantNodeCt {
-				t.Errorf("nodeDevices=%d, want %d", len(cfg.HomeAssistant.NodeDevices), tc.wantNodeCt)
-			}
+			runLoadConfigCase(t, tmpDir, tc)
 		})
 	}
 }

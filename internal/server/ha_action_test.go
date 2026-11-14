@@ -247,115 +247,87 @@ func TestWidgetAction_CallerSuccess(t *testing.T) {
 	}
 }
 
-func TestWidgetAction_DotServiceFormat(t *testing.T) {
+func TestWidgetAction_ServiceFormats(t *testing.T) {
 	t.Parallel()
-	caller := &mockWidgetActionCaller{}
-	handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
-	srv := server.New(server.Config{WidgetActionHandler: handler})
-
-	payload := `{
-		"service": "light.toggle",
-		"entity_id": "light.porch"
-	}`
-	req := httptest.NewRequest(http.MethodPost, "/api/widgets/lights-widget/action", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	caller.mu.Lock()
-	defer caller.mu.Unlock()
-	if len(caller.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(caller.calls))
-	}
-	c := caller.calls[0]
-	if c.domain != "light" || c.service != "toggle" {
-		t.Errorf("expected light.toggle, got domain=%q service=%q", c.domain, c.service)
-	}
-	if c.serviceData["entity_id"] != "light.porch" {
-		t.Errorf("expected entity_id light.porch, got %v", c.serviceData["entity_id"])
-	}
-}
-
-func TestWidgetAction_SlashServiceFormat(t *testing.T) {
-	t.Parallel()
-	caller := &mockWidgetActionCaller{}
-	handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
-	srv := server.New(server.Config{WidgetActionHandler: handler})
-
-	payload := `{
-		"service": "switch/turn_off",
-		"data": {
-			"entity_id": "switch.bedroom_fan"
-		}
-	}`
-	req := httptest.NewRequest(http.MethodPost, "/api/widgets/switch-widget/action", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	caller.mu.Lock()
-	defer caller.mu.Unlock()
-	if len(caller.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(caller.calls))
-	}
-	c := caller.calls[0]
-	if c.domain != "switch" || c.service != "turn_off" {
-		t.Errorf("expected switch.turn_off, got domain=%q service=%q", c.domain, c.service)
-	}
-	if c.serviceData["entity_id"] != "switch.bedroom_fan" {
-		t.Errorf("expected entity_id switch.bedroom_fan, got %v", c.serviceData["entity_id"])
-	}
-}
-
-func TestWidgetAction_ActionFieldFormat(t *testing.T) {
-	t.Parallel()
-	caller := &mockWidgetActionCaller{}
-	handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
-	srv := server.New(server.Config{WidgetActionHandler: handler})
-
-	payload := `{
-		"action": "climate.set_temperature",
-		"target": {
-			"entity_id": "climate.living_room"
+	tests := []struct {
+		name         string
+		widgetPath   string
+		payload      string
+		wantDomain   string
+		wantService  string
+		wantEntityID string
+		wantNoTarget bool
+		wantExtraKey string
+		wantExtraVal int
+	}{
+		{
+			name:         "dot_service_format",
+			widgetPath:   "/api/widgets/lights-widget/action",
+			payload:      `{"service": "light.toggle", "entity_id": "light.porch"}`,
+			wantDomain:   "light",
+			wantService:  "toggle",
+			wantEntityID: "light.porch",
 		},
-		"data": {
-			"temperature": 71
-		}
-	}`
-	req := httptest.NewRequest(http.MethodPost, "/api/widgets/climate-widget/action", strings.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+		{
+			name:         "slash_service_format",
+			widgetPath:   "/api/widgets/switch-widget/action",
+			payload:      `{"service": "switch/turn_off", "data": {"entity_id": "switch.bedroom_fan"}}`,
+			wantDomain:   "switch",
+			wantService:  "turn_off",
+			wantEntityID: "switch.bedroom_fan",
+		},
+		{
+			name:         "action_field_format",
+			widgetPath:   "/api/widgets/climate-widget/action",
+			payload:      `{"action": "climate.set_temperature", "target": {"entity_id": "climate.living_room"}, "data": {"temperature": 71}}`,
+			wantDomain:   "climate",
+			wantService:  "set_temperature",
+			wantEntityID: "climate.living_room",
+			wantNoTarget: true,
+			wantExtraKey: "temperature",
+			wantExtraVal: 71,
+		},
 	}
 
-	caller.mu.Lock()
-	defer caller.mu.Unlock()
-	if len(caller.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(caller.calls))
-	}
-	c := caller.calls[0]
-	if c.domain != "climate" || c.service != "set_temperature" {
-		t.Errorf("expected climate.set_temperature, got domain=%q service=%q", c.domain, c.service)
-	}
-	if c.serviceData["entity_id"] != "climate.living_room" {
-		t.Errorf("expected entity_id climate.living_room, got %v", c.serviceData["entity_id"])
-	}
-	if _, hasTarget := c.serviceData["target"]; hasTarget {
-		t.Errorf("expected target map to be flattened without top-level 'target' key, got %v", c.serviceData["target"])
-	}
-	if temp, ok := c.serviceData["temperature"].(float64); !ok || int(temp) != 71 {
-		t.Errorf("expected temperature 71, got %v", c.serviceData["temperature"])
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			caller := &mockWidgetActionCaller{}
+			handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
+			srv := server.New(server.Config{WidgetActionHandler: handler})
+
+			req := httptest.NewRequest(http.MethodPost, tc.widgetPath, strings.NewReader(tc.payload))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			srv.Routes().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+			}
+
+			caller.mu.Lock()
+			defer caller.mu.Unlock()
+			if len(caller.calls) != 1 {
+				t.Fatalf("expected 1 call, got %d", len(caller.calls))
+			}
+			c := caller.calls[0]
+			if c.domain != tc.wantDomain || c.service != tc.wantService {
+				t.Errorf("expected %s.%s, got domain=%q service=%q", tc.wantDomain, tc.wantService, c.domain, c.service)
+			}
+			if c.serviceData["entity_id"] != tc.wantEntityID {
+				t.Errorf("expected entity_id %s, got %v", tc.wantEntityID, c.serviceData["entity_id"])
+			}
+			if tc.wantNoTarget {
+				if _, hasTarget := c.serviceData["target"]; hasTarget {
+					t.Errorf("expected target map to be flattened without top-level 'target' key, got %v", c.serviceData["target"])
+				}
+			}
+			if tc.wantExtraKey != "" {
+				if v, ok := c.serviceData[tc.wantExtraKey].(float64); !ok || int(v) != tc.wantExtraVal {
+					t.Errorf("expected %s %d, got %v", tc.wantExtraKey, tc.wantExtraVal, c.serviceData[tc.wantExtraKey])
+				}
+			}
+		})
 	}
 }
 

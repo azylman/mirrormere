@@ -60,20 +60,7 @@ func metricVal(t *testing.T, reg *prometheus.Registry, name string, labels map[s
 	return total, found
 }
 
-func TestMetrics_CollectorsAndSafety(t *testing.T) {
-	t.Parallel()
-	if DefaultMetrics() == nil || NewMetrics(nil) == nil || SanitizeNodeID("kitchen-display") != "kitchen-display" || SanitizeNodeID("living_room_1") != "living_room_1" {
-		t.Fatal("metrics init or valid node sanitize failed")
-	}
-	for _, bad := range []string{"", "   ", "node/../../evil", "bad node with spaces"} {
-		if got := SanitizeNodeID(bad); got != "unknown" {
-			t.Errorf("SanitizeNodeID(%q) = %q, want unknown", bad, got)
-		}
-	}
-
-	reg := prometheus.NewRegistry()
-	node := "kitchen-display"
-	metrics := NewMetrics(reg)
+func exerciseMetricsRecording(node string, metrics *Metrics) {
 	for _, m := range []*Metrics{nil, metrics} {
 		for _, stg := range []string{"wake_eval", "stt", "brain", "tts"} {
 			m.RecordStageDuration(node, stg, "success", 0.35)
@@ -104,6 +91,23 @@ func TestMetrics_CollectorsAndSafety(t *testing.T) {
 			m.RecordTTSCPS(node, "kokoro_am_adam", bad)
 		}
 	}
+}
+
+func TestMetrics_CollectorsAndSafety(t *testing.T) {
+	t.Parallel()
+	if DefaultMetrics() == nil || NewMetrics(nil) == nil || SanitizeNodeID("kitchen-display") != "kitchen-display" || SanitizeNodeID("living_room_1") != "living_room_1" {
+		t.Fatal("metrics init or valid node sanitize failed")
+	}
+	for _, bad := range []string{"", "   ", "node/../../evil", "bad node with spaces"} {
+		if got := SanitizeNodeID(bad); got != "unknown" {
+			t.Errorf("SanitizeNodeID(%q) = %q, want unknown", bad, got)
+		}
+	}
+
+	reg := prometheus.NewRegistry()
+	node := "kitchen-display"
+	metrics := NewMetrics(reg)
+	exerciseMetricsRecording(node, metrics)
 
 	for _, tc := range []struct {
 		name string

@@ -23,21 +23,8 @@ func (m *mockSink) SetVoiceState(state *events.VoiceStateData) {
 	m.mu.Unlock()
 }
 
-func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
-	t.Parallel()
-	sinkInit := &mockSink{}
-	if st := NewCoordinator(nil, sinkInit).GetState(); st.State != StateIdle || st.Transcript != nil || sinkInit.last == nil || sinkInit.last.State != StateIdle {
-		t.Fatalf("expected initial idle state, got %+v sink=%+v", st, sinkInit.last)
-	}
-
-	sink := &mockSink{}
-	hub := events.NewHub(events.HubConfig{RingCapacity: 10, RingTTL: time.Minute}, nil, nil)
-	t.Cleanup(hub.Close)
-	subCtx := t.Context()
-	sub, unsub := hub.Subscribe(subCtx)
-	defer unsub()
-
-	c := NewCoordinator(hub, sink)
+func runValidStateTransitions(t *testing.T, c *Coordinator, sink *mockSink, sub <-chan *events.Event) {
+	t.Helper()
 	for _, tc := range []struct {
 		state                             string
 		transcript, reply, engine, status *string
@@ -64,20 +51,10 @@ func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
 			t.Fatalf("timeout waiting for SSE %s", tc.state)
 		}
 	}
+}
 
-	if st, err := c.SetState(StateThinking, new("q"), nil, nil); err != nil || st.Status != nil {
-		t.Fatalf("SetState should clear status: %+v", st)
-	}
-	<-sub
-	if st := c.SetStatus(new("⚡ Querying...")); st.State != StateThinking || st.Status == nil || *st.Status != "⚡ Querying..." {
-		t.Fatalf("SetStatus mismatch: %+v", st)
-	}
-	<-sub
-	if st := c.Reset(); st.State != StateIdle || st.Transcript != nil || st.Reply != nil || st.TTSEngine != nil || st.Status != nil {
-		t.Fatalf("Reset mismatch: %+v", st)
-	}
-	<-sub
-
+func assertInvalidStateTransitions(t *testing.T, c *Coordinator) {
+	t.Helper()
 	for _, inv := range []string{"", "IDLE", "running", "LISTENING", "pending", "waiting", "unknown", " listening"} {
 		if _, err := c.SetState(inv, nil, nil, nil); IsValidState(inv) || !errors.Is(err, ErrInvalidState) {
 			t.Errorf("SetState(%q) err = %v", inv, err)
@@ -86,7 +63,10 @@ func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
 			t.Errorf("SetFullState(%q) err = %v", inv, err)
 		}
 	}
+}
 
+func assertIdleResetFromActiveStates(t *testing.T) {
+	t.Helper()
 	txt := "test"
 	for _, st := range []string{StateListening, StateTranscribing, StateThinking, StateSpeaking, StateSynthesizing, StateError} {
 		ci := NewCoordinator(nil)
@@ -102,6 +82,40 @@ func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
 			t.Fatalf("idle transitions from %s failed", st)
 		}
 	}
+}
+
+func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
+	t.Parallel()
+	sinkInit := &mockSink{}
+	if st := NewCoordinator(nil, sinkInit).GetState(); st.State != StateIdle || st.Transcript != nil || sinkInit.last == nil || sinkInit.last.State != StateIdle {
+		t.Fatalf("expected initial idle state, got %+v sink=%+v", st, sinkInit.last)
+	}
+
+	sink := &mockSink{}
+	hub := events.NewHub(events.HubConfig{RingCapacity: 10, RingTTL: time.Minute}, nil, nil)
+	t.Cleanup(hub.Close)
+	subCtx := t.Context()
+	sub, unsub := hub.Subscribe(subCtx)
+	defer unsub()
+
+	c := NewCoordinator(hub, sink)
+	runValidStateTransitions(t, c, sink, sub)
+
+	if st, err := c.SetState(StateThinking, new("q"), nil, nil); err != nil || st.Status != nil {
+		t.Fatalf("SetState should clear status: %+v", st)
+	}
+	<-sub
+	if st := c.SetStatus(new("⚡ Querying...")); st.State != StateThinking || st.Status == nil || *st.Status != "⚡ Querying..." {
+		t.Fatalf("SetStatus mismatch: %+v", st)
+	}
+	<-sub
+	if st := c.Reset(); st.State != StateIdle || st.Transcript != nil || st.Reply != nil || st.TTSEngine != nil || st.Status != nil {
+		t.Fatalf("Reset mismatch: %+v", st)
+	}
+	<-sub
+
+	assertInvalidStateTransitions(t, c)
+	assertIdleResetFromActiveStates(t)
 }
 
 func TestCoordinator_SpeakingSafetyWatchdog(t *testing.T) {

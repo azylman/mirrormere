@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
 )
 
@@ -36,19 +37,64 @@ func TestNewTodoistAdapter_Validation(t *testing.T) {
 	}
 }
 
-func TestTodoistAdapter_FetchList(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name      string
-		cfg       adapters.TodoistAdapterConfig
-		routes    map[string]mockRoute
-		wantName  string
-		wantItems int
-		checkSec  string
-		checkDue  bool
-		wantErr   string
-		wantErrIs error
-	}{
+type todoistFetchCase struct {
+	name      string
+	cfg       adapters.TodoistAdapterConfig
+	routes    map[string]mockRoute
+	wantName  string
+	wantItems int
+	checkSec  string
+	checkDue  bool
+	wantErr   string
+	wantErrIs error
+}
+
+func runTodoistFetchListCase(t *testing.T, tc todoistFetchCase) {
+	t.Helper()
+	srv := newRouteServer(t, tc.routes, nil)
+	cfg := tc.cfg
+	cfg.Token, cfg.BaseURL, cfg.Client = "tok", srv.URL, srv.Client()
+	ad, err := adapters.NewTodoistAdapter(cfg)
+	if err != nil {
+		t.Fatalf("failed to create adapter: %v", err)
+	}
+	list, items, err := ad.FetchList(context.Background())
+	assertTodoistFetchResult(t, tc, list, items, err)
+}
+
+func assertTodoistFetchResult(t *testing.T, tc todoistFetchCase, list *tasks.List, items []tasks.ListItem, err error) {
+	t.Helper()
+	if tc.wantErrIs != nil {
+		if !errors.Is(err, tc.wantErrIs) {
+			t.Fatalf("expected error %v, got %v", tc.wantErrIs, err)
+		}
+		return
+	}
+	if tc.wantErr != "" {
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tc.wantName != "" && list.Name != tc.wantName {
+		t.Errorf("list name = %q, want %q", list.Name, tc.wantName)
+	}
+	if len(items) != tc.wantItems {
+		t.Errorf("items count = %d, want %d", len(items), tc.wantItems)
+	}
+	if tc.checkSec != "" && (len(items) < 2 || items[1].Section != tc.checkSec) {
+		t.Errorf("expected items[1].Section == %q, got %+v", tc.checkSec, items)
+	}
+	if tc.checkDue && (len(items) < 2 || items[0].DueDate == nil || items[1].DueDate == nil) {
+		t.Errorf("expected due dates parsed, got %+v", items)
+	}
+}
+
+func todoistFetchListTestCases() []todoistFetchCase {
+	return []todoistFetchCase{
 		{
 			name: "project_id_success", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
 			routes: map[string]mockRoute{
@@ -192,39 +238,15 @@ func TestTodoistAdapter_FetchList(t *testing.T) {
 		{"tasks_500", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {body: `[]`}, "/api/v1/tasks?project_id=p1": {status: 500}}, "", 0, "", false, "failed to fetch todoist tasks", nil},
 		{"malformed_tasks_json", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {body: `[]`}, "/api/v1/tasks?project_id=p1": {body: `{bad`}}, "", 0, "", false, "failed to parse todoist tasks", nil},
 	}
+}
+
+func TestTodoistAdapter_FetchList(t *testing.T) {
+	t.Parallel()
+	tests := todoistFetchListTestCases()
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			srv := newRouteServer(t, tc.routes, nil)
-			cfg := tc.cfg
-			cfg.Token, cfg.BaseURL, cfg.Client = "tok", srv.URL, srv.Client()
-			ad, err := adapters.NewTodoistAdapter(cfg)
-			if err != nil {
-				t.Fatalf("failed to create adapter: %v", err)
-			}
-			list, items, err := ad.FetchList(context.Background())
-			switch {
-			case tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs):
-				t.Fatalf("expected error %v, got %v", tc.wantErrIs, err)
-			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
-				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
-			case tc.wantErr == "" && tc.wantErrIs == nil:
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				if tc.wantName != "" && list.Name != tc.wantName {
-					t.Errorf("list name = %q, want %q", list.Name, tc.wantName)
-				}
-				if len(items) != tc.wantItems {
-					t.Errorf("items count = %d, want %d", len(items), tc.wantItems)
-				}
-				if tc.checkSec != "" && (len(items) < 2 || items[1].Section != tc.checkSec) {
-					t.Errorf("expected items[1].Section == %q, got %+v", tc.checkSec, items)
-				}
-				if tc.checkDue && (len(items) < 2 || items[0].DueDate == nil || items[1].DueDate == nil) {
-					t.Errorf("expected due dates parsed, got %+v", items)
-				}
-			}
+			runTodoistFetchListCase(t, tc)
 		})
 	}
 }

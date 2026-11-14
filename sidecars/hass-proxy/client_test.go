@@ -10,18 +10,112 @@ import (
 	"testing"
 )
 
+type clientProcessIntentCase struct {
+	name        string
+	serverMode  string
+	reqText     string
+	cancelCtx   bool
+	wantMatched bool
+	wantErr     bool
+	wantIntent  string
+	wantSpeech  string
+}
+
+func setupIntentMockServer(t *testing.T, mode string) (string, func()) {
+	t.Helper()
+	switch mode {
+	case "unreachable":
+		return "http://127.0.0.1:54321", func() {}
+	case "invalid_url":
+		return "http://[invalid-host-bracket", func() {}
+	case "truncated":
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to bind listener: %v", err)
+		}
+		go func() {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+			buf := make([]byte, 1024)
+			_, _ = c.Read(buf)
+			_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n32\r\npartially written content"))
+		}()
+		return "http://" + ln.Addr().String(), func() { _ = ln.Close() }
+	case "ok", "default_intent", "no_match", "empty_speech", "status_500", "bad_json", "canceled":
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch mode {
+			case "ok":
+				if r.Header.Get("Authorization") != "Bearer test-token" {
+					t.Errorf("expected Bearer token, got %q", r.Header.Get("Authorization"))
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"response":{"speech":{"plain":{"speech":"Turned off the kitchen light."}},"response_type":"action_done"},"conversation_id":"conv-123"}`))
+			case "default_intent":
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"response":{"speech":{"plain":{"speech":"Done!"}}}}`))
+			case "no_match":
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"response":{"response_type":"error","data":{"code":"no_intent_match"}}}`))
+			case "empty_speech":
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"response":{"speech":{"plain":{"speech":"   "}},"response_type":"action_done"}}`))
+			case "status_500":
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			case "bad_json":
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{not valid json`))
+			case "canceled":
+				w.WriteHeader(http.StatusOK)
+			}
+		}))
+		return srv.URL, srv.Close
+	default:
+		return "http://example.com", func() {}
+	}
+}
+
+func runClientProcessIntentCase(t *testing.T, tc clientProcessIntentCase) {
+	t.Helper()
+	url, cleanup := setupIntentMockServer(t, tc.serverMode)
+	defer cleanup()
+
+	client := NewHAClient(HomeAssistantConfig{
+		URL:       url,
+		Token:     "test-token",
+		AgentID:   "conversation.home_assistant",
+		Language:  "en",
+		TimeoutMS: 2000,
+	}, nil)
+
+	ctx := context.Background()
+	if tc.cancelCtx {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		cancel()
+	}
+
+	resp, matched, err := client.ProcessIntent(ctx, IntentRequest{Text: tc.reqText, TurnID: "turn-456", Speaker: "alex"})
+	if (err != nil) != tc.wantErr {
+		t.Fatalf("err=%v, wantErr=%v", err, tc.wantErr)
+	}
+	if matched != tc.wantMatched {
+		t.Fatalf("matched=%v, wantMatched=%v", matched, tc.wantMatched)
+	}
+	if tc.wantMatched && (resp == nil || resp.Intent != tc.wantIntent || resp.Speech != tc.wantSpeech) {
+		t.Fatalf("resp=%+v, want Intent=%q Speech=%q", resp, tc.wantIntent, tc.wantSpeech)
+	}
+}
+
 func TestClient_ProcessIntent(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name        string
-		serverMode  string
-		reqText     string
-		cancelCtx   bool
-		wantMatched bool
-		wantErr     bool
-		wantIntent  string
-		wantSpeech  string
-	}{
+	tests := []clientProcessIntentCase{
 		{"empty_text", "", "   ", false, false, false, "", ""},
 		{"success", "ok", "turn off kitchen light", false, true, false, "action_done", "Turned off the kitchen light."},
 		{"default_response_type", "default_intent", "test", false, true, false, "action_done", "Done!"},
@@ -38,92 +132,7 @@ func TestClient_ProcessIntent(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			url := "http://example.com"
-			var srv *httptest.Server
-			switch tc.serverMode {
-			case "unreachable":
-				url = "http://127.0.0.1:54321"
-			case "invalid_url":
-				url = "http://[invalid-host-bracket"
-			case "truncated":
-				ln, err := net.Listen("tcp", "127.0.0.1:0")
-				if err != nil {
-					t.Fatalf("failed to bind listener: %v", err)
-				}
-				defer ln.Close()
-				go func() {
-					c, err := ln.Accept()
-					if err != nil {
-						return
-					}
-					defer c.Close()
-					buf := make([]byte, 1024)
-					_, _ = c.Read(buf)
-					_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n32\r\npartially written content"))
-				}()
-				url = "http://" + ln.Addr().String()
-			case "ok", "default_intent", "no_match", "empty_speech", "status_500", "bad_json", "canceled":
-				srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					switch tc.serverMode {
-					case "ok":
-						if r.Header.Get("Authorization") != "Bearer test-token" {
-							t.Errorf("expected Bearer token, got %q", r.Header.Get("Authorization"))
-						}
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusOK)
-						_, _ = w.Write([]byte(`{"response":{"speech":{"plain":{"speech":"Turned off the kitchen light."}},"response_type":"action_done"},"conversation_id":"conv-123"}`))
-					case "default_intent":
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusOK)
-						_, _ = w.Write([]byte(`{"response":{"speech":{"plain":{"speech":"Done!"}}}}`))
-					case "no_match":
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusOK)
-						_, _ = w.Write([]byte(`{"response":{"response_type":"error","data":{"code":"no_intent_match"}}}`))
-					case "empty_speech":
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusOK)
-						_, _ = w.Write([]byte(`{"response":{"speech":{"plain":{"speech":"   "}},"response_type":"action_done"}}`))
-					case "status_500":
-						http.Error(w, "internal server error", http.StatusInternalServerError)
-					case "bad_json":
-						w.WriteHeader(http.StatusOK)
-						_, _ = w.Write([]byte(`{not valid json`))
-					case "canceled":
-						w.WriteHeader(http.StatusOK)
-					}
-				}))
-				defer srv.Close()
-				url = srv.URL
-			}
-
-			client := NewHAClient(HomeAssistantConfig{
-				URL:       url,
-				Token:     "test-token",
-				AgentID:   "conversation.home_assistant",
-				Language:  "en",
-				TimeoutMS: 2000,
-			}, nil)
-
-			ctx := context.Background()
-			if tc.cancelCtx {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				cancel()
-			}
-
-			resp, matched, err := client.ProcessIntent(ctx, IntentRequest{Text: tc.reqText, TurnID: "turn-456", Speaker: "alex"})
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("err=%v, wantErr=%v", err, tc.wantErr)
-			}
-			if matched != tc.wantMatched {
-				t.Fatalf("matched=%v, wantMatched=%v", matched, tc.wantMatched)
-			}
-			if tc.wantMatched {
-				if resp == nil || resp.Intent != tc.wantIntent || resp.Speech != tc.wantSpeech {
-					t.Fatalf("resp=%+v, want Intent=%q Speech=%q", resp, tc.wantIntent, tc.wantSpeech)
-				}
-			}
+			runClientProcessIntentCase(t, tc)
 		})
 	}
 }
