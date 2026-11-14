@@ -44,19 +44,8 @@ type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, errors.New("read error") }
 
-func TestSpeakerMatchingAndIdentifier(t *testing.T) {
-	t.Parallel()
-	s1, err1 := CosineSimilarity([]float64{1, 0}, []float64{1, 0})
-	s2, err2 := CosineSimilarity([]float64{1, 0}, []float64{0, 1})
-	_, err3 := CosineSimilarity([]float64{1}, []float64{1, 0})
-	_, err4 := CosineSimilarity([]float64{0, 0}, []float64{1, 0})
-	if err1 != nil || s1 != 1 || err2 != nil || s2 != 0 || err3 == nil || err4 == nil {
-		t.Fatalf("CosineSimilarity failed: (%v,%v) (%v,%v) %v %v", s1, err1, s2, err2, err3, err4)
-	}
-
-	spk := []Fingerprint{{ID: "mike", Embedding: []float64{1, 0, 0}}, {ID: "lauren", Embedding: []float64{0, 1, 0}}}
-	mixed := []Fingerprint{{ID: "broken", Embedding: []float64{1, 0}}, spk[0]}
-	uncomp := []Fingerprint{{ID: "broken", Embedding: []float64{1, 0}}}
+func assertSpeakerMatchingCases(t *testing.T, spk, mixed, uncomp []Fingerprint) {
+	t.Helper()
 	for _, tc := range []struct {
 		emb     []float64
 		list    []Fingerprint
@@ -76,8 +65,10 @@ func TestSpeakerMatchingAndIdentifier(t *testing.T) {
 			t.Fatalf("id=%q sim=%v err=%v", id, sim, err)
 		}
 	}
+}
 
-	enrolled := []Fingerprint{{ID: "mike", Embedding: []float64{1, 0}}, {ID: "lauren", Embedding: []float64{0, 1}}}
+func assertFingerprintIdentifierCases(t *testing.T, enrolled []Fingerprint) {
+	t.Helper()
 	for _, tc := range []struct {
 		wantSpeaker string
 		emb         SpeakerEmbedder
@@ -95,7 +86,10 @@ func TestSpeakerMatchingAndIdentifier(t *testing.T) {
 			t.Fatalf("got %q err=%v", m.Speaker, err)
 		}
 	}
+}
 
+func assertSpeakerConfigWiring(t *testing.T, enrolled []Fingerprint) {
+	t.Helper()
 	validCfg := &config.SpeakerIDConfig{EmbedURL: "http://x", Model: "ecapa", Speakers: enrolled}
 	var nilHub *Hub
 	nilHub.ReloadSpeakerID(&config.VoiceHubConfig{Enabled: true, SpeakerID: validCfg})
@@ -112,6 +106,65 @@ func TestSpeakerMatchingAndIdentifier(t *testing.T) {
 	hub.ReloadSpeakerID(nil)
 	if hub.speaker != nil {
 		t.Fatal("expected nil speaker identifier after ReloadSpeakerID(nil)")
+	}
+}
+
+func TestSpeakerMatchingAndIdentifier(t *testing.T) {
+	t.Parallel()
+	s1, err1 := CosineSimilarity([]float64{1, 0}, []float64{1, 0})
+	s2, err2 := CosineSimilarity([]float64{1, 0}, []float64{0, 1})
+	_, err3 := CosineSimilarity([]float64{1}, []float64{1, 0})
+	_, err4 := CosineSimilarity([]float64{0, 0}, []float64{1, 0})
+	if err1 != nil || s1 != 1 || err2 != nil || s2 != 0 || err3 == nil || err4 == nil {
+		t.Fatalf("CosineSimilarity failed: (%v,%v) (%v,%v) %v %v", s1, err1, s2, err2, err3, err4)
+	}
+
+	spk := []Fingerprint{{ID: "mike", Embedding: []float64{1, 0, 0}}, {ID: "lauren", Embedding: []float64{0, 1, 0}}}
+	mixed := []Fingerprint{{ID: "broken", Embedding: []float64{1, 0}}, spk[0]}
+	uncomp := []Fingerprint{{ID: "broken", Embedding: []float64{1, 0}}}
+	assertSpeakerMatchingCases(t, spk, mixed, uncomp)
+
+	enrolled := []Fingerprint{{ID: "mike", Embedding: []float64{1, 0}}, {ID: "lauren", Embedding: []float64{0, 1}}}
+	assertFingerprintIdentifierCases(t, enrolled)
+	assertSpeakerConfigWiring(t, enrolled)
+}
+
+func assertDefaultEmbedClientErrors(t *testing.T, srvURL string) {
+	t.Helper()
+	for _, badURL := range []string{srvURL + "/500", srvURL + "/empty", srvURL + "/bad", "  ", "http://127.0.0.1:1", "http://bad host"} {
+		if _, _, err := NewDefaultEmbedClient(badURL, 1).Embed(context.Background(), nil); err == nil {
+			t.Fatalf("expected error for %q", badURL)
+		}
+	}
+	if err := readHTTPError(&http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(errReader{})}, "test"); err == nil || !strings.Contains(err.Error(), "unknown error") {
+		t.Fatalf("expected unknown error, got %v", err)
+	}
+}
+
+type embedHubCase struct {
+	stt, spkID, wantSpk       string
+	sttErr, spkErr            error
+	block, checkBrain, wantEr bool
+}
+
+func runEmbedHubIntegrationCase(t *testing.T, srvURL string, brainBodyRef *map[string]any, tc embedHubCase) {
+	t.Helper()
+	*brainBodyRef = nil
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil,
+		WithSTTClient(&mockSTT{text: tc.stt, err: tc.sttErr}), WithBrainClient(NewDefaultBrainClient(srvURL+"/brain", 5)),
+		WithTTSClient(&mockTTS{}), WithSpeakerIdentifier(&mockIdentifier{id: tc.spkID, err: tc.spkErr, block: tc.block}))
+	events := map[string]any{}
+	start := time.Now()
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "eink-display-livingroom", "sess-1", func(ev string, d any) error {
+		events[ev] = d
+		return nil
+	}, EdgeTimings{})
+	if (err != nil) != tc.wantEr || (tc.wantEr && time.Since(start) > time.Second) {
+		t.Fatalf("interact: err=%v elapsed=%v", err, time.Since(start))
+	}
+	brainBody := *brainBodyRef
+	if tr, _ := events["transcript"].(map[string]string); !tc.wantEr && (tr["speaker"] != tc.wantSpk || events["done"] == nil || (tc.checkBrain && (brainBody["speaker"] != "mike" || brainBody["speaker_score"] != 0.83))) {
+		t.Fatalf("tr=%+v done=%v bb=%+v", tr, events["done"], brainBody)
 	}
 }
 
@@ -143,40 +196,14 @@ func TestDefaultEmbedClientAndHubIntegration(t *testing.T) {
 	if emb, model, err := NewDefaultEmbedClient(srv.URL, 1).Embed(context.Background(), []byte("RIFFwav")); err != nil || model != "ecapa" || len(emb) != 2 {
 		t.Fatalf("emb=%v model=%q err=%v", emb, model, err)
 	}
-	for _, badURL := range []string{srv.URL + "/500", srv.URL + "/empty", srv.URL + "/bad", "  ", "http://127.0.0.1:1", "http://bad host"} {
-		if _, _, err := NewDefaultEmbedClient(badURL, 1).Embed(context.Background(), nil); err == nil {
-			t.Fatalf("expected error for %q", badURL)
-		}
-	}
-	if err := readHTTPError(&http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(errReader{})}, "test"); err == nil || !strings.Contains(err.Error(), "unknown error") {
-		t.Fatalf("expected unknown error, got %v", err)
-	}
+	assertDefaultEmbedClientErrors(t, srv.URL)
 
-	for _, tc := range []struct {
-		stt, spkID, wantSpk       string
-		sttErr, spkErr            error
-		block, checkBrain, wantEr bool
-	}{
+	for _, tc := range []embedHubCase{
 		{"what's on my calendar", "mike", "mike", nil, nil, false, true, false},
 		{"hello", "", "", nil, errors.New("down"), false, false, false},
 		{"hello", "mike", "", nil, nil, true, false, false},
 		{"", "mike", "", errors.New("whisper down"), nil, true, false, true},
 	} {
-		brainBody = nil
-		h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil,
-			WithSTTClient(&mockSTT{text: tc.stt, err: tc.sttErr}), WithBrainClient(NewDefaultBrainClient(srv.URL+"/brain", 5)),
-			WithTTSClient(&mockTTS{}), WithSpeakerIdentifier(&mockIdentifier{id: tc.spkID, err: tc.spkErr, block: tc.block}))
-		events := map[string]any{}
-		start := time.Now()
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "eink-display-livingroom", "sess-1", func(ev string, d any) error {
-			events[ev] = d
-			return nil
-		}, EdgeTimings{})
-		if (err != nil) != tc.wantEr || (tc.wantEr && time.Since(start) > time.Second) {
-			t.Fatalf("interact: err=%v elapsed=%v", err, time.Since(start))
-		}
-		if tr, _ := events["transcript"].(map[string]string); !tc.wantEr && (tr["speaker"] != tc.wantSpk || events["done"] == nil || (tc.checkBrain && (brainBody["speaker"] != "mike" || brainBody["speaker_score"] != 0.83))) {
-			t.Fatalf("tr=%+v done=%v bb=%+v", tr, events["done"], brainBody)
-		}
+		runEmbedHubIntegrationCase(t, srv.URL, &brainBody, tc)
 	}
 }

@@ -50,17 +50,32 @@ func (m *mockController) ResumeRotation() (int, error)               { return 0,
 func (m *mockController) CurrentScreen() int                         { return 0 }
 func (m *mockController) ScreenLayout() ScreenLayoutSnapshot         { return m.layout }
 
+func runRotationEndpointCase(t *testing.T, handlerSelector func(*Handler) http.HandlerFunc, path string, tc rotationCase, totalScreens int) {
+	t.Helper()
+	var ctrl ScreenController
+	if !tc.nilCtrl {
+		ctrl = &mockController{totalScreen: totalScreens, ctrlErr: tc.ctrlErr}
+	}
+	h := NewHandler(ctrl)
+	rec := doReq(handlerSelector(h), tc.method, path, tc.body)
+	if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
+		t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
+	}
+}
+
+type rotationCase struct {
+	name     string
+	method   string
+	body     string
+	nilCtrl  bool
+	ctrlErr  error
+	wantCode int
+	wantSub  string
+}
+
 func TestHandler_PostScreenSelect(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name     string
-		method   string
-		body     string
-		nilCtrl  bool
-		ctrlErr  error
-		wantCode int
-		wantSub  string
-	}{
+	tests := []rotationCase{
 		{"valid_index_2", http.MethodPost, `{"screen_index":2}`, false, nil, http.StatusOK, `"current_screen":2`},
 		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent, ""},
 		{"get_not_allowed", http.MethodGet, "", false, nil, http.StatusMethodNotAllowed, ""},
@@ -71,30 +86,14 @@ func TestHandler_PostScreenSelect(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var ctrl ScreenController
-			if !tc.nilCtrl {
-				ctrl = &mockController{totalScreen: 3, ctrlErr: tc.ctrlErr}
-			}
-			h := NewHandler(ctrl)
-			rec := doReq(http.HandlerFunc(h.PostScreenSelect), tc.method, "/api/screen/select", tc.body)
-			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
-				t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
-			}
+			runRotationEndpointCase(t, func(h *Handler) http.HandlerFunc { return h.PostScreenSelect }, "/api/screen/select", tc, 3)
 		})
 	}
 }
 
 func TestHandler_PostScreenAdvance(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name     string
-		method   string
-		body     string
-		nilCtrl  bool
-		ctrlErr  error
-		wantCode int
-		wantSub  string
-	}{
+	tests := []rotationCase{
 		{"default_next", http.MethodPost, "", false, nil, http.StatusOK, `"current_screen":1`},
 		{"nil_body", http.MethodPost, "<nil>", false, nil, http.StatusOK, `"current_screen":1`},
 		{"explicit_prev", http.MethodPost, `{"direction":"prev"}`, false, nil, http.StatusOK, `"current_screen":1`},
@@ -107,30 +106,14 @@ func TestHandler_PostScreenAdvance(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var ctrl ScreenController
-			if !tc.nilCtrl {
-				ctrl = &mockController{totalScreen: 2, ctrlErr: tc.ctrlErr}
-			}
-			h := NewHandler(ctrl)
-			rec := doReq(http.HandlerFunc(h.PostScreenAdvance), tc.method, "/api/screen/advance", tc.body)
-			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
-				t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
-			}
+			runRotationEndpointCase(t, func(h *Handler) http.HandlerFunc { return h.PostScreenAdvance }, "/api/screen/advance", tc, 2)
 		})
 	}
 }
 
 func TestHandler_PostScreenPause(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name     string
-		method   string
-		body     string
-		nilCtrl  bool
-		ctrlErr  error
-		wantCode int
-		wantSub  string
-	}{
+	tests := []rotationCase{
 		{"pause_default", http.MethodPost, `{"paused":true}`, false, nil, http.StatusOK, `"paused":true`},
 		{"pause_explicit", http.MethodPost, `{"paused":true,"duration_seconds":60}`, false, nil, http.StatusOK, `"paused":true`},
 		{"resume", http.MethodPost, `{"paused":false}`, false, nil, http.StatusOK, `"paused":false`},
@@ -148,15 +131,7 @@ func TestHandler_PostScreenPause(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var ctrl ScreenController
-			if !tc.nilCtrl {
-				ctrl = &mockController{ctrlErr: tc.ctrlErr}
-			}
-			h := NewHandler(ctrl)
-			rec := doReq(http.HandlerFunc(h.PostScreenPause), tc.method, "/api/screen/pause", tc.body)
-			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
-				t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
-			}
+			runRotationEndpointCase(t, func(h *Handler) http.HandlerFunc { return h.PostScreenPause }, "/api/screen/pause", tc, 0)
 		})
 	}
 }

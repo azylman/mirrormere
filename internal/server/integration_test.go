@@ -63,7 +63,7 @@ func TestWalkingSkeleton_EndToEnd(t *testing.T) {
 		return ""
 	}))
 
-	router := server.New(server.Config{RenderHandler: renderH, DisplayHandler: displayH}).Routes()
+	router := server.New(server.Config{DisplayHandler: displayH, RenderHandler: renderH}).Routes()
 
 	tests := []struct {
 		url      string

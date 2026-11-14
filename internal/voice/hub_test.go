@@ -193,20 +193,72 @@ func startWyomingServer(t *testing.T, handler func(conn net.Conn, r *bufio.Reade
 	return "tcp://" + l.Addr().String()
 }
 
+type hubInteractCase struct {
+	name                             string
+	disabled, noCoord                bool
+	audio                            io.Reader
+	stt                              STTClient
+	brain                            BrainClient
+	tts                              TTSClient
+	sinkErrEvent                     string
+	wantErr                          error
+	wantErrStr, wantState, wantReply string
+	wantEvents                       []string
+}
+
+func runHubInteractCase(t *testing.T, tc hubInteractCase) {
+	t.Helper()
+	hubEvents := events.NewHub(events.HubConfig{}, nil, nil)
+	defer hubEvents.Close()
+	var coord *Coordinator
+	if !tc.noCoord {
+		coord = NewCoordinator(hubEvents)
+	}
+	h := NewHub(&config.VoiceHubConfig{Enabled: !tc.disabled}, coord, WithSTTClient(tc.stt), WithBrainClient(tc.brain), WithTTSClient(tc.tts))
+	if h.IsEnabled() == tc.disabled {
+		t.Fatalf("IsEnabled() = %v, disabled = %v", h.IsEnabled(), tc.disabled)
+	}
+	sink, getEvents := collectEvents()
+	err := h.Interact(context.Background(), tc.audio, "kiosk-kitchen", "", func(event string, data any) error {
+		_ = sink(event, data)
+		if tc.sinkErrEvent != "" && event == tc.sinkErrEvent {
+			if tc.wantErrStr != "" {
+				return errors.New(tc.wantErrStr)
+			}
+			return errors.New("status sink error")
+		}
+		return nil
+	}, EdgeTimings{})
+	assertHubInteractResult(t, tc, err, coord, getEvents())
+}
+
+func assertHubInteractResult(t *testing.T, tc hubInteractCase, err error, coord *Coordinator, evs []recordedEvent) {
+	t.Helper()
+	if (tc.wantErr != nil && !errors.Is(err, tc.wantErr)) || (tc.wantErrStr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErrStr))) || (tc.wantErr == nil && tc.wantErrStr == "" && err != nil) {
+		t.Fatalf("err = %v; wantErr=%v wantErrStr=%q", err, tc.wantErr, tc.wantErrStr)
+	}
+	if coord != nil && tc.wantState != "" && coord.GetState().State != tc.wantState {
+		t.Errorf("expected state %s, got %s", tc.wantState, coord.GetState().State)
+	}
+	if coord != nil && tc.wantReply != "" {
+		if coord.GetState().Reply == nil || *coord.GetState().Reply != tc.wantReply {
+			t.Errorf("expected reply %q, got %v", tc.wantReply, coord.GetState().Reply)
+		}
+		if reset := coord.Reset(); reset.State != StateIdle {
+			t.Errorf("expected state idle after reset, got %s", reset.State)
+		}
+	}
+	emitted := strings.Join(eventNames(evs), ",")
+	for _, exp := range tc.wantEvents {
+		if !strings.Contains(emitted, exp) {
+			t.Errorf("expected event %q in %q", exp, emitted)
+		}
+	}
+}
+
 func TestHub_Interact_Scenarios(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name                             string
-		disabled, noCoord                bool
-		audio                            io.Reader
-		stt                              STTClient
-		brain                            BrainClient
-		tts                              TTSClient
-		sinkErrEvent                     string
-		wantErr                          error
-		wantErrStr, wantState, wantReply string
-		wantEvents                       []string
-	}{
+	tests := []hubInteractCase{
 		{"success", false, false, wavRdr(1600), mkSTT("Turn off office lights", nil), &mockBrain{reply: "Turned off office lights.", statuses: []string{"⚡ Checking devices...", "⚡ Turning off lights..."}}, mkTTS([]byte("fake-pcm-bytes"), "pcm", nil), "", nil, "", StateSpeaking, "Turned off office lights.", []string{"state", "transcript", "status", "reply", "audio_chunk", "done"}},
 		{"disabled", true, false, wavRdr(100), nil, nil, nil, "", ErrHubDisabled, "", "", "", nil},
 		{"invalid_audio_nil", false, false, nil, nil, nil, nil, "", ErrInvalidAudio, "", "", "", nil},
@@ -237,47 +289,7 @@ func TestHub_Interact_Scenarios(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			hubEvents := events.NewHub(events.HubConfig{}, nil, nil)
-			defer hubEvents.Close()
-			var coord *Coordinator
-			if !tc.noCoord {
-				coord = NewCoordinator(hubEvents)
-			}
-			h := NewHub(&config.VoiceHubConfig{Enabled: !tc.disabled}, coord, WithSTTClient(tc.stt), WithBrainClient(tc.brain), WithTTSClient(tc.tts))
-			if h.IsEnabled() == tc.disabled {
-				t.Fatalf("IsEnabled() = %v, disabled = %v", h.IsEnabled(), tc.disabled)
-			}
-			sink, getEvents := collectEvents()
-			err := h.Interact(context.Background(), tc.audio, "kiosk-kitchen", "", func(event string, data any) error {
-				_ = sink(event, data)
-				if tc.sinkErrEvent != "" && event == tc.sinkErrEvent {
-					if tc.wantErrStr != "" {
-						return errors.New(tc.wantErrStr)
-					}
-					return errors.New("status sink error")
-				}
-				return nil
-			}, EdgeTimings{})
-			if (tc.wantErr != nil && !errors.Is(err, tc.wantErr)) || (tc.wantErrStr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErrStr))) || (tc.wantErr == nil && tc.wantErrStr == "" && err != nil) {
-				t.Fatalf("err = %v; wantErr=%v wantErrStr=%q", err, tc.wantErr, tc.wantErrStr)
-			}
-			if coord != nil && tc.wantState != "" && coord.GetState().State != tc.wantState {
-				t.Errorf("expected state %s, got %s", tc.wantState, coord.GetState().State)
-			}
-			if coord != nil && tc.wantReply != "" {
-				if coord.GetState().Reply == nil || *coord.GetState().Reply != tc.wantReply {
-					t.Errorf("expected reply %q, got %v", tc.wantReply, coord.GetState().Reply)
-				}
-				if reset := coord.Reset(); reset.State != StateIdle {
-					t.Errorf("expected state idle after reset, got %s", reset.State)
-				}
-			}
-			emitted := strings.Join(eventNames(getEvents()), ",")
-			for _, exp := range tc.wantEvents {
-				if !strings.Contains(emitted, exp) {
-					t.Errorf("expected event %q in %q", exp, emitted)
-				}
-			}
+			runHubInteractCase(t, tc)
 		})
 	}
 }
@@ -456,18 +468,56 @@ func TestDefaultBrainClient(t *testing.T) {
 	}
 }
 
+type ttsSynthCase struct {
+	name, contentType                      string
+	status                                 int
+	rawURL                                 string
+	body                                   []byte
+	text                                   string
+	sinkErr, wantErr                       error
+	wantErrStr, wantFormat                 string
+	wantTotalBytes, wantRate, wantChannels int
+}
+
+func runDefaultTTSClientCase(t *testing.T, tc ttsSynthCase) {
+	t.Helper()
+	targetURL := tc.rawURL
+	if tc.status > 0 {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if tc.contentType != "" {
+				w.Header().Set("Content-Type", tc.contentType)
+			}
+			w.WriteHeader(tc.status)
+			_, _ = w.Write(tc.body)
+		}))
+		defer ts.Close()
+		targetURL = ts.URL
+	}
+	var totalPCM int
+	var lastChunk TTSAudioChunk
+	err := NewDefaultTTSClient(targetURL, "kokoro", "af_bella", 5).Synthesize(context.Background(), tc.text, func(chunk TTSAudioChunk) error {
+		if tc.sinkErr != nil {
+			return tc.sinkErr
+		}
+		lastChunk, totalPCM = chunk, totalPCM+len(chunk.Data)
+		return nil
+	})
+	assertDefaultTTSClientResult(t, tc, err, lastChunk, totalPCM)
+}
+
+func assertDefaultTTSClientResult(t *testing.T, tc ttsSynthCase, err error, lastChunk TTSAudioChunk, totalPCM int) {
+	t.Helper()
+	if (tc.wantErr != nil && !errors.Is(err, tc.wantErr)) || (tc.wantErrStr != "" && (err == nil || (tc.wantErrStr != "error" && !strings.Contains(err.Error(), tc.wantErrStr)))) || (tc.wantErr == nil && tc.wantErrStr == "" && err != nil) {
+		t.Fatalf("err = %v; wantErr=%v wantErrStr=%q", err, tc.wantErr, tc.wantErrStr)
+	}
+	if (tc.wantFormat != "" && lastChunk.Format != tc.wantFormat) || (tc.wantRate > 0 && lastChunk.SampleRate != tc.wantRate) || (tc.wantChannels > 0 && lastChunk.Channels != tc.wantChannels) || (tc.wantTotalBytes > 0 && totalPCM != tc.wantTotalBytes) {
+		t.Errorf("chunk=%+v totalPCM=%d; want fmt=%q rate=%d ch=%d total=%d", lastChunk, totalPCM, tc.wantFormat, tc.wantRate, tc.wantChannels, tc.wantTotalBytes)
+	}
+}
+
 func TestDefaultTTSClient(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name, contentType                      string
-		status                                 int
-		rawURL                                 string
-		body                                   []byte
-		text                                   string
-		sinkErr, wantErr                       error
-		wantErrStr, wantFormat                 string
-		wantTotalBytes, wantRate, wantChannels int
-	}{
+	tests := []ttsSynthCase{
 		{"wav_stream", "audio/wav", 200, "", makeValidWAV(4800), "hello world", nil, nil, "", "pcm", 9600, 16000, 1},
 		{"pcm_stream", "audio/pcm", 200, "", bytes.Repeat([]byte{0x01, 0x02}, 2400), "hello", nil, nil, "", "pcm", 4800, 0, 0},
 		{"mp3_unsupported", "audio/mpeg", 200, "", []byte("fake-mp3"), "hello", nil, ErrUnsupportedAudioFormat, "", "", 0, 0, 0},
@@ -482,33 +532,7 @@ func TestDefaultTTSClient(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			targetURL := tc.rawURL
-			if tc.status > 0 {
-				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					if tc.contentType != "" {
-						w.Header().Set("Content-Type", tc.contentType)
-					}
-					w.WriteHeader(tc.status)
-					_, _ = w.Write(tc.body)
-				}))
-				defer ts.Close()
-				targetURL = ts.URL
-			}
-			var totalPCM int
-			var lastChunk TTSAudioChunk
-			err := NewDefaultTTSClient(targetURL, "kokoro", "af_bella", 5).Synthesize(context.Background(), tc.text, func(chunk TTSAudioChunk) error {
-				if tc.sinkErr != nil {
-					return tc.sinkErr
-				}
-				lastChunk, totalPCM = chunk, totalPCM+len(chunk.Data)
-				return nil
-			})
-			if (tc.wantErr != nil && !errors.Is(err, tc.wantErr)) || (tc.wantErrStr != "" && (err == nil || (tc.wantErrStr != "error" && !strings.Contains(err.Error(), tc.wantErrStr)))) || (tc.wantErr == nil && tc.wantErrStr == "" && err != nil) {
-				t.Fatalf("err = %v; wantErr=%v wantErrStr=%q", err, tc.wantErr, tc.wantErrStr)
-			}
-			if (tc.wantFormat != "" && lastChunk.Format != tc.wantFormat) || (tc.wantRate > 0 && lastChunk.SampleRate != tc.wantRate) || (tc.wantChannels > 0 && lastChunk.Channels != tc.wantChannels) || (tc.wantTotalBytes > 0 && totalPCM != tc.wantTotalBytes) {
-				t.Errorf("chunk=%+v totalPCM=%d; want fmt=%q rate=%d ch=%d total=%d", lastChunk, totalPCM, tc.wantFormat, tc.wantRate, tc.wantChannels, tc.wantTotalBytes)
-			}
+			runDefaultTTSClientCase(t, tc)
 		})
 	}
 }

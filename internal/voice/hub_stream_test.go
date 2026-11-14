@@ -236,6 +236,79 @@ func TestDefaultBrainClient_AskStreaming(t *testing.T) {
 	}
 }
 
+type streamingInteractCase struct {
+	name                              string
+	brain                             BrainClient
+	tts                               TTSClient
+	noTTSClient, ignoreSinkAudioChunk bool
+	wantErr                           error
+	wantErrorCode                     string
+	wantChunks                        int
+	wantNoChunks, wantFinal           bool
+	wantReplyEvent                    string
+	wantRemainderBytes                int
+}
+
+func runHubInteractStreamingCase(t *testing.T, tc streamingInteractCase) {
+	t.Helper()
+	opts := []HubOption{WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(tc.brain)}
+	if tc.tts != nil {
+		opts = append(opts, WithTTSClient(tc.tts))
+	}
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, NewCoordinator(nil), opts...)
+	if tc.noTTSClient {
+		h.tts = nil
+	}
+	sink, getEvents := collectEvents()
+	if tc.ignoreSinkAudioChunk {
+		origSink := sink
+		sink = func(event string, data any) error {
+			_ = origSink(event, data)
+			if event == "audio_chunk" {
+				return errors.New("dock went away")
+			}
+			return nil
+		}
+	}
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk", "s1", sink, EdgeTimings{})
+	assertStreamingInteractResult(t, tc, err, getEvents())
+}
+
+func assertStreamingInteractResult(t *testing.T, tc streamingInteractCase, err error, evs []recordedEvent) {
+	t.Helper()
+	if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+		t.Fatalf("want error %v, got %v", tc.wantErr, err)
+	} else if tc.wantErr == nil && err != nil && tc.wantErrorCode == "" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tc.wantErrorCode != "" && !hasErrorCode(evs, tc.wantErrorCode) {
+		t.Errorf("expected error code %q in events: %v", tc.wantErrorCode, eventNames(evs))
+	}
+	if tc.wantReplyEvent != "" && !strings.Contains(strings.Join(eventNames(evs), ","), "reply") {
+		t.Errorf("expected reply in events: %v", eventNames(evs))
+	}
+	assertStreamingAudioChunks(t, tc, evs)
+}
+
+func assertStreamingAudioChunks(t *testing.T, tc streamingInteractCase, evs []recordedEvent) {
+	t.Helper()
+	chunks := extractAudioChunkEvents(t, evs)
+	if (tc.wantNoChunks && len(chunks) != 0) || (tc.wantChunks > 0 && len(chunks) != tc.wantChunks) {
+		t.Fatalf("chunks count: got %d, want %d (noChunks=%v)", len(chunks), tc.wantChunks, tc.wantNoChunks)
+	}
+	if tc.wantFinal && len(chunks) > 0 {
+		if final, ok := chunks[len(chunks)-1]["is_final"].(bool); !ok || !final {
+			t.Errorf("expected last chunk is_final: true, got %v", chunks[len(chunks)-1]["is_final"])
+		}
+	}
+	if tc.wantRemainderBytes > 0 && len(chunks) >= 2 {
+		dec, _ := base64.StdEncoding.DecodeString(chunks[len(chunks)-2]["data"].(string))
+		if len(dec) != tc.wantRemainderBytes {
+			t.Errorf("remainder bytes: want %d, got %d", tc.wantRemainderBytes, len(dec))
+		}
+	}
+}
+
 func TestHub_Interact_StreamingScenarios(t *testing.T) {
 	t.Parallel()
 	pcmRemTTS := mkStreamTTS(func(_ context.Context, text string, onChunk func(TTSAudioChunk) error) error {
@@ -270,18 +343,7 @@ func TestHub_Interact_StreamingScenarios(t *testing.T) {
 		return errors.New("streaming connection dropped")
 	})
 
-	tests := []struct {
-		name                              string
-		brain                             BrainClient
-		tts                               TTSClient
-		noTTSClient, ignoreSinkAudioChunk bool
-		wantErr                           error
-		wantErrorCode                     string
-		wantChunks                        int
-		wantNoChunks, wantFinal           bool
-		wantReplyEvent                    string
-		wantRemainderBytes                int
-	}{
+	tests := []streamingInteractCase{
 		{"sentence_synthesized_via_tts", mkStreamBrain("It's sunny. Bring sunglasses.", nil, "It's sunny.", "Bring sunglasses."), mkTTS([]byte("synthesized-pcm"), "pcm", nil), false, false, nil, "", 2, false, true, "", 0},
 		{"pcm_buffering_and_remainder_flush", mkStreamBrain("Streaming PCM.", nil, "One.", "Two.", "Three."), pcmRemTTS, false, false, nil, "", 3, false, true, "", 3200},
 		{"streaming_brain_remote_tts_streaming_client", mkStreamBrain("Sentence one. Sentence two.", nil, "Sentence one.", "Sentence two."), &mockStreamingTTS{}, false, false, nil, "", 3, false, true, "", 0},
@@ -305,53 +367,7 @@ func TestHub_Interact_StreamingScenarios(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			opts := []HubOption{WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(tc.brain)}
-			if tc.tts != nil {
-				opts = append(opts, WithTTSClient(tc.tts))
-			}
-			h := NewHub(&config.VoiceHubConfig{Enabled: true}, NewCoordinator(nil), opts...)
-			if tc.noTTSClient {
-				h.tts = nil
-			}
-			sink, getEvents := collectEvents()
-			if tc.ignoreSinkAudioChunk {
-				origSink := sink
-				sink = func(event string, data any) error {
-					_ = origSink(event, data)
-					if event == "audio_chunk" {
-						return errors.New("dock went away")
-					}
-					return nil
-				}
-			}
-			err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk", "s1", sink, EdgeTimings{})
-			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
-				t.Fatalf("want error %v, got %v", tc.wantErr, err)
-			} else if tc.wantErr == nil && err != nil && tc.wantErrorCode == "" {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			evs := getEvents()
-			if tc.wantErrorCode != "" && !hasErrorCode(evs, tc.wantErrorCode) {
-				t.Errorf("expected error code %q in events: %v", tc.wantErrorCode, eventNames(evs))
-			}
-			if tc.wantReplyEvent != "" && !strings.Contains(strings.Join(eventNames(evs), ","), "reply") {
-				t.Errorf("expected reply in events: %v", eventNames(evs))
-			}
-			chunks := extractAudioChunkEvents(t, evs)
-			if (tc.wantNoChunks && len(chunks) != 0) || (tc.wantChunks > 0 && len(chunks) != tc.wantChunks) {
-				t.Fatalf("chunks count: got %d, want %d (noChunks=%v)", len(chunks), tc.wantChunks, tc.wantNoChunks)
-			}
-			if tc.wantFinal && len(chunks) > 0 {
-				if final, ok := chunks[len(chunks)-1]["is_final"].(bool); !ok || !final {
-					t.Errorf("expected last chunk is_final: true, got %v", chunks[len(chunks)-1]["is_final"])
-				}
-			}
-			if tc.wantRemainderBytes > 0 && len(chunks) >= 2 {
-				dec, _ := base64.StdEncoding.DecodeString(chunks[len(chunks)-2]["data"].(string))
-				if len(dec) != tc.wantRemainderBytes {
-					t.Errorf("remainder bytes: want %d, got %d", tc.wantRemainderBytes, len(dec))
-				}
-			}
+			runHubInteractStreamingCase(t, tc)
 		})
 	}
 }
@@ -386,18 +402,66 @@ func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
 	}
 }
 
+type chatLogCase struct {
+	name, sttText                                 string
+	brain                                         BrainClient
+	tts                                           TTSClient
+	speaker                                       SpeakerIdentifier
+	withChatLog, wantErr                          bool
+	wantHumanText, wantHumanAuthor, wantAgentText string
+	wantChanges                                   int32
+	wantMsgs                                      int
+}
+
+func runHubChatLogCase(t *testing.T, tc chatLogCase) {
+	t.Helper()
+	hubEvents := events.NewHub(events.HubConfig{}, nil, nil)
+	defer hubEvents.Close()
+	store := chatlog.NewStore()
+	var changes atomic.Int32
+	opts := []HubOption{WithSTTClient(&mockSTT{text: tc.sttText}), WithBrainClient(tc.brain)}
+	if tc.tts != nil {
+		opts = append(opts, WithTTSClient(tc.tts))
+	}
+	if tc.speaker != nil {
+		opts = append(opts, WithSpeakerIdentifier(tc.speaker))
+	}
+	if tc.withChatLog {
+		opts = append(opts, WithChatLog(store, func() { changes.Add(1) }))
+	}
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, NewCoordinator(hubEvents), opts...)
+	if err := chatTurn(t, h, "touch-kiosk-kitchen"); (err != nil) != tc.wantErr {
+		t.Fatalf("interact err = %v, wantErr %v", err, tc.wantErr)
+	}
+	if !tc.withChatLog {
+		return
+	}
+	assertChatLogMessages(t, store, tc, changes.Load())
+}
+
+func assertChatLogMessages(t *testing.T, store *chatlog.Store, tc chatLogCase, changes int32) {
+	t.Helper()
+	msgs := store.Messages(func(k string) bool { return k == chatlog.NodeKey("touch-kiosk-kitchen") })
+	if len(msgs) != tc.wantMsgs {
+		t.Fatalf("messages count: want %d, got %d (%+v)", tc.wantMsgs, len(msgs), msgs)
+	}
+	if tc.wantMsgs >= 1 && (msgs[0].Role != chatlog.RoleHuman || msgs[0].Text != tc.wantHumanText || msgs[0].Author != tc.wantHumanAuthor || msgs[0].At.IsZero()) {
+		t.Errorf("user message mismatch: %+v", msgs[0])
+	}
+	if tc.wantMsgs >= 2 && (msgs[1].Role != chatlog.RoleAgent || msgs[1].Text != tc.wantAgentText || msgs[1].At.Before(msgs[0].At)) {
+		t.Errorf("agent message mismatch: %+v", msgs[1])
+	}
+	if tc.wantChanges > 0 && changes != tc.wantChanges {
+		t.Errorf("changes count: want %d, got %d", tc.wantChanges, changes)
+	}
+	if other := store.Messages(func(k string) bool { return k == chatlog.NodeKey("eink-display-livingroom") }); len(other) != 0 {
+		t.Errorf("other node must not see this conversation: %+v", other)
+	}
+}
+
 func TestHub_ChatLog(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name, sttText                                 string
-		brain                                         BrainClient
-		tts                                           TTSClient
-		speaker                                       SpeakerIdentifier
-		withChatLog, wantErr                          bool
-		wantHumanText, wantHumanAuthor, wantAgentText string
-		wantChanges                                   int32
-		wantMsgs                                      int
-	}{
+	tests := []chatLogCase{
 		{"records_turn_in_chatlog", "Turn off office lights", mkBrain("Turned off office lights.", nil), mkTTS([]byte("pcm"), "pcm", nil), fixedSpeaker{name: "sam"}, true, false, "Turn off office lights", "sam", "Turned off office lights.", 2, 2},
 		{"brain_failure_keeps_user_turn", "hello", mkBrain("", ErrBrainFailed), nil, nil, true, true, "hello", "", "", 0, 1},
 		{"without_chatlog_still_works", "hi", mkBrain("yo", nil), nil, nil, false, false, "", "", "", 0, 0},
@@ -405,43 +469,7 @@ func TestHub_ChatLog(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			hubEvents := events.NewHub(events.HubConfig{}, nil, nil)
-			defer hubEvents.Close()
-			store := chatlog.NewStore()
-			var changes atomic.Int32
-			opts := []HubOption{WithSTTClient(&mockSTT{text: tc.sttText}), WithBrainClient(tc.brain)}
-			if tc.tts != nil {
-				opts = append(opts, WithTTSClient(tc.tts))
-			}
-			if tc.speaker != nil {
-				opts = append(opts, WithSpeakerIdentifier(tc.speaker))
-			}
-			if tc.withChatLog {
-				opts = append(opts, WithChatLog(store, func() { changes.Add(1) }))
-			}
-			h := NewHub(&config.VoiceHubConfig{Enabled: true}, NewCoordinator(hubEvents), opts...)
-			if err := chatTurn(t, h, "touch-kiosk-kitchen"); (err != nil) != tc.wantErr {
-				t.Fatalf("interact err = %v, wantErr %v", err, tc.wantErr)
-			}
-			if !tc.withChatLog {
-				return
-			}
-			msgs := store.Messages(func(k string) bool { return k == chatlog.NodeKey("touch-kiosk-kitchen") })
-			if len(msgs) != tc.wantMsgs {
-				t.Fatalf("messages count: want %d, got %d (%+v)", tc.wantMsgs, len(msgs), msgs)
-			}
-			if tc.wantMsgs >= 1 && (msgs[0].Role != chatlog.RoleHuman || msgs[0].Text != tc.wantHumanText || msgs[0].Author != tc.wantHumanAuthor || msgs[0].At.IsZero()) {
-				t.Errorf("user message mismatch: %+v", msgs[0])
-			}
-			if tc.wantMsgs >= 2 && (msgs[1].Role != chatlog.RoleAgent || msgs[1].Text != tc.wantAgentText || msgs[1].At.Before(msgs[0].At)) {
-				t.Errorf("agent message mismatch: %+v", msgs[1])
-			}
-			if tc.wantChanges > 0 && changes.Load() != tc.wantChanges {
-				t.Errorf("changes count: want %d, got %d", tc.wantChanges, changes.Load())
-			}
-			if other := store.Messages(func(k string) bool { return k == chatlog.NodeKey("eink-display-livingroom") }); len(other) != 0 {
-				t.Errorf("other node must not see this conversation: %+v", other)
-			}
+			runHubChatLogCase(t, tc)
 		})
 	}
 }
@@ -476,6 +504,53 @@ func buildWAV(chunks ...[]byte) []byte {
 	return out
 }
 
+type wavParseCase struct {
+	name, contentType string
+	hdr               map[string]string
+	body              []byte
+	wantRate, wantCh  int
+}
+
+func runDefaultTTSClientWAVAndPCMParsingCase(t *testing.T, tc wavParseCase, pcm []byte) {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", tc.contentType)
+		for k, v := range tc.hdr {
+			w.Header().Set(k, v)
+		}
+		f := w.(http.Flusher)
+		for i := 0; i < len(tc.body); i += 1000 {
+			_, _ = w.Write(tc.body[i:min(i+1000, len(tc.body))])
+			f.Flush()
+		}
+	}))
+	defer ts.Close()
+	var chunks []TTSAudioChunk
+	err := NewDefaultTTSClient(ts.URL, "m", "v", 5).Synthesize(context.Background(), "hello", func(c TTSAudioChunk) error {
+		chunks = append(chunks, c)
+		return nil
+	})
+	if tc.wantRate == 0 {
+		if !errors.Is(err, ErrUnsupportedAudioFormat) || len(chunks) != 0 {
+			t.Fatalf("expected ErrUnsupportedAudioFormat and 0 chunks, got err=%v chunks=%d", err, len(chunks))
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var gotPCM []byte
+	for _, c := range chunks {
+		gotPCM = append(gotPCM, c.Data...)
+		if c.Format != "pcm" || c.SampleRate != tc.wantRate || c.Channels != tc.wantCh {
+			t.Errorf("bad chunk: format=%s rate=%d ch=%d", c.Format, c.SampleRate, c.Channels)
+		}
+	}
+	if !bytes.Equal(gotPCM, pcm) {
+		t.Fatalf("PCM mismatch or buffer aliasing corruption: got %d bytes, want %d", len(gotPCM), len(pcm))
+	}
+}
+
 func TestDefaultTTSClient_WAVAndPCMParsing(t *testing.T) {
 	t.Parallel()
 	pcm := make([]byte, 4800*3)
@@ -491,12 +566,7 @@ func TestDefaultTTSClient_WAVAndPCMParsing(t *testing.T) {
 		return append(append(buildWAV(riffChunk("fmt ", fmtBody(1, 2, 16000, 16, 0))), hdr...), pcm...)
 	}
 
-	tests := []struct {
-		name, contentType string
-		hdr               map[string]string
-		body              []byte
-		wantRate, wantCh  int
-	}{
+	tests := []wavParseCase{
 		{"LIST chunk before data", "audio/wav", nil, buildWAV(riffChunk("fmt ", fmtBody(1, 1, 22050, 16, 0)), riffChunk("LIST", []byte("INFOISFT\x05\x00\x00\x00Lavf\x00")), riffChunk("data", pcm)), 22050, 1},
 		{"fmt size 18", "audio/wav", nil, buildWAV(riffChunk("fmt ", fmtBody(1, 1, 22050, 16, 2)), riffChunk("data", pcm)), 22050, 1},
 		{"WAVE_FORMAT_EXTENSIBLE", "audio/wav", nil, buildWAV(riffChunk("fmt ", extFmt), riffChunk("data", pcm)), 22050, 1},
@@ -514,42 +584,7 @@ func TestDefaultTTSClient_WAVAndPCMParsing(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", tc.contentType)
-				for k, v := range tc.hdr {
-					w.Header().Set(k, v)
-				}
-				f := w.(http.Flusher)
-				for i := 0; i < len(tc.body); i += 1000 {
-					_, _ = w.Write(tc.body[i:min(i+1000, len(tc.body))])
-					f.Flush()
-				}
-			}))
-			defer ts.Close()
-			var chunks []TTSAudioChunk
-			err := NewDefaultTTSClient(ts.URL, "m", "v", 5).Synthesize(context.Background(), "hello", func(c TTSAudioChunk) error {
-				chunks = append(chunks, c)
-				return nil
-			})
-			if tc.wantRate == 0 {
-				if !errors.Is(err, ErrUnsupportedAudioFormat) || len(chunks) != 0 {
-					t.Fatalf("expected ErrUnsupportedAudioFormat and 0 chunks, got err=%v chunks=%d", err, len(chunks))
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			var gotPCM []byte
-			for _, c := range chunks {
-				gotPCM = append(gotPCM, c.Data...)
-				if c.Format != "pcm" || c.SampleRate != tc.wantRate || c.Channels != tc.wantCh {
-					t.Errorf("bad chunk: format=%s rate=%d ch=%d", c.Format, c.SampleRate, c.Channels)
-				}
-			}
-			if !bytes.Equal(gotPCM, pcm) {
-				t.Fatalf("PCM mismatch or buffer aliasing corruption: got %d bytes, want %d", len(gotPCM), len(pcm))
-			}
+			runDefaultTTSClientWAVAndPCMParsingCase(t, tc, pcm)
 		})
 	}
 }

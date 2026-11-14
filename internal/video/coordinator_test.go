@@ -158,6 +158,101 @@ func TestCoordinator_ValidationAndClose(t *testing.T) {
 	}
 }
 
+func assertPriorityStackTransitions(t *testing.T, s1, s2, s3, s4, s5, s6 VideoState) {
+	t.Helper()
+	assertActiveStreamStates(t, s1, s2, s3, s4)
+	assertDismissalStreamStates(t, s5, s6)
+}
+
+func assertActiveStreamStates(t *testing.T, s1, s2, s3, s4 VideoState) {
+	t.Helper()
+	if s1.Mode != ModeVideo || s1.Primary == nil || s1.Primary.Muted || s1.Pip != nil {
+		t.Fatalf("unexpected s1: %+v", s1)
+	}
+	if s2.Primary.ID != "chromecast" || s2.Pip == nil || s2.Pip.ID != "doorbell" || !s2.Pip.Muted {
+		t.Fatalf("unexpected s2: %+v", s2)
+	}
+	if s3.Pip.ID != "backyard" || !s3.Pip.Muted {
+		t.Fatalf("unexpected s3: %+v", s3)
+	}
+	if s4.Pip.StreamURL != "http://backyard-hd" || s4.Pip.Type != TypeHLS || !s4.Pip.Muted {
+		t.Fatalf("unexpected s4: %+v", s4)
+	}
+}
+
+func assertDismissalStreamStates(t *testing.T, s5, s6 VideoState) {
+	t.Helper()
+	if s5.Primary == nil || s5.Primary.ID != "backyard" || s5.Primary.Muted || s5.Pip != nil {
+		t.Fatalf("unexpected s5: %+v", s5)
+	}
+	if s6.Mode != ModeWidgets || s6.Primary != nil || s6.Pip != nil {
+		t.Fatalf("unexpected s6: %+v", s6)
+	}
+}
+
+func assertPlayerStateUpdateCase(t *testing.T, coord *Coordinator, id, state, wantPS string, wantErr error) {
+	t.Helper()
+	snap, err := coord.UpdatePlayerState(id, VideoStream{PlayerState: state})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("UpdatePlayerState(%s, %s) err=%v, want %v", id, state, err, wantErr)
+	}
+	if wantErr != nil {
+		return
+	}
+	var ps string
+	if id == "cast" && snap.Primary != nil {
+		ps = snap.Primary.PlayerState
+	}
+	if id == "doorbell" && snap.Pip != nil {
+		ps = snap.Pip.PlayerState
+	}
+	if ps != wantPS {
+		t.Fatalf("got player state %s, want %s", ps, wantPS)
+	}
+}
+
+func assertMetadataPreservation(t *testing.T, sMeta, sPatch, sRetrig, sPurge VideoState) {
+	t.Helper()
+	if sMeta.Primary.Title != "Episode 1" || sMeta.Primary.Position != 10.5 || sMeta.Primary.PositionUpdatedAt == 0 {
+		t.Fatalf("unexpected sMeta: %+v", sMeta.Primary)
+	}
+	if sPatch.Primary.Title != "Episode 1" || sPatch.Primary.Position != 25.0 || sPatch.Primary.PlayerState != PlayerStatePaused {
+		t.Fatalf("unexpected sPatch: %+v", sPatch.Primary)
+	}
+	if sRetrig.Primary.StreamURL != "http://cast-hd" || sRetrig.Primary.Title != "Episode 1" || sRetrig.Primary.Position != 25.0 {
+		t.Fatalf("unexpected sRetrig: %+v", sRetrig.Primary)
+	}
+	if sPurge.Primary.Title != "" || sPurge.Primary.Position != 0 || sPurge.Primary.Duration != 0 {
+		t.Fatalf("unexpected sPurge: %+v", sPurge.Primary)
+	}
+}
+
+func assertMovieMetadataTransitions(t *testing.T, coord *Coordinator) {
+	t.Helper()
+	_, _ = coord.Trigger(VideoStream{
+		ID: "chromecast", StreamURL: "http://cast-tv", Priority: PriorityPersistent,
+		Title: "Ep 1", Series: "Show A", Season: "1", Episode: "2", Duration: 3600,
+	})
+	sMovie, err := coord.UpdatePlayerState("chromecast", VideoStream{
+		PlayerState: PlayerStatePlaying,
+		Title:       "Movie Title",
+	})
+	if err != nil || sMovie.Primary.Title != "Movie Title" || sMovie.Primary.Series != "" || sMovie.Primary.Season != "" || sMovie.Primary.Episode != "" || sMovie.Primary.Duration != 3600 {
+		t.Fatalf("expected series/season/episode cleared and duration preserved on movie title update, got: %+v (err: %v)", sMovie.Primary, err)
+	}
+	_, _ = coord.Trigger(VideoStream{
+		ID: "chromecast", StreamURL: "http://cast-tv", Priority: PriorityPersistent,
+		Title: "Ep 2", Series: "Show A", Season: "1", Episode: "3", Duration: 1800,
+	})
+	sRetrigMovie, err := coord.Trigger(VideoStream{
+		ID: "chromecast", StreamURL: "http://cast-movie", Priority: PriorityPersistent,
+		Title: "Standalone Movie",
+	})
+	if err != nil || sRetrigMovie.Primary.Title != "Standalone Movie" || sRetrigMovie.Primary.Series != "" || sRetrigMovie.Primary.Season != "" || sRetrigMovie.Primary.Episode != "" || sRetrigMovie.Primary.Duration != 0 {
+		t.Fatalf("expected re-triggered movie stream not to inherit stale episode metadata, got: %+v (err: %v)", sRetrigMovie.Primary, err)
+	}
+}
+
 func TestCoordinator_PriorityStackAndTimers(t *testing.T) {
 	t.Parallel()
 	tf := &mockTimerFactory{}
@@ -187,14 +282,7 @@ func TestCoordinator_PriorityStackAndTimers(t *testing.T) {
 	s4, _ := coord.Trigger(mkStream("backyard", "http://backyard-hd", TypeHLS, PriorityTemporary, 0))
 	s5, _ := coord.Dismiss("chromecast")
 	s6, _ := coord.Dismiss("backyard")
-	if s1.Mode != ModeVideo || s1.Primary == nil || s1.Primary.Muted || s1.Pip != nil ||
-		s2.Primary.ID != "chromecast" || s2.Pip == nil || s2.Pip.ID != "doorbell" || !s2.Pip.Muted ||
-		s3.Pip.ID != "backyard" || !s3.Pip.Muted ||
-		s4.Pip.StreamURL != "http://backyard-hd" || s4.Pip.Type != TypeHLS || !s4.Pip.Muted ||
-		s5.Primary == nil || s5.Primary.ID != "backyard" || s5.Primary.Muted || s5.Pip != nil ||
-		s6.Mode != ModeWidgets || s6.Primary != nil || s6.Pip != nil {
-		t.Fatalf("unexpected priority stack transitions: s1=%+v s2=%+v s3=%+v s4=%+v s5=%+v s6=%+v", s1, s2, s3, s4, s5, s6)
-	}
+	assertPriorityStackTransitions(t, s1, s2, s3, s4, s5, s6)
 
 	// 7. Demotion and timer expiry
 	_, _ = coord.Trigger(mkStream("doorbell", "http://doorbell", "", PriorityTemporary, 45))
@@ -240,22 +328,7 @@ func TestCoordinator_PlayerStateAndMetadata(t *testing.T) {
 		{"missing", PlayerStatePlaying, "", ErrStreamNotFound},
 		{"", PlayerStatePlaying, "", ErrInvalidStream},
 	} {
-		snap, err := coord.UpdatePlayerState(tc.id, VideoStream{PlayerState: tc.state})
-		if !errors.Is(err, tc.wantErr) {
-			t.Fatalf("UpdatePlayerState(%s, %s) err=%v, want %v", tc.id, tc.state, err, tc.wantErr)
-		}
-		if tc.wantErr == nil {
-			var ps string
-			if tc.id == "cast" && snap.Primary != nil {
-				ps = snap.Primary.PlayerState
-			}
-			if tc.id == "doorbell" && snap.Pip != nil {
-				ps = snap.Pip.PlayerState
-			}
-			if ps != tc.wantPS {
-				t.Fatalf("got player state %s, want %s", ps, tc.wantPS)
-			}
-		}
+		assertPlayerStateUpdateCase(t, coord, tc.id, tc.state, tc.wantPS, tc.wantErr)
 	}
 
 	// Metadata preservation and patching
@@ -266,37 +339,9 @@ func TestCoordinator_PlayerStateAndMetadata(t *testing.T) {
 	sPatch, _ := coord.UpdatePlayerState("chromecast", VideoStream{PlayerState: PlayerStatePaused, Position: 25.0})
 	sRetrig, _ := coord.Trigger(VideoStream{ID: "chromecast", StreamURL: "http://cast-hd"})
 	sPurge, _ := coord.UpdatePlayerState("chromecast", VideoStream{PlayerState: PlayerStateIdle})
-	if sMeta.Primary.Title != "Episode 1" || sMeta.Primary.Position != 10.5 || sMeta.Primary.PositionUpdatedAt == 0 ||
-		sPatch.Primary.Title != "Episode 1" || sPatch.Primary.Position != 25.0 || sPatch.Primary.PlayerState != PlayerStatePaused ||
-		sRetrig.Primary.StreamURL != "http://cast-hd" || sRetrig.Primary.Title != "Episode 1" || sRetrig.Primary.Position != 25.0 ||
-		sPurge.Primary.Title != "" || sPurge.Primary.Position != 0 || sPurge.Primary.Duration != 0 {
-		t.Fatal("unexpected metadata preservation")
-	}
+	assertMetadataPreservation(t, sMeta, sPatch, sRetrig, sPurge)
 
-	// Verify switching from TV episode to movie title clears Series, Season, Episode while preserving Duration if omitted (#613)
-	_, _ = coord.Trigger(VideoStream{
-		ID: "chromecast", StreamURL: "http://cast-tv", Priority: PriorityPersistent,
-		Title: "Ep 1", Series: "Show A", Season: "1", Episode: "2", Duration: 3600,
-	})
-	sMovie, err := coord.UpdatePlayerState("chromecast", VideoStream{
-		PlayerState: PlayerStatePlaying,
-		Title:       "Movie Title",
-	})
-	if err != nil || sMovie.Primary.Title != "Movie Title" || sMovie.Primary.Series != "" || sMovie.Primary.Season != "" || sMovie.Primary.Episode != "" || sMovie.Primary.Duration != 3600 {
-		t.Fatalf("expected series/season/episode cleared and duration preserved on movie title update, got: %+v (err: %v)", sMovie.Primary, err)
-	}
-	// Verify re-triggering active TV stream with a movie Title does not backfill stale Series/Season/Episode
-	_, _ = coord.Trigger(VideoStream{
-		ID: "chromecast", StreamURL: "http://cast-tv", Priority: PriorityPersistent,
-		Title: "Ep 2", Series: "Show A", Season: "1", Episode: "3", Duration: 1800,
-	})
-	sRetrigMovie, err := coord.Trigger(VideoStream{
-		ID: "chromecast", StreamURL: "http://cast-movie", Priority: PriorityPersistent,
-		Title: "Standalone Movie",
-	})
-	if err != nil || sRetrigMovie.Primary.Title != "Standalone Movie" || sRetrigMovie.Primary.Series != "" || sRetrigMovie.Primary.Season != "" || sRetrigMovie.Primary.Episode != "" || sRetrigMovie.Primary.Duration != 0 {
-		t.Fatalf("expected re-triggered movie stream not to inherit stale episode metadata, got: %+v (err: %v)", sRetrigMovie.Primary, err)
-	}
+	assertMovieMetadataTransitions(t, coord)
 
 	for _, check := range []struct {
 		id, ps  string

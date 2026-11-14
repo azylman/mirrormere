@@ -408,16 +408,57 @@ func TestDefaultLayoutEditorHandler_DeleteLayoutEditor(t *testing.T) {
 	}
 }
 
+type layoutEditorResponseDetailsCase struct {
+	name            string
+	yamlStr         string
+	wantMinScreens  int
+	wantWidgetsLen  int
+	wantFirstID     string
+	wantFirstSupLen int
+}
+
+func runLayoutEditorResponseDetailsCase(t *testing.T, tc layoutEditorResponseDetailsCase) {
+	t.Helper()
+	tmp := filepath.Join(t.TempDir(), "layout-override.yaml")
+	mgr, loader := newTestManager(t, tc.yamlStr, tmp)
+	h := server.NewDefaultLayoutEditorHandler(mgr, nil, loader, nil)
+
+	rec := doEditorReq(h.GetLayoutEditor, http.MethodGet, "/api/layout/editor", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("[%s] code = %d, want 200", tc.name, rec.Code)
+	}
+	var resp api.LayoutEditorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("[%s] failed to unmarshal JSON: %v", tc.name, err)
+	}
+	if !resp.AllowLayoutEdit || resp.HasOverride {
+		t.Errorf("[%s] unexpected flags: allow=%v, hasOverride=%v", tc.name, resp.AllowLayoutEdit, resp.HasOverride)
+	}
+	if len(resp.Grid) != 2 || resp.Grid[0] != 6 || resp.Grid[1] != 2 {
+		t.Errorf("[%s] unexpected grid: %v", tc.name, resp.Grid)
+	}
+	if resp.TotalScreens < tc.wantMinScreens {
+		t.Errorf("[%s] totalScreens = %d, want >= %d", tc.name, resp.TotalScreens, tc.wantMinScreens)
+	}
+	if len(resp.Widgets) != tc.wantWidgetsLen {
+		t.Fatalf("[%s] widgets len = %d, want %d", tc.name, len(resp.Widgets), tc.wantWidgetsLen)
+	}
+	if resp.Widgets[0].WidgetID != tc.wantFirstID {
+		t.Errorf("[%s] first widget = %s, want %s", tc.name, resp.Widgets[0].WidgetID, tc.wantFirstID)
+	}
+	if tc.wantFirstSupLen > 0 && len(resp.Widgets[0].SupportedDimensions) != tc.wantFirstSupLen {
+		t.Errorf("[%s] supported dims len = %d, want %d", tc.name, len(resp.Widgets[0].SupportedDimensions), tc.wantFirstSupLen)
+	}
+	for _, w := range resp.Widgets {
+		if w.Type == "spacer" || strings.HasPrefix(w.WidgetID, "auto-spacer-") {
+			t.Errorf("[%s] expected no spacer in widgets response, found: %s", tc.name, w.WidgetID)
+		}
+	}
+}
+
 func TestDefaultLayoutEditorHandler_ResponseDetails(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name            string
-		yamlStr         string
-		wantMinScreens  int
-		wantWidgetsLen  int
-		wantFirstID     string
-		wantFirstSupLen int
-	}{
+	tests := []layoutEditorResponseDetailsCase{
 		{
 			name:            "single_screen_valid_layout",
 			yamlStr:         testValidYAML,
@@ -438,41 +479,7 @@ func TestDefaultLayoutEditorHandler_ResponseDetails(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			tmp := filepath.Join(t.TempDir(), "layout-override.yaml")
-			mgr, loader := newTestManager(t, tc.yamlStr, tmp)
-			h := server.NewDefaultLayoutEditorHandler(mgr, nil, loader, nil)
-
-			rec := doEditorReq(h.GetLayoutEditor, http.MethodGet, "/api/layout/editor", "")
-			if rec.Code != http.StatusOK {
-				t.Fatalf("code = %d, want 200", rec.Code)
-			}
-			var resp api.LayoutEditorResponse
-			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-				t.Fatalf("failed to unmarshal JSON: %v", err)
-			}
-			if !resp.AllowLayoutEdit || resp.HasOverride {
-				t.Errorf("unexpected flags: allow=%v, hasOverride=%v", resp.AllowLayoutEdit, resp.HasOverride)
-			}
-			if len(resp.Grid) != 2 || resp.Grid[0] != 6 || resp.Grid[1] != 2 {
-				t.Errorf("unexpected grid: %v", resp.Grid)
-			}
-			if resp.TotalScreens < tc.wantMinScreens {
-				t.Errorf("totalScreens = %d, want >= %d", resp.TotalScreens, tc.wantMinScreens)
-			}
-			if len(resp.Widgets) != tc.wantWidgetsLen {
-				t.Fatalf("widgets len = %d, want %d", len(resp.Widgets), tc.wantWidgetsLen)
-			}
-			if resp.Widgets[0].WidgetID != tc.wantFirstID {
-				t.Errorf("first widget = %s, want %s", resp.Widgets[0].WidgetID, tc.wantFirstID)
-			}
-			if tc.wantFirstSupLen > 0 && len(resp.Widgets[0].SupportedDimensions) != tc.wantFirstSupLen {
-				t.Errorf("supported dims len = %d, want %d", len(resp.Widgets[0].SupportedDimensions), tc.wantFirstSupLen)
-			}
-			for _, w := range resp.Widgets {
-				if w.Type == "spacer" || strings.HasPrefix(w.WidgetID, "auto-spacer-") {
-					t.Errorf("expected no spacer in widgets response, found: %s", w.WidgetID)
-				}
-			}
+			runLayoutEditorResponseDetailsCase(t, tc)
 		})
 	}
 }

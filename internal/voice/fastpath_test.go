@@ -159,6 +159,17 @@ func (s stubFastPath) Try(context.Context, AskRequest, func(BrainAudioChunk)) Fa
 	return s.res
 }
 
+func assertBrainStageSeconds(t *testing.T) {
+	t.Helper()
+	d0, ok0 := brainStageSeconds(nil, 2*time.Second)
+	d1, ok1 := brainStageSeconds(&fastPathBrain{elapsed: 500 * time.Millisecond}, 2*time.Second)
+	d2, ok2 := brainStageSeconds(&fastPathBrain{elapsed: 500 * time.Millisecond}, 100*time.Millisecond)
+	_, okHit := brainStageSeconds(&fastPathBrain{handled: true, elapsed: 40 * time.Millisecond}, 50*time.Millisecond)
+	if !ok0 || d0 != 2 || !ok1 || d1 != 1.5 || !ok2 || d2 != 0 || okHit {
+		t.Fatalf("brainStageSeconds failed: (%v,%v) (%v,%v) (%v,%v) hit=%v", d0, ok0, d1, ok1, d2, ok2, okHit)
+	}
+}
+
 func TestFastPath_ConfigAndBrainIntegration(t *testing.T) {
 	t.Parallel()
 	for _, cfg := range []*config.FastPathConfig{nil, {URL: "  "}} {
@@ -185,11 +196,5 @@ func TestFastPath_ConfigAndBrainIntegration(t *testing.T) {
 		t.Error("expected nil brain error on miss")
 	}
 
-	d0, ok0 := brainStageSeconds(nil, 2*time.Second)
-	d1, ok1 := brainStageSeconds(&fastPathBrain{elapsed: 500 * time.Millisecond}, 2*time.Second)
-	d2, ok2 := brainStageSeconds(&fastPathBrain{elapsed: 500 * time.Millisecond}, 100*time.Millisecond)
-	_, okHit := brainStageSeconds(&fastPathBrain{handled: true, elapsed: 40 * time.Millisecond}, 50*time.Millisecond)
-	if !ok0 || d0 != 2 || !ok1 || d1 != 1.5 || !ok2 || d2 != 0 || okHit {
-		t.Fatalf("brainStageSeconds failed: (%v,%v) (%v,%v) (%v,%v) hit=%v", d0, ok0, d1, ok1, d2, ok2, okHit)
-	}
+	assertBrainStageSeconds(t)
 }
