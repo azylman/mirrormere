@@ -11,8 +11,8 @@ requests>=2.34.2
 numpy>=2.5.4
 # Custom wake-phrase generation via `sherpa-onnx-cli text2token` requires
 # click (CLI runtime) and sentencepiece (BPE tokenization).
-click>=8.5.0
-sentencepiece>=0.2.2
+click>=8.5.1
+sentencepiece>=0.2.3
 
 
 
