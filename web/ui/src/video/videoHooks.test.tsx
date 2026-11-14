@@ -1222,7 +1222,7 @@ describe('useVolumeSlider', () => {
     const customFetch = vi.fn().mockResolvedValue({ ok: true });
     const onUserActivity = vi.fn();
 
-    const { result } = renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       useVolumeSlider({
         volume: 50,
         muted: false,
@@ -1261,10 +1261,26 @@ describe('useVolumeSlider', () => {
       body: JSON.stringify({ volume: 70 }),
     }));
 
-    // Commit slider
+    // Commit slider while throttle timer is pending with event and currentTarget
     act(() => {
-      result.current.handleSliderCommit();
+      result.current.handleSliderInput({ target: { value: '72' } });
     });
+    const stopPropagation = vi.fn();
+    act(() => {
+      result.current.handleSliderCommit({
+        stopPropagation,
+        currentTarget: { value: '75' },
+      } as unknown as React.SyntheticEvent);
+    });
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(result.current.volume).toBe(75);
+
+    // Cover unmount with active throttle timer
+    act(() => {
+      result.current.handleSliderInput({ target: { value: '80' } });
+      result.current.handleSliderInput({ target: { value: '85' } });
+    });
+    unmount();
   });
 
   it('debounces mute toggle by 300ms', () => {
@@ -1278,10 +1294,12 @@ describe('useVolumeSlider', () => {
       }),
     );
 
+    const stopMuteProp = vi.fn();
     act(() => {
-      result.current.handleMuteToggle();
+      result.current.handleMuteToggle({ stopPropagation: stopMuteProp } as unknown as React.SyntheticEvent);
       result.current.handleMuteToggle(); // ignored due to 300ms debounce
     });
+    expect(stopMuteProp).toHaveBeenCalled();
 
     expect(customFetch).toHaveBeenCalledTimes(1);
     expect(customFetch).toHaveBeenCalledWith('api/audio/mute', expect.objectContaining({

@@ -132,7 +132,7 @@ describe('CarouselController', () => {
     swipe(h, 500, 200);
     h.flushFrames();
 
-    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
     expect(h.host.commit).not.toHaveBeenCalled();
     expect(h.host.select).not.toHaveBeenCalled();
     expect(document.body.dataset.animating).toBe('1');
@@ -160,7 +160,7 @@ describe('CarouselController', () => {
     const h = build();
     swipe(h, 500, 400);
     h.flushFrames();
-    expect(h.track.style.transform).toBe('translate3d(0px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(0px, 0px, 0px)');
 
     h.transitionEnd();
     expect(h.host.commit).not.toHaveBeenCalled();
@@ -186,7 +186,7 @@ describe('CarouselController', () => {
     const h = build(0);
     swipe(h, 300, 700);
     h.flushFrames();
-    expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(2);
     expect(h.host.select).toHaveBeenCalledWith(2);
@@ -247,14 +247,14 @@ describe('CarouselController', () => {
     h.clock.t += 16;
     pointer(window, 'pointerup', 495, 100);
     // The queued rotate to 2 is a wrap from 0, so it slides 'prev'.
-    expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenLastCalledWith(2);
     expect(h.host.select).not.toHaveBeenCalled();
     h.controller.rendered(2);
 
     h.controller.goTo(1);
-    expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenLastCalledWith(1);
     expect(h.host.select).toHaveBeenCalledWith(1);
@@ -267,7 +267,7 @@ describe('CarouselController', () => {
     h.move(450, 100);
     h.flushFrames();
     h.cancel();
-    expect(h.track.style.transform).toBe('translate3d(0px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(0px, 0px, 0px)');
     h.transitionEnd();
     expect(h.host.commit).not.toHaveBeenCalled();
   });
@@ -322,7 +322,7 @@ describe('CarouselController', () => {
     vi.useFakeTimers();
     const h = build();
     h.controller.requestShow(2);
-    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(2);
     expect(h.host.select).not.toHaveBeenCalled();
@@ -351,7 +351,7 @@ describe('CarouselController', () => {
     h.up(490, 100);
     h.transitionEnd();
     expect(h.host.commit).not.toHaveBeenCalled();
-    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
 
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(2);
@@ -371,7 +371,7 @@ describe('CarouselController', () => {
 
     // React renders screen 2: the queued rotate to 0 (a wrap, so 'next') starts now.
     h.controller.rendered(2);
-    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenLastCalledWith(0);
     expect(h.host.commit).toHaveBeenCalledTimes(2);
@@ -382,7 +382,7 @@ describe('CarouselController', () => {
     vi.useFakeTimers();
     const h = build();
     h.controller.goTo(0);
-    expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
     expect(h.host.select).not.toHaveBeenCalled();
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(0);
@@ -416,7 +416,7 @@ describe('CarouselController', () => {
         data: { type: 'hearth-swipe', direction: 'next' },
       }),
     );
-    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(2);
     expect(h.host.select).toHaveBeenCalledWith(2);
@@ -428,7 +428,7 @@ describe('CarouselController', () => {
         data: { type: 'hearth-swipe', direction: 'prev' },
       }),
     );
-    expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(1);
     expect(h.host.select).toHaveBeenCalledWith(1);
@@ -440,7 +440,7 @@ describe('CarouselController', () => {
         data: { type: 'hearth-screen-select', screen_index: 2 },
       }),
     );
-    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(2);
     expect(h.host.select).toHaveBeenCalledWith(2);
@@ -549,7 +549,7 @@ describe('CarouselController', () => {
     vi.useFakeTimers();
     const h = build();
     useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 2, totalScreens: 3 } });
-    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(2);
   });
@@ -559,7 +559,7 @@ describe('CarouselController', () => {
     useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 2, totalScreens: 4 } });
     const h = build(2);
     swipe(h, 500, 200);
-    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+    expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
 
     h.controller.reset(0);
     h.transitionEnd();
@@ -621,7 +621,7 @@ describe('CarouselController', () => {
       useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 2, totalScreens: 4 } });
       const h = build(2);
       swipe(h, 500, 200);
-      expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+      expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
 
       // The select already moved the store to 3; the layout then loses screen 3.
       useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 3 } });
@@ -712,7 +712,7 @@ describe('CarouselController', () => {
       h.flushFrames();
       useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, totalScreens: 1 } });
       h.up(200, 100, 0);
-      expect(h.track.style.transform).toBe('translate3d(0px,0,0)');
+      expect(h.track.style.transform).toBe('translate3d(0px, 0px, 0px)');
 
       h.transitionEnd();
       vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
@@ -776,7 +776,7 @@ describe('CarouselController', () => {
 
       vi.advanceTimersByTime(INACTIVITY_HOLD_MS);
       expect(h.controller.held).toBe(false);
-      expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+      expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
       h.transitionEnd();
       expect(h.host.commit).toHaveBeenCalledWith(2);
     });
@@ -798,7 +798,7 @@ describe('CarouselController', () => {
 
       vi.advanceTimersByTime(INACTIVITY_HOLD_MS);
       expect(h.controller.held).toBe(false);
-      expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+      expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
       h.transitionEnd();
       expect(h.host.commit).toHaveBeenCalledWith(0);
     });
@@ -867,7 +867,7 @@ describe('CarouselController', () => {
       expect(h.host.commit).not.toHaveBeenCalledWith(2);
 
       h.controller.setPinned(false);
-      expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+      expect(h.track.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
       h.transitionEnd();
       expect(h.host.commit).toHaveBeenCalledWith(2);
     });
@@ -913,29 +913,29 @@ describe('CarouselController', () => {
       useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 2 } });
     });
 
-    it('settles a prev swipe (right drag) with translate3d(1000px,0,0)', () => {
+    it('settles a prev swipe (right drag) with translate3d(1000px, 0px, 0px)', () => {
       vi.useFakeTimers();
       const h = build(0);
       swipe(h, 200, 500);
       h.flushFrames();
 
-      expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+      expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
       h.transitionEnd();
       expect(h.host.commit).toHaveBeenCalledWith(1);
       expect(h.host.select).toHaveBeenCalledWith(1);
     });
 
-    it('settles goTo(target, "prev") with translate3d(1000px,0,0)', () => {
+    it('settles goTo(target, "prev") with translate3d(1000px, 0px, 0px)', () => {
       vi.useFakeTimers();
       const h = build(0);
       h.controller.goTo(1, 'prev');
-      expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+      expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
       h.transitionEnd();
       expect(h.host.commit).toHaveBeenCalledWith(1);
       expect(h.host.select).toHaveBeenCalledWith(1);
     });
 
-    it('settles hearth-swipe { direction: "prev" } with translate3d(1000px,0,0)', () => {
+    it('settles hearth-swipe { direction: "prev" } with translate3d(1000px, 0px, 0px)', () => {
       vi.useFakeTimers();
       const h = build(0);
       window.dispatchEvent(
@@ -944,7 +944,7 @@ describe('CarouselController', () => {
           data: { type: 'hearth-swipe', direction: 'prev' },
         }),
       );
-      expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+      expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
       h.transitionEnd();
       expect(h.host.commit).toHaveBeenCalledWith(1);
       expect(h.host.select).toHaveBeenCalledWith(1);

@@ -292,7 +292,7 @@ describe('Carousel', () => {
     act(() => {
       useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 2 } });
     });
-    expect(track?.style.transform).toBe('translate3d(-1000px,0,0)');
+    expect(track?.style.transform).toBe('translate3d(-1000px, 0px, 0px)');
     expect(document.body.dataset.animating).toBe('1');
 
     await act(async () => {
@@ -1062,7 +1062,7 @@ describe('Carousel', () => {
         });
 
         const track = document.querySelector<HTMLElement>('.carousel-track');
-        expect(track?.style.transform).toBe('translate3d(1000px,0,0)');
+        expect(track?.style.transform).toBe('translate3d(1000px, 0px, 0px)');
 
         act(() => {
           const event = new Event('transitionend');
