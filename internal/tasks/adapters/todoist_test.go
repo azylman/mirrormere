@@ -2,7 +2,6 @@ package adapters_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -64,27 +63,10 @@ func runTodoistFetchListCase(t *testing.T, tc todoistFetchCase) {
 
 func assertTodoistFetchResult(t *testing.T, tc todoistFetchCase, list *tasks.List, items []tasks.ListItem, err error) {
 	t.Helper()
-	if tc.wantErrIs != nil {
-		if !errors.Is(err, tc.wantErrIs) {
-			t.Fatalf("expected error %v, got %v", tc.wantErrIs, err)
-		}
+	if assertAdapterExpectedError(t, err, tc.wantErrIs, tc.wantErr) {
 		return
 	}
-	if tc.wantErr != "" {
-		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-			t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
-		}
-		return
-	}
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if tc.wantName != "" && list.Name != tc.wantName {
-		t.Errorf("list name = %q, want %q", list.Name, tc.wantName)
-	}
-	if len(items) != tc.wantItems {
-		t.Errorf("items count = %d, want %d", len(items), tc.wantItems)
-	}
+	assertFetchListSuccess(t, list, items, tc.wantName, tc.wantItems)
 	if tc.checkSec != "" && (len(items) < 2 || items[1].Section != tc.checkSec) {
 		t.Errorf("expected items[1].Section == %q, got %+v", tc.checkSec, items)
 	}

@@ -124,19 +124,18 @@ type buildFamilyViewExpectations struct {
 	timelineMarkers  []TimelineMarker
 }
 
-func TestBuildFamilyView(t *testing.T) {
-	t.Parallel()
-	pdtLoc := time.FixedZone("PDT", -7*3600)
+type buildFamilyViewTestCase struct {
+	name    string
+	data    any
+	cfg     map[string]any
+	dims    domain.Dimension
+	now     time.Time
+	wantErr string
+	exp     buildFamilyViewExpectations
+}
 
-	tests := []struct {
-		name    string
-		data    any
-		cfg     map[string]any
-		dims    domain.Dimension
-		now     time.Time
-		wantErr string
-		exp     buildFamilyViewExpectations
-	}{
+func buildFamilyViewBasicCases() []buildFamilyViewTestCase {
+	return []buildFamilyViewTestCase{
 		{
 			name: "member resolution, unclaimed color, contrast text color, today/weekend flags, and range label",
 			data: snap(
@@ -196,6 +195,11 @@ func TestBuildFamilyView(t *testing.T) {
 		{name: "members not a list", cfg: map[string]any{"members": "not-a-list", "calendars": []any{}}, exp: buildFamilyViewExpectations{memberCount: 0}},
 		{name: "member entry not a map", cfg: map[string]any{"members": []any{"oops"}, "calendars": []any{}}, wantErr: "is not a mapping"},
 		{name: "member calendars not a list", cfg: map[string]any{"members": []any{map[string]any{"name": "Alex", "color": "#E07A5F", "calendars": "not-a-list"}}, "calendars": []any{}}, exp: buildFamilyViewExpectations{memberCount: 1}},
+	}
+}
+
+func buildFamilyViewAdvancedCases(pdtLoc *time.Location) []buildFamilyViewTestCase {
+	return []buildFamilyViewTestCase{
 		{
 			name: "timezone converts to local day",
 			now:  time.Date(2026, 9, 27, 12, 0, 0, 0, pdtLoc),
@@ -326,33 +330,53 @@ func TestBuildFamilyView(t *testing.T) {
 			},
 		},
 	}
+}
 
+func buildFamilyViewTestCases(pdtLoc *time.Location) []buildFamilyViewTestCase {
+	basic := buildFamilyViewBasicCases()
+	adv := buildFamilyViewAdvancedCases(pdtLoc)
+	cases := make([]buildFamilyViewTestCase, 0, len(basic)+len(adv))
+	cases = append(cases, basic...)
+	cases = append(cases, adv...)
+	return cases
+}
+
+func runBuildFamilyViewCase(t *testing.T, tc buildFamilyViewTestCase) {
+	t.Helper()
+	now := testNow
+	if !tc.now.IsZero() {
+		now = tc.now
+	}
+	dims := domain.NewDimension(6, 2)
+	if tc.dims.Cols > 0 || tc.dims.Rows > 0 {
+		dims = tc.dims
+	}
+	cfg := tc.cfg
+	if cfg == nil && tc.wantErr == "" {
+		cfg = baseFamilyConfig()
+	}
+	view, err := BuildFamilyView(tc.data, cfg, dims, now)
+	if tc.wantErr != "" {
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertFamilyViewExpectations(t, view, tc.exp)
+}
+
+func TestBuildFamilyView(t *testing.T) {
+	t.Parallel()
+	pdtLoc := time.FixedZone("PDT", -7*3600)
+
+	tests := buildFamilyViewTestCases(pdtLoc)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			now := testNow
-			if !tc.now.IsZero() {
-				now = tc.now
-			}
-			dims := domain.NewDimension(6, 2)
-			if tc.dims.Cols > 0 || tc.dims.Rows > 0 {
-				dims = tc.dims
-			}
-			cfg := tc.cfg
-			if cfg == nil && tc.wantErr == "" {
-				cfg = baseFamilyConfig()
-			}
-			view, err := BuildFamilyView(tc.data, cfg, dims, now)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			assertFamilyViewExpectations(t, view, tc.exp)
+			runBuildFamilyViewCase(t, tc)
 		})
 	}
 }

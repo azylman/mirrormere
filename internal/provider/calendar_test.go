@@ -90,6 +90,22 @@ func TestCalendarProvider_Fetch_ParsingAndRecurrence(t *testing.T) {
 	t.Run("strip recurring", runCalendarStripRecurringSubtest)
 }
 
+func assertSingleAndAllDayEvents(t *testing.T, snap provider.CalendarSnapshot) {
+	t.Helper()
+	if snap.Events[0].Title != "Soccer Practice" || snap.Events[0].Location != "Field 2" || snap.Events[0].AllDay {
+		t.Errorf("ev[0] mismatch: %+v", snap.Events[0])
+	}
+	if snap.Events[1].Title != "Duration Event" {
+		t.Errorf("ev[1] mismatch: %+v", snap.Events[1])
+	}
+	if snap.Events[2].Start != "2026-09-26" || snap.Events[2].End != "2026-09-26" || !snap.Events[2].AllDay {
+		t.Errorf("ev[2] mismatch: %+v", snap.Events[2])
+	}
+	if snap.Events[3].Start != "2026-09-27" || snap.Events[3].End != "2026-09-29" {
+		t.Errorf("ev[3] mismatch: %+v", snap.Events[3])
+	}
+}
+
 func runCalendarSingleAndAllDaySubtest(t *testing.T) {
 	t.Parallel()
 	ics := icsDoc(
@@ -105,18 +121,7 @@ func runCalendarSingleAndAllDaySubtest(t *testing.T) {
 	if err != nil || len(snap.Events) != 4 || snap.SyncStatus != "ok" {
 		t.Fatalf("fetch failed: err=%v len=%d", err, len(snap.Events))
 	}
-	if snap.Events[0].Title != "Soccer Practice" || snap.Events[0].Location != "Field 2" || snap.Events[0].AllDay {
-		t.Errorf("ev[0] mismatch: %+v", snap.Events[0])
-	}
-	if snap.Events[1].Title != "Duration Event" {
-		t.Errorf("ev[1] mismatch: %+v", snap.Events[1])
-	}
-	if snap.Events[2].Start != "2026-09-26" || snap.Events[2].End != "2026-09-26" || !snap.Events[2].AllDay {
-		t.Errorf("ev[2] mismatch: %+v", snap.Events[2])
-	}
-	if snap.Events[3].Start != "2026-09-27" || snap.Events[3].End != "2026-09-29" {
-		t.Errorf("ev[3] mismatch: %+v", snap.Events[3])
-	}
+	assertSingleAndAllDayEvents(t, snap)
 }
 
 func runCalendarRecipeImageExtractionSubtest(t *testing.T) {

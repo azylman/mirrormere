@@ -744,31 +744,29 @@ func assertPushWidgetPhotosSuccess(t *testing.T) (*provider.ProviderCoordinator,
 	return coord, pkgs, widgets, validPhotos
 }
 
+func assertPushPhotosErr(t *testing.T, c *provider.ProviderCoordinator, name, id string, photos []string, wantErr error, wantSub string) {
+	t.Helper()
+	_, err := c.PushWidgetPhotos(context.Background(), id, photos, "Album")
+	if wantErr != nil && !errors.Is(err, wantErr) {
+		t.Fatalf("unexpected error for %s: %v, want %v", name, err, wantErr)
+	}
+	if wantSub != "" && (err == nil || !strings.Contains(err.Error(), wantSub)) {
+		t.Fatalf("unexpected error for %s: %v, want substring %q", name, err, wantSub)
+	}
+}
+
 func assertPushWidgetPhotosErrors(t *testing.T, coord *provider.ProviderCoordinator, pkgs map[string]*domain.Package, widgets []config.WidgetConfig, validPhotos []string) {
 	t.Helper()
-	ctx := context.Background()
 	coordStopped := provider.NewCoordinator(provider.CoordinatorConfig{}, mkSnap("", pkgs, widgets...))
 	_ = coordStopped.Stop()
 	coordNilSnap := provider.NewCoordinator(provider.CoordinatorConfig{}, nil)
 	defer coordNilSnap.Stop()
 
-	for _, tc := range []struct {
-		name, id, sub string
-		photos        []string
-		album         string
-		c             *provider.ProviderCoordinator
-		err           error
-	}{
-		{"not_found", "nonexistent-widget", "", validPhotos, "Album", coord, provider.ErrWidgetNotFound},
-		{"empty_id", "", "", validPhotos, "Album", coord, provider.ErrWidgetNotFound},
-		{"non_photo_widget", "tile-sensor", "", validPhotos, "Album", coord, provider.ErrPhotoPushNotSupported},
-		{"share_url_widget", "tile-share", "", validPhotos, "Album", coord, provider.ErrPhotoPushNotSupported},
-		{"invalid_photos", "tile-ember", "", []string{"https://notgoogle.com/pic.jpg"}, "Album", coord, provider.ErrInvalidPhotoPushPayload},
-		{"stopped_coord", "tile-ember", "coordinator is stopped", validPhotos, "Album", coordStopped, nil},
-		{"nil_snap", "tile-ember", "", validPhotos, "Album", coordNilSnap, provider.ErrWidgetNotFound},
-	} {
-		if _, err := tc.c.PushWidgetPhotos(ctx, tc.id, tc.photos, tc.album); (tc.err != nil && !errors.Is(err, tc.err)) || (tc.sub != "" && (err == nil || !strings.Contains(err.Error(), tc.sub))) {
-			t.Fatalf("unexpected error for %s: %v", tc.name, err)
-		}
-	}
+	assertPushPhotosErr(t, coord, "not_found", "nonexistent-widget", validPhotos, provider.ErrWidgetNotFound, "")
+	assertPushPhotosErr(t, coord, "empty_id", "", validPhotos, provider.ErrWidgetNotFound, "")
+	assertPushPhotosErr(t, coord, "non_photo_widget", "tile-sensor", validPhotos, provider.ErrPhotoPushNotSupported, "")
+	assertPushPhotosErr(t, coord, "share_url_widget", "tile-share", validPhotos, provider.ErrPhotoPushNotSupported, "")
+	assertPushPhotosErr(t, coord, "invalid_photos", "tile-ember", []string{"https://notgoogle.com/pic.jpg"}, provider.ErrInvalidPhotoPushPayload, "")
+	assertPushPhotosErr(t, coordStopped, "stopped_coord", "tile-ember", validPhotos, nil, "coordinator is stopped")
+	assertPushPhotosErr(t, coordNilSnap, "nil_snap", "tile-ember", validPhotos, provider.ErrWidgetNotFound, "")
 }
