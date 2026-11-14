@@ -52,23 +52,46 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 	return render.NewHandler(render.NewEngine(resolver, provider), resolver, render.WithCSSPath(filepath.Join(tmpDir, "hud.css"))), tmpDir, pkg
 }
 
+type widgetRenderTestCase struct {
+	name       string
+	method     string
+	path       string
+	widgetID   string
+	nilEngine  bool
+	wantStatus int
+	wantBody   []string
+	wantEmpty  bool
+	wantErrMsg string
+	checkCORS  bool
+	wantAllow  string
+}
+
+func assertWidgetRenderResponse(t *testing.T, rec *httptest.ResponseRecorder, tc widgetRenderTestCase) {
+	t.Helper()
+	if rec.Code != tc.wantStatus || (tc.wantEmpty && rec.Body.Len() != 0) || (tc.wantAllow != "" && rec.Header().Get("Allow") != tc.wantAllow) {
+		t.Fatalf("status=%d (want %d), len=%d, allow=%q", rec.Code, tc.wantStatus, rec.Body.Len(), rec.Header().Get("Allow"))
+	}
+	if tc.checkCORS && (rec.Header().Get("Access-Control-Allow-Origin") != "*" || rec.Header().Get("Content-Type") != "text/html; charset=utf-8") {
+		t.Errorf("headers mismatch: %v", rec.Header())
+	}
+	for _, s := range tc.wantBody {
+		if !strings.Contains(rec.Body.String(), s) {
+			t.Errorf("body missing %q: %s", s, rec.Body.String())
+		}
+	}
+	if tc.wantErrMsg != "" {
+		var errResp api.ErrorResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil || !strings.Contains(errResp.Error, tc.wantErrMsg) {
+			t.Errorf("error = %v (%+v), want %q", err, errResp, tc.wantErrMsg)
+		}
+	}
+}
+
 func TestHandler_GetWidgetRender(t *testing.T) {
 	t.Parallel()
 	handler, _, _ := setupTestServer(t)
 
-	tests := []struct {
-		name       string
-		method     string
-		path       string
-		widgetID   string
-		nilEngine  bool
-		wantStatus int
-		wantBody   []string
-		wantEmpty  bool
-		wantErrMsg string
-		checkCORS  bool
-		wantAllow  string
-	}{
+	tests := []widgetRenderTestCase{
 		{name: "success GET 200", method: http.MethodGet, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusOK, wantBody: []string{`<div class="sensor">68F</div>`}, checkCORS: true},
 		{name: "HEAD 200 empty body", method: http.MethodHead, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusOK, wantEmpty: true},
 		{name: "OPTIONS 204", method: http.MethodOptions, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusNoContent},
@@ -103,23 +126,7 @@ func TestHandler_GetWidgetRender(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			h.GetWidgetRender(rec, httptest.NewRequest(tc.method, tc.path, nil), tc.widgetID)
-			if rec.Code != tc.wantStatus || (tc.wantEmpty && rec.Body.Len() != 0) || (tc.wantAllow != "" && rec.Header().Get("Allow") != tc.wantAllow) {
-				t.Fatalf("status=%d (want %d), len=%d, allow=%q", rec.Code, tc.wantStatus, rec.Body.Len(), rec.Header().Get("Allow"))
-			}
-			if tc.checkCORS && (rec.Header().Get("Access-Control-Allow-Origin") != "*" || rec.Header().Get("Content-Type") != "text/html; charset=utf-8") {
-				t.Errorf("headers mismatch: %v", rec.Header())
-			}
-			for _, s := range tc.wantBody {
-				if !strings.Contains(rec.Body.String(), s) {
-					t.Errorf("body missing %q: %s", s, rec.Body.String())
-				}
-			}
-			if tc.wantErrMsg != "" {
-				var errResp api.ErrorResponse
-				if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil || !strings.Contains(errResp.Error, tc.wantErrMsg) {
-					t.Errorf("error = %v (%+v), want %q", err, errResp, tc.wantErrMsg)
-				}
-			}
+			assertWidgetRenderResponse(t, rec, tc)
 		})
 	}
 }
