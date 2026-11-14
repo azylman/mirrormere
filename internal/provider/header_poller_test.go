@@ -131,23 +131,17 @@ func runHeaderWeatherFetchCase(t *testing.T, tc headerFetchTestCase) {
 
 func assertHeaderWeatherFields(t *testing.T, hw *events.HeaderWeather, tc headerFetchTestCase) {
 	t.Helper()
-	if tc.wantTemp != 0 && hw.Temperature != tc.wantTemp {
-		t.Errorf("temp = %v, want %v", hw.Temperature, tc.wantTemp)
+	if (tc.wantTemp != 0 && hw.Temperature != tc.wantTemp) ||
+		(tc.wantUnits != "" && hw.Units != tc.wantUnits) ||
+		(tc.wantCode != 0 && hw.WeatherCode != tc.wantCode) {
+		t.Errorf("weather basic fields mismatch: temp=%v, units=%q, code=%v (want temp=%v, units=%q, code=%v)",
+			hw.Temperature, hw.Units, hw.WeatherCode, tc.wantTemp, tc.wantUnits, tc.wantCode)
 	}
-	if tc.wantUnits != "" && hw.Units != tc.wantUnits {
-		t.Errorf("units = %q, want %q", hw.Units, tc.wantUnits)
-	}
-	if tc.wantCode != 0 && hw.WeatherCode != tc.wantCode {
-		t.Errorf("code = %v, want %v", hw.WeatherCode, tc.wantCode)
-	}
-	if tc.wantIcon != "" && hw.Icon != tc.wantIcon {
-		t.Errorf("icon = %q, want %q", hw.Icon, tc.wantIcon)
-	}
-	if tc.wantCond != "" && hw.Condition != tc.wantCond {
-		t.Errorf("cond = %q, want %q", hw.Condition, tc.wantCond)
-	}
-	if hw.Location != tc.wantLoc {
-		t.Errorf("location = %q, want %q", hw.Location, tc.wantLoc)
+	if (tc.wantIcon != "" && hw.Icon != tc.wantIcon) ||
+		(tc.wantCond != "" && hw.Condition != tc.wantCond) ||
+		hw.Location != tc.wantLoc {
+		t.Errorf("weather meta fields mismatch: icon=%q, cond=%q, loc=%q (want icon=%q, cond=%q, loc=%q)",
+			hw.Icon, hw.Condition, hw.Location, tc.wantIcon, tc.wantCond, tc.wantLoc)
 	}
 }
 

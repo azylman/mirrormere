@@ -493,93 +493,35 @@ func solveExplicitValidCases() []solveExplicitCase {
 	}
 }
 
+func mkExplicitErrorCase(name, wantErr string, placements ...layout.ExplicitPlacement) solveExplicitCase {
+	return solveExplicitCase{
+		name:       name,
+		placements: placements,
+		gridCols:   6,
+		gridRows:   2,
+		wantErr:    wantErr,
+	}
+}
+
 func solveExplicitErrorCases() []solveExplicitCase {
 	return []solveExplicitCase{
-		{
-			name: "empty id error",
-			placements: []layout.ExplicitPlacement{
-				mkExp("", "test", 0, 0, 0, 2, 1, false),
-			},
-			gridCols: 6,
-			gridRows: 2,
-			wantErr:  "has empty id",
-		},
-		{
-			name: "duplicate id error",
-			placements: []layout.ExplicitPlacement{
-				mkExp("dup", "test", 0, 0, 0, 2, 1, false),
-				mkExp("dup", "test", 0, 2, 0, 2, 1, false),
-			},
-			gridCols: 6,
-			gridRows: 2,
-			wantErr:  "duplicate widget id",
-		},
-		{
-			name: "invalid dimensions error",
-			placements: []layout.ExplicitPlacement{
-				mkExp("w", "test", 0, 0, 0, 7, 1, false),
-			},
-			gridCols: 6,
-			gridRows: 2,
-			wantErr:  "invalid dimensions",
-		},
-		{
-			name: "out of bounds origin error",
-			placements: []layout.ExplicitPlacement{
-				mkExp("w", "test", 0, 5, 1, 2, 2, false),
-			},
-			gridCols: 6,
-			gridRows: 2,
-			wantErr:  "out of bounds",
-		},
-		{
-			name: "invalid screen negative error",
-			placements: []layout.ExplicitPlacement{
-				mkExp("w", "test", -1, 0, 0, 2, 1, false),
-			},
-			gridCols: 6,
-			gridRows: 2,
-			wantErr:  "invalid screen",
-		},
-		{
-			name: "invalid screen over 15 error",
-			placements: []layout.ExplicitPlacement{
-				mkExp("w", "test", 16, 0, 0, 2, 1, false),
-			},
-			gridCols: 6,
-			gridRows: 2,
-			wantErr:  "invalid screen",
-		},
-		{
-			name: "overlap error unpinned with unpinned",
-			placements: []layout.ExplicitPlacement{
-				mkExp("w1", "test", 0, 0, 0, 4, 2, false),
-				mkExp("w2", "test", 0, 2, 0, 4, 2, false),
-			},
-			gridCols: 6,
-			gridRows: 2,
-			wantErr:  "widget overlap",
-		},
-		{
-			name: "overlap error pinned with unpinned",
-			placements: []layout.ExplicitPlacement{
-				mkExp("pinned", "test", 0, 0, 0, 2, 2, true),
-				mkExp("unpinned", "test", 0, 1, 0, 2, 2, false),
-			},
-			gridCols: 6,
-			gridRows: 2,
-			wantErr:  "widget overlap",
-		},
-		{
-			name: "overlap error pinned with pinned",
-			placements: []layout.ExplicitPlacement{
-				mkExp("pinned-1", "test", 0, 0, 0, 3, 2, true),
-				mkExp("pinned-2", "test", 0, 2, 0, 3, 2, true),
-			},
-			gridCols: 6,
-			gridRows: 2,
-			wantErr:  "widget overlap",
-		},
+		mkExplicitErrorCase("empty id error", "has empty id", mkExp("", "test", 0, 0, 0, 2, 1, false)),
+		mkExplicitErrorCase("duplicate id error", "duplicate widget id",
+			mkExp("dup", "test", 0, 0, 0, 2, 1, false),
+			mkExp("dup", "test", 0, 2, 0, 2, 1, false)),
+		mkExplicitErrorCase("invalid dimensions error", "invalid dimensions", mkExp("w", "test", 0, 0, 0, 7, 1, false)),
+		mkExplicitErrorCase("out of bounds origin error", "out of bounds", mkExp("w", "test", 0, 5, 1, 2, 2, false)),
+		mkExplicitErrorCase("invalid screen negative error", "invalid screen", mkExp("w", "test", -1, 0, 0, 2, 1, false)),
+		mkExplicitErrorCase("invalid screen over 15 error", "invalid screen", mkExp("w", "test", 16, 0, 0, 2, 1, false)),
+		mkExplicitErrorCase("overlap error unpinned with unpinned", "widget overlap",
+			mkExp("w1", "test", 0, 0, 0, 4, 2, false),
+			mkExp("w2", "test", 0, 2, 0, 4, 2, false)),
+		mkExplicitErrorCase("overlap error pinned with unpinned", "widget overlap",
+			mkExp("pinned", "test", 0, 0, 0, 2, 2, true),
+			mkExp("unpinned", "test", 0, 1, 0, 2, 2, false)),
+		mkExplicitErrorCase("overlap error pinned with pinned", "widget overlap",
+			mkExp("pinned-1", "test", 0, 0, 0, 3, 2, true),
+			mkExp("pinned-2", "test", 0, 2, 0, 3, 2, true)),
 	}
 }
 

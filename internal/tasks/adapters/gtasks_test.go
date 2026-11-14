@@ -117,29 +117,42 @@ func runGTasksFetchListCase(t *testing.T, tc gtasksFetchCase) {
 	assertGTasksFetchResult(t, tc, list, items, err)
 }
 
-func assertGTasksFetchResult(t *testing.T, tc gtasksFetchCase, list *tasks.List, items []tasks.ListItem, err error) {
+func assertFetchListSuccess(t *testing.T, list *tasks.List, items []tasks.ListItem, wantName string, wantItems int) {
 	t.Helper()
-	if tc.wantErrIs != nil {
-		if !errors.Is(err, tc.wantErrIs) {
-			t.Fatalf("expected error %v, got %v", tc.wantErrIs, err)
-		}
-		return
+	if list.Name != wantName {
+		t.Errorf("list name = %q, want %q", list.Name, wantName)
 	}
-	if tc.wantErr != "" {
-		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-			t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+	if len(items) != wantItems {
+		t.Errorf("items count = %d, want %d", len(items), wantItems)
+	}
+}
+
+func assertAdapterExpectedError(t *testing.T, err, wantErrIs error, wantErrSub string) bool {
+	t.Helper()
+	if wantErrIs != nil {
+		if !errors.Is(err, wantErrIs) {
+			t.Fatalf("expected error %v, got %v", wantErrIs, err)
 		}
-		return
+		return true
+	}
+	if wantErrSub != "" {
+		if err == nil || !strings.Contains(err.Error(), wantErrSub) {
+			t.Fatalf("expected error containing %q, got %v", wantErrSub, err)
+		}
+		return true
 	}
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if list.Name != tc.wantName {
-		t.Errorf("list name = %q, want %q", list.Name, tc.wantName)
+	return false
+}
+
+func assertGTasksFetchResult(t *testing.T, tc gtasksFetchCase, list *tasks.List, items []tasks.ListItem, err error) {
+	t.Helper()
+	if assertAdapterExpectedError(t, err, tc.wantErrIs, tc.wantErr) {
+		return
 	}
-	if len(items) != tc.wantItems {
-		t.Errorf("items count = %d, want %d", len(items), tc.wantItems)
-	}
+	assertFetchListSuccess(t, list, items, tc.wantName, tc.wantItems)
 	if tc.checkSub && (len(items) < 2 || items[1].ID != "t2") {
 		t.Errorf("expected items[1].ID == 't2', got %+v", items)
 	}

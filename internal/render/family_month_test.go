@@ -377,15 +377,7 @@ func assertCalendarWidgetCards(t *testing.T, html string, tc calendarWidgetTestC
 	}
 }
 
-func calendarWidgetTestCases(laLoc *time.Location) []calendarWidgetTestCase {
-	tzEvents := []provider.CalendarEvent{
-		{ID: "e-mon", Title: "Monday Evening Dinner", CalendarName: "Family", Color: "#3b82f6", Start: "2026-10-13T02:00:00Z", End: "2026-10-13T03:00:00Z"},
-		{ID: "e-party", Title: "Weekend Bachelorette Party", CalendarName: "Family", Color: "#a855f7", Start: "2026-10-15", End: "2026-10-15", AllDay: true},
-		{ID: "e-wed", Title: "Wednesday Game Night", CalendarName: "Family", Color: "#3b82f6", Start: "2026-10-15T02:00:00Z", End: "2026-10-15T04:00:00Z"},
-		{ID: "e-brunch", Title: "Brunch with Bridesmaids", CalendarName: "Family", Color: "#a855f7", Start: "2026-10-15T17:00:00Z", End: "2026-10-15T18:30:00Z"},
-	}
-	provider.SortCalendarEvents(tzEvents, laLoc)
-
+func calendarFamilyWidgetTestCases() []calendarWidgetTestCase {
 	return []calendarWidgetTestCase{
 		{
 			name:            "calendar-family day view fallback to week on 6x2",
@@ -513,6 +505,19 @@ func calendarWidgetTestCases(laLoc *time.Location) []calendarWidgetTestCase {
 			cfg:          withFamilyCfg(map[string]any{"default_view": "month", "date": "2026-09-27"}),
 			wantContains: []string{"cf-view-month", "September 2026", "cf-month-day"},
 		},
+	}
+}
+
+func calendarFeedWidgetTestCases(laLoc *time.Location) []calendarWidgetTestCase {
+	tzEvents := []provider.CalendarEvent{
+		{ID: "e-mon", Title: "Monday Evening Dinner", CalendarName: "Family", Color: "#3b82f6", Start: "2026-10-13T02:00:00Z", End: "2026-10-13T03:00:00Z"},
+		{ID: "e-party", Title: "Weekend Bachelorette Party", CalendarName: "Family", Color: "#a855f7", Start: "2026-10-15", End: "2026-10-15", AllDay: true},
+		{ID: "e-wed", Title: "Wednesday Game Night", CalendarName: "Family", Color: "#3b82f6", Start: "2026-10-15T02:00:00Z", End: "2026-10-15T04:00:00Z"},
+		{ID: "e-brunch", Title: "Brunch with Bridesmaids", CalendarName: "Family", Color: "#a855f7", Start: "2026-10-15T17:00:00Z", End: "2026-10-15T18:30:00Z"},
+	}
+	provider.SortCalendarEvents(tzEvents, laLoc)
+
+	return []calendarWidgetTestCase{
 		{
 			name:      "calendar-feed alignment and hierarchy",
 			widgetDir: "calendar-feed",
@@ -543,6 +548,15 @@ func calendarWidgetTestCases(laLoc *time.Location) []calendarWidgetTestCase {
 			thursCardMustContain: []string{"Weekend Bachelorette Party", "Brunch with Bridesmaids"},
 		},
 	}
+}
+
+func calendarWidgetTestCases(laLoc *time.Location) []calendarWidgetTestCase {
+	fam := calendarFamilyWidgetTestCases()
+	feed := calendarFeedWidgetTestCases(laLoc)
+	cases := make([]calendarWidgetTestCase, 0, len(fam)+len(feed))
+	cases = append(cases, fam...)
+	cases = append(cases, feed...)
+	return cases
 }
 
 func TestCalendarWidgetTemplates(t *testing.T) {

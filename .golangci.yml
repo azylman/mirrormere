@@ -192,17 +192,10 @@ linters:
     rules:
       - linters:
           - containedctx
-          - cyclop
-          - dupl
           - errcheck
           - errchkjson
-          - funlen
-          - gocognit
-          - gocyclo
           - gosec
           - gosmopolitan
-          - maintidx
-          - nestif
           - nilnil
           - noctx
           - unparam
