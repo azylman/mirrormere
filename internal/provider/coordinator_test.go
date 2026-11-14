@@ -292,6 +292,13 @@ func TestProviderCoordinator_ZeroPollingOptimizations(t *testing.T) {
 
 func TestProviderCoordinator_LifecycleAndSWR(t *testing.T) {
 	t.Parallel()
+	assertCoordinatorHealthyWeatherAndRefresh(t)
+	assertCoordinatorStockDegradedAndRecovery(t)
+	assertCoordinatorFailuresAndPushUpdate(t)
+}
+
+func assertCoordinatorHealthyWeatherAndRefresh(t *testing.T) {
+	t.Helper()
 	mockP1, b1, s1 := newControllableMockProvider(), &mockBroadcaster{}, newMockStateSink()
 	coord1 := newCoord(regOne("mock-weather", mockP1), b1, s1, mkSnap("", nil, config.WidgetConfig{
 		ID: "weather-tile", Type: "mock-weather", Dimensions: []int{2, 1}, RefreshIntervalSeconds: new(60),
@@ -315,6 +322,10 @@ func TestProviderCoordinator_LifecycleAndSWR(t *testing.T) {
 	if _, ok := b1.waitForPublish(2 * time.Second); !ok || mockP1.fetchCount.Load() < 2 {
 		t.Fatalf("manual refresh failed: ok=%v, count=%d", ok, mockP1.fetchCount.Load())
 	}
+}
+
+func assertCoordinatorStockDegradedAndRecovery(t *testing.T) {
+	t.Helper()
 	mockStocks := newControllableMockProvider()
 	mockStocks.fetchFunc = func(ctx context.Context) (any, error) { return map[string]any{"price": 150.0}, nil }
 	bStocks, sStocks := &mockBroadcaster{}, newMockStateSink()
@@ -352,6 +363,10 @@ func TestProviderCoordinator_LifecycleAndSWR(t *testing.T) {
 	if p3.Data.(map[string]any)["price"] != 155.0 {
 		t.Fatalf("expected price 155.0, got %v", p3.Data)
 	}
+}
+
+func assertCoordinatorFailuresAndPushUpdate(t *testing.T) {
+	t.Helper()
 	regFail := provider.NewRegistry()
 	mockFail, mockInitFail := newControllableMockProvider(), newControllableMockProvider()
 	mockFail.fetchFunc = func(ctx context.Context) (any, error) { return nil, errors.New("upstream unreachable") }
@@ -379,6 +394,14 @@ func TestProviderCoordinator_LifecycleAndSWR(t *testing.T) {
 
 func TestProviderCoordinator_PushSubscriptionAndAtomicity(t *testing.T) {
 	t.Parallel()
+	assertCoordinatorStreamingProvider(t)
+	assertCoordinatorDynamicProviderUpdate(t)
+	assertCoordinatorAtomicUpdateInterleaving(t)
+	assertCoordinatorTimezoneUpdates(t)
+}
+
+func assertCoordinatorStreamingProvider(t *testing.T) {
+	t.Helper()
 	mockStream, bStream, sStream := newControllableMockProvider(), &mockBroadcaster{}, newMockStateSink()
 	coordStream := newCoord(regOne("streaming-provider", mockStream), bStream, sStream, mkSnap("", nil, mkWidget("streaming-tile", "streaming-provider", 0, nil)))
 	defer coordStream.Stop()
@@ -394,6 +417,10 @@ func TestProviderCoordinator_PushSubscriptionAndAtomicity(t *testing.T) {
 	if pCached, ok := coordStream.Cache().Get("streaming-tile"); !ok || pCached.Data.(map[string]any)["stream_event"] != "alert_fired" {
 		t.Fatalf("unexpected cached data: %+v", pCached)
 	}
+}
+
+func assertCoordinatorDynamicProviderUpdate(t *testing.T) {
+	t.Helper()
 	mockP1, mockP2, mockRem := newControllableMockProvider(), newControllableMockProvider(), newControllableMockProvider()
 	regDyn := regSeq("dynamic-provider", mockP1, mockP2)
 	regDyn.Register("removable-provider", func() provider.Provider { return mockRem })
@@ -427,6 +454,10 @@ func TestProviderCoordinator_PushSubscriptionAndAtomicity(t *testing.T) {
 	if pFinal, ok := coordDyn.Cache().Get("tile-dyn"); !ok || pFinal.State != provider.StateHealthy || pFinal.Data.(map[string]any)["city"] != "New-Paris-Data" {
 		t.Fatalf("expected New-Paris-Data, got %+v", pFinal)
 	}
+}
+
+func assertCoordinatorAtomicUpdateInterleaving(t *testing.T) {
+	t.Helper()
 	mockA1, mockA2 := newControllableMockProvider(), newControllableMockProvider()
 	hookCalled, releaseHook := make(chan struct{}, 1), make(chan struct{})
 	coordAtom := provider.NewCoordinator(provider.CoordinatorConfig{
@@ -492,6 +523,10 @@ func TestProviderCoordinator_LiveConfigReload(t *testing.T) {
 	if coord.UpdateConfig(snap2) == nil {
 		t.Fatal("expected error updating stopped coordinator")
 	}
+}
+
+func assertCoordinatorTimezoneUpdates(t *testing.T) {
+	t.Helper()
 	var (
 		instances []*controllableMockProvider
 		mu        sync.Mutex
@@ -579,6 +614,12 @@ func TestProviderCoordinator_ShutdownEdgeCases(t *testing.T) {
 
 func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 	t.Parallel()
+	coord, pkgs, widgets, validData := assertPushWidgetDataSuccess(t)
+	assertPushWidgetDataErrors(t, coord, pkgs, widgets, validData)
+}
+
+func assertPushWidgetDataSuccess(t *testing.T) (*provider.ProviderCoordinator, map[string]*domain.Package, []config.WidgetConfig, map[string]any) {
+	t.Helper()
 	b, s := &mockBroadcaster{}, newMockStateSink()
 	pkgs := map[string]*domain.Package{
 		"custom-sensor":     mkPkg("custom-sensor", "http", 0, map[string]any{"type": "object", "required": []any{"temperature", "humidity"}, "properties": map[string]any{"temperature": map[string]any{"type": "number"}, "humidity": map[string]any{"type": "number"}}}),
@@ -619,6 +660,12 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 			t.Fatalf("%s push failed: %v", id, err)
 		}
 	}
+	return coord, pkgs, widgets, validData
+}
+
+func assertPushWidgetDataErrors(t *testing.T, coord *provider.ProviderCoordinator, pkgs map[string]*domain.Package, widgets []config.WidgetConfig, validData map[string]any) {
+	t.Helper()
+	ctx := context.Background()
 	coordStopped := provider.NewCoordinator(provider.CoordinatorConfig{}, mkSnap("", pkgs, widgets...))
 	_ = coordStopped.Stop()
 	coordNilSnap := provider.NewCoordinator(provider.CoordinatorConfig{}, nil)
@@ -648,6 +695,13 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 
 func TestProviderCoordinator_PushWidgetPhotos(t *testing.T) {
 	t.Parallel()
+	coord, pkgs, widgets, validPhotos := assertPushWidgetPhotosSuccess(t)
+	defer coord.Stop()
+	assertPushWidgetPhotosErrors(t, coord, pkgs, widgets, validPhotos)
+}
+
+func assertPushWidgetPhotosSuccess(t *testing.T) (*provider.ProviderCoordinator, map[string]*domain.Package, []config.WidgetConfig, []string) {
+	t.Helper()
 	b, s := &mockBroadcaster{}, newMockStateSink()
 	pkgs := map[string]*domain.Package{
 		"photo-carousel": mkPkg("photo-carousel", "photos", 0, nil),
@@ -662,7 +716,6 @@ func TestProviderCoordinator_PushWidgetPhotos(t *testing.T) {
 	reg.Register("photos", func() provider.Provider { return provider.NewPhotosProvider() })
 	reg.Register("http", func() provider.Provider { return newControllableMockProvider() })
 	coord := newCoord(reg, b, s, mkSnap("", pkgs, widgets...))
-	defer coord.Stop()
 
 	waitForState(t, coord.Cache(), "tile-ember", provider.StateHealthy)
 	_, _ = b.waitForPublish(time.Second)
@@ -688,6 +741,12 @@ func TestProviderCoordinator_PushWidgetPhotos(t *testing.T) {
 		t.Fatalf("broadcaster invalid: found=%v, evt=%+v", found, evt)
 	}
 
+	return coord, pkgs, widgets, validPhotos
+}
+
+func assertPushWidgetPhotosErrors(t *testing.T, coord *provider.ProviderCoordinator, pkgs map[string]*domain.Package, widgets []config.WidgetConfig, validPhotos []string) {
+	t.Helper()
+	ctx := context.Background()
 	coordStopped := provider.NewCoordinator(provider.CoordinatorConfig{}, mkSnap("", pkgs, widgets...))
 	_ = coordStopped.Stop()
 	coordNilSnap := provider.NewCoordinator(provider.CoordinatorConfig{}, nil)

@@ -190,27 +190,100 @@ func TestWeatherProvider_Init(t *testing.T) {
 	}
 }
 
+type weatherFetchTestCase struct {
+	name       string
+	body       []byte
+	cfg        map[string]any
+	opts       provider.InitOptions
+	wantTemp   float64
+	wantUnitsT string
+	wantUnitsW string
+	wantIcon   string
+	wantCond   string
+	wantPrecip int
+	wantHourly int
+	wantDaily  int
+	wantFirstH string
+	wantLoc    string
+	wantQuery  []string
+	nightCheck bool
+}
+
+func runWeatherFetchCase(t *testing.T, tc weatherFetchTestCase) {
+	t.Helper()
+	var reqQuery string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(tc.body)
+	}))
+	defer ts.Close()
+
+	p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
+	if err := p.Init(context.Background(), tc.cfg, tc.opts); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	res, err := p.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	snap := res.(provider.WeatherSnapshot)
+	assertWeatherSnapshotBasics(t, snap, tc)
+	assertWeatherSnapshotDetails(t, snap, reqQuery, tc)
+}
+
+func assertWeatherSnapshotBasics(t *testing.T, snap provider.WeatherSnapshot, tc weatherFetchTestCase) {
+	t.Helper()
+	if tc.wantTemp != 0 && snap.Current.Temperature != tc.wantTemp {
+		t.Errorf("temp = %v, want %v", snap.Current.Temperature, tc.wantTemp)
+	}
+	if tc.wantUnitsT != "" && snap.Current.Units.Temperature != tc.wantUnitsT {
+		t.Errorf("units temp = %q, want %q", snap.Current.Units.Temperature, tc.wantUnitsT)
+	}
+	if tc.wantUnitsW != "" && snap.Current.Units.WindSpeed != tc.wantUnitsW {
+		t.Errorf("units wind = %q, want %q", snap.Current.Units.WindSpeed, tc.wantUnitsW)
+	}
+	if tc.wantIcon != "" && snap.Current.Icon != tc.wantIcon {
+		t.Errorf("icon = %q, want %q", snap.Current.Icon, tc.wantIcon)
+	}
+	if tc.wantCond != "" && snap.Current.ConditionText != tc.wantCond {
+		t.Errorf("cond = %q, want %q", snap.Current.ConditionText, tc.wantCond)
+	}
+	if tc.wantPrecip != 0 && (snap.Current.PrecipProbMax != tc.wantPrecip || snap.TodayPrecipProbMax() != tc.wantPrecip) {
+		t.Errorf("precip = %d, want %d", snap.Current.PrecipProbMax, tc.wantPrecip)
+	}
+}
+
+func assertWeatherSnapshotDetails(t *testing.T, snap provider.WeatherSnapshot, reqQuery string, tc weatherFetchTestCase) {
+	t.Helper()
+	if tc.wantHourly != 0 && len(snap.Hourly) != tc.wantHourly {
+		t.Errorf("hourly len = %d, want %d", len(snap.Hourly), tc.wantHourly)
+	}
+	if tc.wantDaily != 0 && len(snap.Daily) != tc.wantDaily {
+		t.Errorf("daily len = %d, want %d", len(snap.Daily), tc.wantDaily)
+	}
+	if tc.wantFirstH != "" && snap.Hourly[0].Time != tc.wantFirstH {
+		t.Errorf("first hourly = %q, want %q", snap.Hourly[0].Time, tc.wantFirstH)
+	}
+	if tc.wantLoc != "" && snap.Location != tc.wantLoc {
+		t.Errorf("loc = %q, want %q", snap.Location, tc.wantLoc)
+	}
+	for _, q := range tc.wantQuery {
+		if !strings.Contains(reqQuery, q) {
+			t.Errorf("query %q missing %q", reqQuery, q)
+		}
+	}
+	if tc.nightCheck {
+		if snap.Hourly[0].Icon != "weather-clear-night" || snap.Hourly[1].Icon != "weather-night-partly-cloudy" || snap.Hourly[2].Icon != "weather-partly-cloudy" || snap.Hourly[3].Icon != "weather-sunny" || snap.Daily[0].Icon != "weather-sunny" {
+			t.Errorf("night icon mismatch: %+v", snap.Hourly)
+		}
+	}
+}
+
 func TestWeatherProvider_Fetch(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name       string
-		body       []byte
-		cfg        map[string]any
-		opts       provider.InitOptions
-		wantTemp   float64
-		wantUnitsT string
-		wantUnitsW string
-		wantIcon   string
-		wantCond   string
-		wantPrecip int
-		wantHourly int
-		wantDaily  int
-		wantFirstH string
-		wantLoc    string
-		wantQuery  []string
-		nightCheck bool
-	}{
+	tests := []weatherFetchTestCase{
 		{
 			name: "imperial", body: []byte(sampleOpenMeteoJSON()), cfg: wCfg(37.8044, -122.2712, "imperial", "", ""), opts: provider.InitOptions{Timezone: "America/Los_Angeles"},
 			wantTemp: 68.4, wantUnitsT: "°F", wantUnitsW: "mph", wantIcon: "weather-partly-cloudy", wantCond: "Mainly Clear", wantPrecip: 10, wantHourly: 3, wantDaily: 2,
@@ -254,63 +327,7 @@ func TestWeatherProvider_Fetch(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var reqQuery string
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				reqQuery = r.URL.RawQuery
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write(tc.body)
-			}))
-			defer ts.Close()
-
-			p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-			if err := p.Init(context.Background(), tc.cfg, tc.opts); err != nil {
-				t.Fatalf("Init failed: %v", err)
-			}
-			res, err := p.Fetch(context.Background())
-			if err != nil {
-				t.Fatalf("Fetch failed: %v", err)
-			}
-			snap := res.(provider.WeatherSnapshot)
-			if tc.wantTemp != 0 && snap.Current.Temperature != tc.wantTemp {
-				t.Errorf("temp = %v, want %v", snap.Current.Temperature, tc.wantTemp)
-			}
-			if tc.wantUnitsT != "" && snap.Current.Units.Temperature != tc.wantUnitsT {
-				t.Errorf("units temp = %q, want %q", snap.Current.Units.Temperature, tc.wantUnitsT)
-			}
-			if tc.wantUnitsW != "" && snap.Current.Units.WindSpeed != tc.wantUnitsW {
-				t.Errorf("units wind = %q, want %q", snap.Current.Units.WindSpeed, tc.wantUnitsW)
-			}
-			if tc.wantIcon != "" && snap.Current.Icon != tc.wantIcon {
-				t.Errorf("icon = %q, want %q", snap.Current.Icon, tc.wantIcon)
-			}
-			if tc.wantCond != "" && snap.Current.ConditionText != tc.wantCond {
-				t.Errorf("cond = %q, want %q", snap.Current.ConditionText, tc.wantCond)
-			}
-			if tc.wantPrecip != 0 && (snap.Current.PrecipProbMax != tc.wantPrecip || snap.TodayPrecipProbMax() != tc.wantPrecip) {
-				t.Errorf("precip = %d, want %d", snap.Current.PrecipProbMax, tc.wantPrecip)
-			}
-			if tc.wantHourly != 0 && len(snap.Hourly) != tc.wantHourly {
-				t.Errorf("hourly len = %d, want %d", len(snap.Hourly), tc.wantHourly)
-			}
-			if tc.wantDaily != 0 && len(snap.Daily) != tc.wantDaily {
-				t.Errorf("daily len = %d, want %d", len(snap.Daily), tc.wantDaily)
-			}
-			if tc.wantFirstH != "" && snap.Hourly[0].Time != tc.wantFirstH {
-				t.Errorf("first hourly = %q, want %q", snap.Hourly[0].Time, tc.wantFirstH)
-			}
-			if tc.wantLoc != "" && snap.Location != tc.wantLoc {
-				t.Errorf("loc = %q, want %q", snap.Location, tc.wantLoc)
-			}
-			for _, q := range tc.wantQuery {
-				if !strings.Contains(reqQuery, q) {
-					t.Errorf("query %q missing %q", reqQuery, q)
-				}
-			}
-			if tc.nightCheck {
-				if snap.Hourly[0].Icon != "weather-clear-night" || snap.Hourly[1].Icon != "weather-night-partly-cloudy" || snap.Hourly[2].Icon != "weather-partly-cloudy" || snap.Hourly[3].Icon != "weather-sunny" || snap.Daily[0].Icon != "weather-sunny" {
-					t.Errorf("night icon mismatch: %+v", snap.Hourly)
-				}
-			}
+			runWeatherFetchCase(t, tc)
 		})
 	}
 }

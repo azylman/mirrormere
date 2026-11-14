@@ -81,191 +81,199 @@ func TestCalendarProvider_Init_Validations(t *testing.T) {
 func TestCalendarProvider_Fetch_ParsingAndRecurrence(t *testing.T) {
 	t.Parallel()
 
-	t.Run("single and all day", func(t *testing.T) {
-		t.Parallel()
-		ics := icsDoc(
-			"BEGIN:VEVENT\nUID:evt-timed\nDTSTART:20260925T140000Z\nDTEND:20260925T150000Z\nSUMMARY:Soccer Practice\nLOCATION:Field 2\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:evt-allday\nDTSTART;VALUE=DATE:20260926\nDTEND;VALUE=DATE:20260927\nSUMMARY:Trash & Recycling\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:evt-multiday\nDTSTART;VALUE=DATE:20260927\nDTEND;VALUE=DATE:20260930\nSUMMARY:Camping Trip\nLOCATION:Yosemite\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:evt-past\nDTSTART:20260501T100000Z\nDTEND:20260501T110000Z\nSUMMARY:Old Meeting\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:evt-future\nDTSTART:20270501T100000Z\nDTEND:20270501T110000Z\nSUMMARY:Far Future Meeting\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:evt-dur\nDTSTART:20260925T160000Z\nDURATION:PT1H30M\nSUMMARY:Duration Event\nEND:VEVENT",
-		)
-		ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-		snap, err := fetchTestCalendar(t, ics, ref, nil)
-		if err != nil || len(snap.Events) != 4 || snap.SyncStatus != "ok" {
-			t.Fatalf("fetch failed: err=%v len=%d", err, len(snap.Events))
-		}
-		if snap.Events[0].Title != "Soccer Practice" || snap.Events[0].Location != "Field 2" || snap.Events[0].AllDay {
-			t.Errorf("ev[0] mismatch: %+v", snap.Events[0])
-		}
-		if snap.Events[1].Title != "Duration Event" {
-			t.Errorf("ev[1] mismatch: %+v", snap.Events[1])
-		}
-		if snap.Events[2].Start != "2026-09-26" || snap.Events[2].End != "2026-09-26" || !snap.Events[2].AllDay {
-			t.Errorf("ev[2] mismatch: %+v", snap.Events[2])
-		}
-		if snap.Events[3].Start != "2026-09-27" || snap.Events[3].End != "2026-09-29" {
-			t.Errorf("ev[3] mismatch: %+v", snap.Events[3])
-		}
-	})
+	t.Run("single and all day", runCalendarSingleAndAllDaySubtest)
+	t.Run("recipe image extraction for single and recurring events", runCalendarRecipeImageExtractionSubtest)
+	t.Run("recurrence exdates and overrides", runCalendarRecurrenceExdatesSubtest)
+	t.Run("timezones and durations", runCalendarTimezonesAndDurationsSubtest)
+	t.Run("recurrence edge cases", runCalendarRecurrenceEdgeCasesSubtest)
+	t.Run("high frequency recurrence ignored", runCalendarHighFrequencyRecurrenceSubtest)
+	t.Run("strip recurring", runCalendarStripRecurringSubtest)
+}
 
-	t.Run("recipe image extraction for single and recurring events", func(t *testing.T) {
-		t.Parallel()
-		ics := icsDoc(
-			"BEGIN:VEVENT\nUID:img-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie Image Prop\nIMAGE:/hearth-api/mealie/image/recipe-1\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:attach-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie Attach Prop\nATTACH:https://mealie.local/api/media/recipes/abc/images/min-original.webp\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:xmealie-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie X-Prop\nX-MEALIE-IMAGE:data:image/webp;base64,AAAA\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:url-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie URL Prop\nURL:/api/media/recipes/def/images/original.webp\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:loc-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie Location Fallback\nURL:https://example.com/not-an-image\nLOCATION:/hearth-api/mealie/image/recipe-loc\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:recur-img\nDTSTART;VALUE=DATE:20260926\nDTEND;VALUE=DATE:20260927\nRRULE:FREQ=DAILY;COUNT=2\nSUMMARY:Recurring Taco Night\nX-MEALIE-IMAGE:/hearth-api/mealie/image/tacos\nEND:VEVENT",
-		)
-		ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-		snap, err := fetchTestCalendar(t, ics, ref, nil)
-		if err != nil || len(snap.Events) != 7 {
-			t.Fatalf("fetch failed: err=%v len=%d events=%+v", err, len(snap.Events), snap.Events)
-		}
-		wantImages := map[string]string{
-			"Mealie Image Prop":        "/hearth-api/mealie/image/recipe-1",
-			"Mealie Attach Prop":       "https://mealie.local/api/media/recipes/abc/images/min-original.webp",
-			"Mealie X-Prop":            "data:image/webp;base64,AAAA",
-			"Mealie URL Prop":          "/api/media/recipes/def/images/original.webp",
-			"Mealie Location Fallback": "/hearth-api/mealie/image/recipe-loc",
-			"Recurring Taco Night":     "/hearth-api/mealie/image/tacos",
-		}
-		recurringCount := 0
-		for _, ev := range snap.Events {
-			wantURL, ok := wantImages[ev.Title]
-			if !ok {
-				t.Fatalf("unexpected event title %q", ev.Title)
-			}
-			if ev.ImageURL != wantURL {
-				t.Errorf("event %q ImageURL = %q, want %q", ev.Title, ev.ImageURL, wantURL)
-			}
-			if ev.Title == "Recurring Taco Night" {
-				recurringCount++
-			}
-		}
-		if recurringCount != 2 {
-			t.Errorf("expected 2 recurring events with ImageURL, got %d", recurringCount)
-		}
-	})
+func runCalendarSingleAndAllDaySubtest(t *testing.T) {
+	t.Parallel()
+	ics := icsDoc(
+		"BEGIN:VEVENT\nUID:evt-timed\nDTSTART:20260925T140000Z\nDTEND:20260925T150000Z\nSUMMARY:Soccer Practice\nLOCATION:Field 2\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:evt-allday\nDTSTART;VALUE=DATE:20260926\nDTEND;VALUE=DATE:20260927\nSUMMARY:Trash & Recycling\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:evt-multiday\nDTSTART;VALUE=DATE:20260927\nDTEND;VALUE=DATE:20260930\nSUMMARY:Camping Trip\nLOCATION:Yosemite\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:evt-past\nDTSTART:20260501T100000Z\nDTEND:20260501T110000Z\nSUMMARY:Old Meeting\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:evt-future\nDTSTART:20270501T100000Z\nDTEND:20270501T110000Z\nSUMMARY:Far Future Meeting\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:evt-dur\nDTSTART:20260925T160000Z\nDURATION:PT1H30M\nSUMMARY:Duration Event\nEND:VEVENT",
+	)
+	ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	snap, err := fetchTestCalendar(t, ics, ref, nil)
+	if err != nil || len(snap.Events) != 4 || snap.SyncStatus != "ok" {
+		t.Fatalf("fetch failed: err=%v len=%d", err, len(snap.Events))
+	}
+	if snap.Events[0].Title != "Soccer Practice" || snap.Events[0].Location != "Field 2" || snap.Events[0].AllDay {
+		t.Errorf("ev[0] mismatch: %+v", snap.Events[0])
+	}
+	if snap.Events[1].Title != "Duration Event" {
+		t.Errorf("ev[1] mismatch: %+v", snap.Events[1])
+	}
+	if snap.Events[2].Start != "2026-09-26" || snap.Events[2].End != "2026-09-26" || !snap.Events[2].AllDay {
+		t.Errorf("ev[2] mismatch: %+v", snap.Events[2])
+	}
+	if snap.Events[3].Start != "2026-09-27" || snap.Events[3].End != "2026-09-29" {
+		t.Errorf("ev[3] mismatch: %+v", snap.Events[3])
+	}
+}
 
-	t.Run("recurrence exdates and overrides", func(t *testing.T) {
-		t.Parallel()
-		ics := icsDoc(
-			"BEGIN:VEVENT\nUID:daily\nDTSTART:20260921T090000Z\nDTEND:20260921T093000Z\nRRULE:FREQ=DAILY;COUNT=5\nEXDATE:20260923T090000Z\nSUMMARY:Team Standup\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:daily\nRECURRENCE-ID:20260924T090000Z\nDTSTART:20260924T100000Z\nDTEND:20260924T104500Z\nSUMMARY:Team Standup (Delayed)\nLOCATION:Zoom Room A\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:tz-daily\nDTSTART;TZID=America/Los_Angeles:20260921T090000\nDTEND;TZID=America/Los_Angeles:20260921T093000\nRRULE:FREQ=DAILY;COUNT=4\nEXDATE;TZID=America/Los_Angeles:20260922T090000,,20260923,20260923T090000\nSUMMARY:LA Sync\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:tz-daily\nRECURRENCE-ID;TZID=America/Los_Angeles:20260924T090000\nDTSTART;TZID=America/Los_Angeles:20260924T110000\nDTEND;TZID=America/Los_Angeles:20260924T113000\nSUMMARY:LA Sync (Moved)\nEND:VEVENT",
-		)
-		ref := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
-		snap, err := fetchTestCalendar(t, ics, ref, nil)
-		if err != nil || len(snap.Events) != 6 {
-			t.Fatalf("fetch failed: err=%v len=%d events=%+v", err, len(snap.Events), snap.Events)
+func runCalendarRecipeImageExtractionSubtest(t *testing.T) {
+	t.Parallel()
+	ics := icsDoc(
+		"BEGIN:VEVENT\nUID:img-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie Image Prop\nIMAGE:/hearth-api/mealie/image/recipe-1\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:attach-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie Attach Prop\nATTACH:https://mealie.local/api/media/recipes/abc/images/min-original.webp\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:xmealie-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie X-Prop\nX-MEALIE-IMAGE:data:image/webp;base64,AAAA\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:url-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie URL Prop\nURL:/api/media/recipes/def/images/original.webp\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:loc-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie Location Fallback\nURL:https://example.com/not-an-image\nLOCATION:/hearth-api/mealie/image/recipe-loc\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:recur-img\nDTSTART;VALUE=DATE:20260926\nDTEND;VALUE=DATE:20260927\nRRULE:FREQ=DAILY;COUNT=2\nSUMMARY:Recurring Taco Night\nX-MEALIE-IMAGE:/hearth-api/mealie/image/tacos\nEND:VEVENT",
+	)
+	ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	snap, err := fetchTestCalendar(t, ics, ref, nil)
+	if err != nil || len(snap.Events) != 7 {
+		t.Fatalf("fetch failed: err=%v len=%d events=%+v", err, len(snap.Events), snap.Events)
+	}
+	wantImages := map[string]string{
+		"Mealie Image Prop":        "/hearth-api/mealie/image/recipe-1",
+		"Mealie Attach Prop":       "https://mealie.local/api/media/recipes/abc/images/min-original.webp",
+		"Mealie X-Prop":            "data:image/webp;base64,AAAA",
+		"Mealie URL Prop":          "/api/media/recipes/def/images/original.webp",
+		"Mealie Location Fallback": "/hearth-api/mealie/image/recipe-loc",
+		"Recurring Taco Night":     "/hearth-api/mealie/image/tacos",
+	}
+	recurringCount := 0
+	for _, ev := range snap.Events {
+		wantURL, ok := wantImages[ev.Title]
+		if !ok {
+			t.Fatalf("unexpected event title %q", ev.Title)
 		}
-		for _, ev := range snap.Events {
-			if strings.Contains(ev.Start, "2026-09-23") {
-				t.Fatalf("found excluded exdate event: %+v", ev)
-			}
-			if ev.Title == "LA Sync" && strings.Contains(ev.Start, "2026-09-22") {
-				t.Fatalf("found excluded tz exdate event: %+v", ev)
-			}
-			if strings.Contains(ev.Start, "2026-09-24") && ev.Title == "Team Standup" {
-				t.Errorf("unoverridden UTC event remained: %+v", ev)
-			}
-			if strings.Contains(ev.Start, "2026-09-24") && ev.Title == "LA Sync" {
-				t.Errorf("unoverridden TZID event remained: %+v", ev)
-			}
+		if ev.ImageURL != wantURL {
+			t.Errorf("event %q ImageURL = %q, want %q", ev.Title, ev.ImageURL, wantURL)
 		}
-	})
+		if ev.Title == "Recurring Taco Night" {
+			recurringCount++
+		}
+	}
+	if recurringCount != 2 {
+		t.Errorf("expected 2 recurring events with ImageURL, got %d", recurringCount)
+	}
+}
 
-	t.Run("timezones and durations", func(t *testing.T) {
-		t.Parallel()
-		ics := icsDoc(
-			"BEGIN:VEVENT\nUID:tz1\nDTSTART;TZID=America/New_York:20260925T090000\nDURATION:P1D\nSUMMARY:NY Full Day\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:tz2\nDTSTART:20260925T140000Z\nDURATION:PT45S\nSUMMARY:Short\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:inv\nDTSTART:INVALID_DATE\nSUMMARY:Inv\nEND:VEVENT",
-			"BEGIN:VEVENT\nSUMMARY:No DTSTART\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:long-uid-exceeding-thirty-two-chars-with-special-chars-@!#$%\nDTSTART:20260925T140000Z\nSUMMARY:Same Time A\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:same-b\nDTSTART:20260925T140000Z\nSUMMARY:Same Time B\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:\nDTSTART:20260925T140000Z\nSUMMARY:Empty UID\nEND:VEVENT",
-		)
-		ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-		snap, err := fetchTestCalendar(t, ics, ref, nil)
-		if err != nil || len(snap.Events) < 3 {
-			t.Fatalf("fetch failed: err=%v len=%d", err, len(snap.Events))
+func runCalendarRecurrenceExdatesSubtest(t *testing.T) {
+	t.Parallel()
+	ics := icsDoc(
+		"BEGIN:VEVENT\nUID:daily\nDTSTART:20260921T090000Z\nDTEND:20260921T093000Z\nRRULE:FREQ=DAILY;COUNT=5\nEXDATE:20260923T090000Z\nSUMMARY:Team Standup\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:daily\nRECURRENCE-ID:20260924T090000Z\nDTSTART:20260924T100000Z\nDTEND:20260924T104500Z\nSUMMARY:Team Standup (Delayed)\nLOCATION:Zoom Room A\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:tz-daily\nDTSTART;TZID=America/Los_Angeles:20260921T090000\nDTEND;TZID=America/Los_Angeles:20260921T093000\nRRULE:FREQ=DAILY;COUNT=4\nEXDATE;TZID=America/Los_Angeles:20260922T090000,,20260923,20260923T090000\nSUMMARY:LA Sync\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:tz-daily\nRECURRENCE-ID;TZID=America/Los_Angeles:20260924T090000\nDTSTART;TZID=America/Los_Angeles:20260924T110000\nDTEND;TZID=America/Los_Angeles:20260924T113000\nSUMMARY:LA Sync (Moved)\nEND:VEVENT",
+	)
+	ref := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	snap, err := fetchTestCalendar(t, ics, ref, nil)
+	if err != nil || len(snap.Events) != 6 {
+		t.Fatalf("fetch failed: err=%v len=%d events=%+v", err, len(snap.Events), snap.Events)
+	}
+	for _, ev := range snap.Events {
+		if strings.Contains(ev.Start, "2026-09-23") {
+			t.Fatalf("found excluded exdate event: %+v", ev)
 		}
-	})
-
-	t.Run("recurrence edge cases", func(t *testing.T) {
-		t.Parallel()
-		ics := icsDoc(
-			"BEGIN:VEVENT\nUID:bad-rrule\nDTSTART:20260925T100000Z\nRRULE:INVALID_RRULE\nSUMMARY:Bad\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:recur-dur\nDTSTART:20260925T110000Z\nDURATION:PT2H\nRRULE:FREQ=DAILY;COUNT=2\nSUMMARY:Recurring with Duration\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:recur-bad-start\nDTSTART:INVALID\nRRULE:FREQ=DAILY;COUNT=2\nSUMMARY:Bad Start\nEND:VEVENT",
-		)
-		ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-		snap, err := fetchTestCalendar(t, ics, ref, nil)
-		if err != nil || len(snap.Events) != 2 {
-			t.Fatalf("expected 2 recurring occurrences, got %d (err: %v)", len(snap.Events), err)
+		if ev.Title == "LA Sync" && strings.Contains(ev.Start, "2026-09-22") {
+			t.Fatalf("found excluded tz exdate event: %+v", ev)
 		}
-	})
-
-	t.Run("high frequency recurrence ignored", func(t *testing.T) {
-		t.Parallel()
-		ics := icsDoc(
-			"BEGIN:VEVENT\nUID:sec\nDTSTART:20260925T100000Z\nRRULE:FREQ=SECONDLY;INTERVAL=1\nSUMMARY:Sec\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:min\nDTSTART:20260925T100000Z\nRRULE:FREQ=MINUTELY;INTERVAL=5\nSUMMARY:Min\nEND:VEVENT",
-		)
-		ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-		snap, err := fetchTestCalendar(t, ics, ref, nil)
-		if err != nil || len(snap.Events) != 0 {
-			t.Fatalf("expected 0 events, got %d (err: %v)", len(snap.Events), err)
+		if strings.Contains(ev.Start, "2026-09-24") && ev.Title == "Team Standup" {
+			t.Errorf("unoverridden UTC event remained: %+v", ev)
 		}
-	})
-
-	t.Run("strip recurring", func(t *testing.T) {
-		t.Parallel()
-		ref := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
-		ics := icsDoc(
-			"BEGIN:VEVENT\nUID:dentist\nDTSTART:20260921T140000Z\nDTEND:20260921T150000Z\nSUMMARY:Dentist\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:standup\nDTSTART:20260921T090000Z\nDTEND:20260921T093000Z\nRRULE:FREQ=DAILY;COUNT=3\nSUMMARY:Standup\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:standup\nRECURRENCE-ID:20260922T090000Z\nDTSTART:20260922T100000Z\nDTEND:20260922T103000Z\nSUMMARY:Standup (Rescheduled)\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:rdate\nDTSTART:20260921T110000Z\nDTEND:20260921T120000Z\nRDATE:20260923T110000Z\nSUMMARY:Ad-hoc\nEND:VEVENT",
-			"BEGIN:VEVENT\nUID:dinner\nDTSTART:20260922T180000Z\nDTEND:20260922T200000Z\nSUMMARY:Dinner\nEND:VEVENT",
-		)
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/calendar")
-			_, _ = w.Write([]byte(ics))
-		}))
-		t.Cleanup(srv.Close)
-
-		for _, tc := range []struct {
-			name      string
-			cfg       map[string]any
-			wantCount int
-		}{
-			{"default keeps recurring", map[string]any{"calendars": []any{map[string]any{"name": "A", "url": srv.URL}}}, 6},
-			{"root strip_recurring", map[string]any{"strip_recurring": true, "calendars": []any{map[string]any{"name": "A", "url": srv.URL}}}, 2},
-			{"root exclude_recurring alias", map[string]any{"exclude_recurring": true, "calendars": []any{map[string]any{"name": "A", "url": srv.URL}}}, 2},
-			{"per-source override", map[string]any{"strip_recurring": true, "calendars": []any{map[string]any{"name": "S", "url": srv.URL, "strip_recurring": true}, map[string]any{"name": "I", "url": srv.URL, "strip_recurring": false}}}, 8},
-			{"per-source exclude_recurring alias", map[string]any{"strip_recurring": false, "calendars": []any{map[string]any{"name": "S", "url": srv.URL, "exclude_recurring": true}}}, 2},
-		} {
-			p := provider.NewCalendarProviderWithClient(srv.Client(), func() time.Time { return ref })
-			if err := p.Init(context.Background(), tc.cfg, provider.InitOptions{}); err != nil {
-				t.Fatalf("%s init failed: %v", tc.name, err)
-			}
-			res, err := p.Fetch(context.Background())
-			if err != nil {
-				t.Fatalf("%s fetch failed: %v", tc.name, err)
-			}
-			snap := res.(provider.CalendarSnapshot)
-			if len(snap.Events) != tc.wantCount {
-				t.Errorf("%s: got %d events, want %d", tc.name, len(snap.Events), tc.wantCount)
-			}
+		if strings.Contains(ev.Start, "2026-09-24") && ev.Title == "LA Sync" {
+			t.Errorf("unoverridden TZID event remained: %+v", ev)
 		}
-	})
+	}
+}
+
+func runCalendarTimezonesAndDurationsSubtest(t *testing.T) {
+	t.Parallel()
+	ics := icsDoc(
+		"BEGIN:VEVENT\nUID:tz1\nDTSTART;TZID=America/New_York:20260925T090000\nDURATION:P1D\nSUMMARY:NY Full Day\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:tz2\nDTSTART:20260925T140000Z\nDURATION:PT45S\nSUMMARY:Short\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:inv\nDTSTART:INVALID_DATE\nSUMMARY:Inv\nEND:VEVENT",
+		"BEGIN:VEVENT\nSUMMARY:No DTSTART\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:long-uid-exceeding-thirty-two-chars-with-special-chars-@!#$%\nDTSTART:20260925T140000Z\nSUMMARY:Same Time A\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:same-b\nDTSTART:20260925T140000Z\nSUMMARY:Same Time B\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:\nDTSTART:20260925T140000Z\nSUMMARY:Empty UID\nEND:VEVENT",
+	)
+	ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	snap, err := fetchTestCalendar(t, ics, ref, nil)
+	if err != nil || len(snap.Events) < 3 {
+		t.Fatalf("fetch failed: err=%v len=%d", err, len(snap.Events))
+	}
+}
+
+func runCalendarRecurrenceEdgeCasesSubtest(t *testing.T) {
+	t.Parallel()
+	ics := icsDoc(
+		"BEGIN:VEVENT\nUID:bad-rrule\nDTSTART:20260925T100000Z\nRRULE:INVALID_RRULE\nSUMMARY:Bad\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:recur-dur\nDTSTART:20260925T110000Z\nDURATION:PT2H\nRRULE:FREQ=DAILY;COUNT=2\nSUMMARY:Recurring with Duration\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:recur-bad-start\nDTSTART:INVALID\nRRULE:FREQ=DAILY;COUNT=2\nSUMMARY:Bad Start\nEND:VEVENT",
+	)
+	ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	snap, err := fetchTestCalendar(t, ics, ref, nil)
+	if err != nil || len(snap.Events) != 2 {
+		t.Fatalf("expected 2 recurring occurrences, got %d (err: %v)", len(snap.Events), err)
+	}
+}
+
+func runCalendarHighFrequencyRecurrenceSubtest(t *testing.T) {
+	t.Parallel()
+	ics := icsDoc(
+		"BEGIN:VEVENT\nUID:sec\nDTSTART:20260925T100000Z\nRRULE:FREQ=SECONDLY;INTERVAL=1\nSUMMARY:Sec\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:min\nDTSTART:20260925T100000Z\nRRULE:FREQ=MINUTELY;INTERVAL=5\nSUMMARY:Min\nEND:VEVENT",
+	)
+	ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	snap, err := fetchTestCalendar(t, ics, ref, nil)
+	if err != nil || len(snap.Events) != 0 {
+		t.Fatalf("expected 0 events, got %d (err: %v)", len(snap.Events), err)
+	}
+}
+
+func runCalendarStripRecurringSubtest(t *testing.T) {
+	t.Parallel()
+	ref := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	ics := icsDoc(
+		"BEGIN:VEVENT\nUID:dentist\nDTSTART:20260921T140000Z\nDTEND:20260921T150000Z\nSUMMARY:Dentist\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:standup\nDTSTART:20260921T090000Z\nDTEND:20260921T093000Z\nRRULE:FREQ=DAILY;COUNT=3\nSUMMARY:Standup\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:standup\nRECURRENCE-ID:20260922T090000Z\nDTSTART:20260922T100000Z\nDTEND:20260922T103000Z\nSUMMARY:Standup (Rescheduled)\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:rdate\nDTSTART:20260921T110000Z\nDTEND:20260921T120000Z\nRDATE:20260923T110000Z\nSUMMARY:Ad-hoc\nEND:VEVENT",
+		"BEGIN:VEVENT\nUID:dinner\nDTSTART:20260922T180000Z\nDTEND:20260922T200000Z\nSUMMARY:Dinner\nEND:VEVENT",
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/calendar")
+		_, _ = w.Write([]byte(ics))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, tc := range []struct {
+		name      string
+		cfg       map[string]any
+		wantCount int
+	}{
+		{"default keeps recurring", map[string]any{"calendars": []any{map[string]any{"name": "A", "url": srv.URL}}}, 6},
+		{"root strip_recurring", map[string]any{"strip_recurring": true, "calendars": []any{map[string]any{"name": "A", "url": srv.URL}}}, 2},
+		{"root exclude_recurring alias", map[string]any{"exclude_recurring": true, "calendars": []any{map[string]any{"name": "A", "url": srv.URL}}}, 2},
+		{"per-source override", map[string]any{"strip_recurring": true, "calendars": []any{map[string]any{"name": "S", "url": srv.URL, "strip_recurring": true}, map[string]any{"name": "I", "url": srv.URL, "strip_recurring": false}}}, 8},
+		{"per-source exclude_recurring alias", map[string]any{"strip_recurring": false, "calendars": []any{map[string]any{"name": "S", "url": srv.URL, "exclude_recurring": true}}}, 2},
+	} {
+		p := provider.NewCalendarProviderWithClient(srv.Client(), func() time.Time { return ref })
+		if err := p.Init(context.Background(), tc.cfg, provider.InitOptions{}); err != nil {
+			t.Fatalf("%s init failed: %v", tc.name, err)
+		}
+		res, err := p.Fetch(context.Background())
+		if err != nil {
+			t.Fatalf("%s fetch failed: %v", tc.name, err)
+		}
+		snap := res.(provider.CalendarSnapshot)
+		if len(snap.Events) != tc.wantCount {
+			t.Errorf("%s: got %d events, want %d", tc.name, len(snap.Events), tc.wantCount)
+		}
+	}
 }
 
 func TestCalendarProvider_Fetch_MultiFeedAndErrors(t *testing.T) {

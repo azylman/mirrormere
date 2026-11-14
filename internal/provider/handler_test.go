@@ -64,21 +64,65 @@ func TestNewPushHandler(t *testing.T) {
 	}
 }
 
+type pushHandlerTestCase struct {
+	name          string
+	method        string
+	id            string
+	body          io.Reader
+	pusher        provider.WidgetPusher
+	wantStatus    int
+	wantAllowHdr  string
+	wantOrigin    string
+	wantSubstr    string
+	wantUpdatedAt string
+}
+
+func assertPushHandlerCase(t *testing.T, tc pushHandlerTestCase, pathSuffix string, callHandler func(*provider.PushHandler, http.ResponseWriter, *http.Request, string)) {
+	t.Helper()
+	h := provider.NewPushHandler(tc.pusher, nil)
+	b := tc.body
+	if b == nil {
+		b = http.NoBody
+	}
+	req := httptest.NewRequest(tc.method, "/api/widgets/"+tc.id+pathSuffix, b)
+	rec := httptest.NewRecorder()
+	callHandler(h, rec, req, tc.id)
+
+	if rec.Code != tc.wantStatus {
+		t.Fatalf("code=%d, want %d: %s", rec.Code, tc.wantStatus, rec.Body.String())
+	}
+	assertPushHeaders(t, rec, tc)
+	if tc.wantSubstr != "" && !strings.Contains(rec.Body.String(), tc.wantSubstr) {
+		t.Errorf("body %q does not contain %q", rec.Body.String(), tc.wantSubstr)
+	}
+	if tc.wantUpdatedAt != "" {
+		var res map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || res["updated_at"] != tc.wantUpdatedAt || res["status"] != "ok" || res["widget_id"] != tc.id {
+			t.Fatalf("unexpected body: %v", res)
+		}
+	}
+}
+
+func assertPushHeaders(t *testing.T, rec *httptest.ResponseRecorder, tc pushHandlerTestCase) {
+	t.Helper()
+	if tc.wantAllowHdr != "" {
+		hdr := rec.Header().Get("Allow")
+		if tc.method == "OPTIONS" {
+			hdr = rec.Header().Get("Access-Control-Allow-Methods")
+		}
+		if hdr != tc.wantAllowHdr {
+			t.Errorf("allow=%q, want %q", hdr, tc.wantAllowHdr)
+		}
+	}
+	if tc.wantOrigin != "" && rec.Header().Get("Access-Control-Allow-Origin") != tc.wantOrigin {
+		t.Errorf("origin=%q, want %q", rec.Header().Get("Access-Control-Allow-Origin"), tc.wantOrigin)
+	}
+}
+
 func TestPushHandler_PostWidgetPush(t *testing.T) {
 	t.Parallel()
 	pDefault := mkPusher("", nil)
-	tests := []struct {
-		name          string
-		method        string
-		id            string
-		body          io.Reader
-		pusher        provider.WidgetPusher
-		wantStatus    int
-		wantAllowHdr  string
-		wantOrigin    string
-		wantSubstr    string
-		wantUpdatedAt string
-	}{
+	tests := []pushHandlerTestCase{
 		{"options_preflight", "OPTIONS", "tile-1", nil, pDefault, 204, "POST, OPTIONS", "*", "", ""},
 		{"method_not_allowed", "GET", "tile-1", nil, pDefault, 405, "POST, OPTIONS", "", "method not allowed", ""},
 		{"nil_pusher", "POST", "tile-1", strings.NewReader(`{}`), nil, 500, "", "", "pusher not configured", ""},
@@ -96,39 +140,7 @@ func TestPushHandler_PostWidgetPush(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := provider.NewPushHandler(tc.pusher, nil)
-			b := tc.body
-			if b == nil {
-				b = http.NoBody
-			}
-			req := httptest.NewRequest(tc.method, "/api/widgets/"+tc.id+"/push", b)
-			rec := httptest.NewRecorder()
-			h.PostWidgetPush(rec, req, tc.id)
-
-			if rec.Code != tc.wantStatus {
-				t.Fatalf("code=%d, want %d: %s", rec.Code, tc.wantStatus, rec.Body.String())
-			}
-			if tc.wantAllowHdr != "" {
-				hdr := rec.Header().Get("Allow")
-				if tc.method == "OPTIONS" {
-					hdr = rec.Header().Get("Access-Control-Allow-Methods")
-				}
-				if hdr != tc.wantAllowHdr {
-					t.Errorf("allow=%q, want %q", hdr, tc.wantAllowHdr)
-				}
-			}
-			if tc.wantOrigin != "" && rec.Header().Get("Access-Control-Allow-Origin") != tc.wantOrigin {
-				t.Errorf("origin=%q, want %q", rec.Header().Get("Access-Control-Allow-Origin"), tc.wantOrigin)
-			}
-			if tc.wantSubstr != "" && !strings.Contains(rec.Body.String(), tc.wantSubstr) {
-				t.Errorf("body %q does not contain %q", rec.Body.String(), tc.wantSubstr)
-			}
-			if tc.wantUpdatedAt != "" {
-				var res map[string]any
-				if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || res["updated_at"] != tc.wantUpdatedAt || res["status"] != "ok" || res["widget_id"] != tc.id {
-					t.Fatalf("unexpected body: %v", res)
-				}
-			}
+			assertPushHandlerCase(t, tc, "/push", (*provider.PushHandler).PostWidgetPush)
 		})
 	}
 }
@@ -137,18 +149,7 @@ func TestPushHandler_PostWidgetPhotos(t *testing.T) {
 	t.Parallel()
 	pDefault := mkPhotoPusher("", nil)
 	const validJSON = `{"photos":["https://lh3.googleusercontent.com/pw/TEST"],"album_name":"Vacation"}`
-	tests := []struct {
-		name          string
-		method        string
-		id            string
-		body          io.Reader
-		pusher        provider.WidgetPusher
-		wantStatus    int
-		wantAllowHdr  string
-		wantOrigin    string
-		wantSubstr    string
-		wantUpdatedAt string
-	}{
+	tests := []pushHandlerTestCase{
 		{"options_preflight", "OPTIONS", "tile-1", nil, pDefault, 204, "POST, OPTIONS", "*", "", ""},
 		{"method_not_allowed", "GET", "tile-1", nil, pDefault, 405, "POST, OPTIONS", "", "method not allowed", ""},
 		{"nil_pusher", "POST", "tile-1", strings.NewReader(validJSON), nil, 500, "", "", "pusher not configured", ""},
@@ -165,39 +166,7 @@ func TestPushHandler_PostWidgetPhotos(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := provider.NewPushHandler(tc.pusher, nil)
-			b := tc.body
-			if b == nil {
-				b = http.NoBody
-			}
-			req := httptest.NewRequest(tc.method, "/api/widgets/"+tc.id+"/photos", b)
-			rec := httptest.NewRecorder()
-			h.PostWidgetPhotos(rec, req, tc.id)
-
-			if rec.Code != tc.wantStatus {
-				t.Fatalf("code=%d, want %d: %s", rec.Code, tc.wantStatus, rec.Body.String())
-			}
-			if tc.wantAllowHdr != "" {
-				hdr := rec.Header().Get("Allow")
-				if tc.method == "OPTIONS" {
-					hdr = rec.Header().Get("Access-Control-Allow-Methods")
-				}
-				if hdr != tc.wantAllowHdr {
-					t.Errorf("allow=%q, want %q", hdr, tc.wantAllowHdr)
-				}
-			}
-			if tc.wantOrigin != "" && rec.Header().Get("Access-Control-Allow-Origin") != tc.wantOrigin {
-				t.Errorf("origin=%q, want %q", rec.Header().Get("Access-Control-Allow-Origin"), tc.wantOrigin)
-			}
-			if tc.wantSubstr != "" && !strings.Contains(rec.Body.String(), tc.wantSubstr) {
-				t.Errorf("body %q does not contain %q", rec.Body.String(), tc.wantSubstr)
-			}
-			if tc.wantUpdatedAt != "" {
-				var res map[string]any
-				if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || res["updated_at"] != tc.wantUpdatedAt || res["status"] != "ok" || res["widget_id"] != tc.id {
-					t.Fatalf("unexpected body: %v", res)
-				}
-			}
+			assertPushHandlerCase(t, tc, "/photos", (*provider.PushHandler).PostWidgetPhotos)
 		})
 	}
 }
