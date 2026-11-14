@@ -1,19 +1,3 @@
-agent = "claude-code"
-review_agent = "claude-code"
-model = "sonnet"
-review_reasoning = "thorough"
-default_branch = "main"
-
-exclude_patterns = [
-  "*.sum",
-  "*.lock",
-  "package-lock.json",
-  "pnpm-lock.yaml",
-  "web/static/ui/**",
-  "**/migrations/*.sql",
-  "**/__fixtures__/*.json"
-]
-
 review_guidelines = """
 Repository Scope: azylman/mirrormere (smart display kiosk UI, frontend dashboard widgets, and display/audio hardware integration).
 Repo-Specific Invariants (appended to global Aerial cluster guidelines in ~/.roborev/config.toml):
@@ -21,10 +5,3 @@ Repo-Specific Invariants (appended to global Aerial cluster guidelines in ~/.rob
 2. Frontend & Hardware Resource Hygiene: Ensure WebSocket/SSE streams, WebRTC/audio pipelines, timers, and DOM event listeners are cleanly disposed on unmount/disconnect, and maintain touch/e-ink display responsiveness.
 3. Generated UI Bundles: web/static/ui/** is git-ignored Vite build output compiled during the multi-stage Docker build (ui-builder stage) and excluded from the review diff via exclude_patterns; never read or diff files under web/static/ui/, and never flag missing or unregenerated web/static/ui/ bundle updates when web/ui/ files change.
 """
-
-[ci]
-agents = ["claude-code"]
-review_types = ["default", "test-value"]
-reasoning = "thorough"
-min_severity = "medium"
-upsert_comments = true
