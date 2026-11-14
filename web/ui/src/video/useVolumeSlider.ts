@@ -111,7 +111,8 @@ export function useVolumeSlider({
     }
 
     const finalVal = val ?? localVolume;
-    if (!Number.isNaN(finalVal) && finalVal !== lastNetworkVolumeRef.current) {
+    setLocalVolume(finalVal);
+    if (finalVal !== lastNetworkVolumeRef.current) {
       void postAudioVolume({ volume: finalVal }, customFetch);
       lastNetworkVolumeRef.current = finalVal;
     }

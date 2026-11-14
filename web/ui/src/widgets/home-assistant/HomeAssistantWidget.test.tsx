@@ -673,7 +673,7 @@ describe('HomeAssistantWidget', () => {
 
     const { container } = render(<HomeAssistantWidget id="ha-custom-cards" type="home-assistant" />);
     const grid = container.querySelector('.ha-card-grid') as HTMLElement;
-    expect(grid?.style.gridTemplateColumns).toContain('repeat(3, minmax(0, 1fr))');
+    expect(grid?.style.gridTemplateColumns).toMatch(/repeat\(3,\s*minmax\(0(px)?, 1fr\)\)/);
     expect(container.querySelector('.ha-card-wrapper')).not.toBeNull();
     expect(container.querySelector('.ha-card-unknown')?.textContent).toBe('Unsupported');
   });
