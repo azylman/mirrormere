@@ -1,5 +1,5 @@
 aiohttp>=3.14.5
-androidtvremote2>=0.3.2
+androidtvremote2>=0.3.3
 bluez-peripheral>=0.1.7
 cryptography>=50.0.2
 evdev>=2.0.0
