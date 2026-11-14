@@ -791,7 +791,7 @@ jobs:
             fi
           fi
           roborev ci review \
-            --agent gemini \
+            --agent claude-code \
             --min-severity medium \
             --reasoning thorough | tee /tmp/roborev-review.md
           cat /tmp/roborev-review.md >> "$GITHUB_STEP_SUMMARY"
