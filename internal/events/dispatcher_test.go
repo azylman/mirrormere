@@ -29,6 +29,55 @@ func (m *mockProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 	return m.err
 }
 
+type dispatchReloadCase struct {
+	name       string
+	snap       *config.Snapshot
+	diff       *config.ConfigDiff
+	coord      bool
+	provCoord  bool
+	provErr    bool
+	wantEvents []string
+	wantSub    string
+}
+
+func setupHubCoordinators(hub *Hub, tc dispatchReloadCase) (*mockCoordinator, *mockProviderCoordinator) {
+	var mockRC *mockCoordinator
+	if tc.coord {
+		mockRC = &mockCoordinator{}
+		hub.SetRotationCoordinator(mockRC)
+	}
+	var mockPC *mockProviderCoordinator
+	if tc.provCoord {
+		var err error
+		if tc.provErr {
+			err = errors.New("reconcile err")
+		}
+		mockPC = &mockProviderCoordinator{err: err}
+		hub.SetProviderCoordinator(mockPC)
+	}
+	return mockRC, mockPC
+}
+
+func verifyHubDispatchEvents(t *testing.T, ch <-chan *Event, wantEvents []string, wantSub string) {
+	t.Helper()
+	for _, wantType := range wantEvents {
+		select {
+		case evt := <-ch:
+			if evt.Type != wantType || (wantSub != "" && !strings.Contains(string(evt.Data), wantSub)) {
+				t.Fatalf("got %s %s, want %s %s", evt.Type, string(evt.Data), wantType, wantSub)
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatalf("timeout waiting for %s", wantType)
+		}
+	}
+
+	select {
+	case evt := <-ch:
+		t.Fatalf("unexpected extra event: %s %s", evt.Type, string(evt.Data))
+	default:
+	}
+}
+
 func TestHub_DispatchConfigReload(t *testing.T) {
 	t.Parallel()
 	snapWithLayout := &config.Snapshot{
@@ -36,16 +85,7 @@ func TestHub_DispatchConfigReload(t *testing.T) {
 		Layout: &layout.Layout{TotalScreens: 1, Screens: []layout.Screen{{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "w1", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(3, 2)}}}}},
 	}
 
-	tests := []struct {
-		name       string
-		snap       *config.Snapshot
-		diff       *config.ConfigDiff
-		coord      bool
-		provCoord  bool
-		provErr    bool
-		wantEvents []string
-		wantSub    string
-	}{
+	tests := []dispatchReloadCase{
 		{name: "nil_snapshot", snap: nil},
 		{
 			name: "layout_and_domain_change", snap: snapWithLayout,
@@ -77,20 +117,7 @@ func TestHub_DispatchConfigReload(t *testing.T) {
 			hub := NewHub(HubConfig{}, NewInMemoryStateProvider(nil), nil)
 			defer hub.Close()
 
-			var mockRC *mockCoordinator
-			if tc.coord {
-				mockRC = &mockCoordinator{}
-				hub.SetRotationCoordinator(mockRC)
-			}
-			var mockPC *mockProviderCoordinator
-			if tc.provCoord {
-				var err error
-				if tc.provErr {
-					err = errors.New("reconcile err")
-				}
-				mockPC = &mockProviderCoordinator{err: err}
-				hub.SetProviderCoordinator(mockPC)
-			}
+			mockRC, mockPC := setupHubCoordinators(hub, tc)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -107,22 +134,7 @@ func TestHub_DispatchConfigReload(t *testing.T) {
 				t.Error("expected provider coordinator called with snapshot")
 			}
 
-			for _, wantType := range tc.wantEvents {
-				select {
-				case evt := <-ch:
-					if evt.Type != wantType || (tc.wantSub != "" && !strings.Contains(string(evt.Data), tc.wantSub)) {
-						t.Fatalf("got %s %s, want %s %s", evt.Type, string(evt.Data), wantType, tc.wantSub)
-					}
-				case <-time.After(1 * time.Second):
-					t.Fatalf("timeout waiting for %s", wantType)
-				}
-			}
-
-			select {
-			case evt := <-ch:
-				t.Fatalf("unexpected extra event: %s %s", evt.Type, string(evt.Data))
-			default:
-			}
+			verifyHubDispatchEvents(t, ch, tc.wantEvents, tc.wantSub)
 		})
 	}
 }

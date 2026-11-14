@@ -138,6 +138,48 @@ type replayTC struct {
 
 func rtc(n, m, p, hk, ws, wn string, ex int) replayTC { return replayTC{n, m, p, hk, ws, wn, ex} }
 
+func executeSyncReplay(hub *Hub, rec *flushingRecorder, req *http.Request, cancel context.CancelFunc) {
+	cancel()
+	Handler(hub).ServeHTTP(rec, req)
+}
+
+func executeAsyncReplay(hub *Hub, rec *flushingRecorder, req *http.Request, cancel context.CancelFunc, mode string) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Handler(hub).ServeHTTP(rec, req)
+	}()
+	rec.wait(2)
+	typ := "card2"
+	if mode == "live_after_replay" {
+		typ = "card3"
+	}
+	hub.Publish(EventWidgetReload, []byte(`{"type":"`+typ+`"}`))
+	rec.wait(1)
+	cancel()
+	<-done
+}
+
+func setupReplayRequest(tc replayTC, evt1ID, evt2ID string) (context.Context, context.CancelFunc, *http.Request) {
+	reqPath := tc.p
+	if strings.HasSuffix(reqPath, "=") {
+		reqPath += evt1ID
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, reqPath, nil).WithContext(ctx)
+	if tc.hk != "" {
+		hVal := evt1ID
+		if tc.n == "unknown_id_fallback" {
+			hVal = "unknown_999"
+		}
+		if tc.m == "live_up_to_date" {
+			hVal = evt2ID
+		}
+		req.Header.Set(tc.hk, hVal)
+	}
+	return ctx, cancel, req
+}
+
 func TestHandler_InitialHydration(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []replayTC{
@@ -157,48 +199,21 @@ func TestHandler_InitialHydration(t *testing.T) {
 			defer hub.Close()
 			evt1 := hub.Publish(EventWidgetReload, []byte(`{"type":"card1"}`))
 			evt2 := hub.Publish(EventWidgetReload, []byte(`{"type":"card2"}`))
-			reqPath := tc.p
-			if strings.HasSuffix(reqPath, "=") {
-				reqPath += evt1.ID
-			}
 			rec := newFlushingRecorder()
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel, req := setupReplayRequest(tc, evt1.ID, evt2.ID)
 			defer cancel()
-			req := httptest.NewRequest(http.MethodGet, reqPath, nil).WithContext(ctx)
-			if tc.hk != "" {
-				hVal := evt1.ID
-				if tc.n == "unknown_id_fallback" {
-					hVal = "unknown_999"
-				}
-				if tc.m == "live_up_to_date" {
-					hVal = evt2.ID
-				}
-				req.Header.Set(tc.hk, hVal)
-			}
+			_ = ctx
+
 			if tc.m == "during" {
 				hub.stateProvider = &hookStateProvider{baseProvider, func() {
 					hub.Publish(EventSystemStatus, []byte(`{"config_error":"simulated failure"}`))
 				}}
 			}
 			if tc.m == "sync" {
-				cancel()
-				Handler(hub).ServeHTTP(rec, req)
+				executeSyncReplay(hub, rec, req, cancel)
 			} else {
-				done := make(chan struct{})
-				go func() {
-					defer close(done)
-					Handler(hub).ServeHTTP(rec, req)
-				}()
-				rec.wait(2)
-				typ := "card2"
-				if tc.m == "live_after_replay" {
-					typ = "card3"
-				}
-				hub.Publish(EventWidgetReload, []byte(`{"type":"`+typ+`"}`))
-				rec.wait(1)
-				cancel()
-				<-done
+				executeAsyncReplay(hub, rec, req, cancel, tc.m)
 			}
 			body := rec.BodyString()
 			if (tc.ex > 0 && strings.Count(body, tc.ws) != tc.ex) || !strings.Contains(body, tc.ws) || (tc.wn != "" && strings.Contains(body, tc.wn)) {

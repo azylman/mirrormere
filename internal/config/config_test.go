@@ -177,19 +177,95 @@ func TestParseWithEnv_ValidationErrors(t *testing.T) {
 	}
 }
 
+type validConfigCase struct {
+	name, yaml                                                                   string
+	nilGetenv                                                                    bool
+	wantTransition, wantWeatherUnits, wantMethod, wantRemoteURL, wantVideoStream string
+	wantLocName, wantThemeMode, wantForecastLoc                                  string
+	wantWeatherInterval, wantChatMax                                             int
+	wantHideCursor, wantVoiceHub, wantSpeakerID, wantFastPath, wantVideoEnabled  bool
+	wantChatTTL                                                                  time.Duration
+	wantLat                                                                      float64
+}
+
+func assertValidConfigResult(t *testing.T, cfg *config.Config, tc validConfigCase) {
+	t.Helper()
+	assertConfigDisplayProps(t, cfg, tc)
+	assertConfigVoiceAndChatProps(t, cfg, tc)
+	assertConfigLocationAndThemeProps(t, cfg, tc)
+}
+
+func assertConfigDisplayProps(t *testing.T, cfg *config.Config, tc validConfigCase) {
+	t.Helper()
+	if tc.wantTransition != "" {
+		assertEq(t, "transition", cfg.Display.Rotation.Transition, tc.wantTransition)
+	}
+	if tc.wantWeatherUnits != "" && cfg.Display.Header.Weather != nil {
+		assertEq(t, "weather units", cfg.Display.Header.Weather.Units, tc.wantWeatherUnits)
+	}
+	if tc.wantWeatherInterval != 0 && cfg.Display.Header.Weather != nil {
+		assertEq(t, "weather interval", cfg.Display.Header.Weather.GetRefreshIntervalSeconds(), tc.wantWeatherInterval)
+	}
+	if tc.wantMethod != "" && len(cfg.Display.Widgets) > 0 {
+		assertEq(t, "widget method", cfg.Display.Widgets[0].Method, tc.wantMethod)
+	}
+	if tc.wantHideCursor {
+		assertEq(t, "hide cursor", cfg.Display.HideCursor, true)
+	}
+	if tc.wantRemoteURL != "" {
+		assertEq(t, "remote url", cfg.Display.RemoteURL, tc.wantRemoteURL)
+	}
+}
+
+func assertConfigVoiceAndChatProps(t *testing.T, cfg *config.Config, tc validConfigCase) {
+	t.Helper()
+	if tc.wantVoiceHub {
+		assertEq(t, "voice hub", cfg.VoiceHub.IsEnabled(), true)
+	}
+	if tc.wantFastPath {
+		assertEq(t, "fast path", cfg.VoiceHub != nil && cfg.VoiceHub.FastPath.IsEnabled(), true)
+	}
+	if tc.wantSpeakerID {
+		assertEq(t, "speaker id", cfg.VoiceHub != nil && cfg.VoiceHub.SpeakerID.IsEnabled(), true)
+	}
+	if tc.wantVideoEnabled {
+		assertEq(t, "video enabled", cfg.Display.Header.Video != nil && cfg.Display.Header.Video.IsEnabled(), true)
+	}
+	if tc.wantVideoStream != "" && cfg.Display.Header.Video != nil {
+		assertEq(t, "video stream", cfg.Display.Header.Video.GetStreamID(), tc.wantVideoStream)
+	}
+	if tc.wantChatTTL != 0 {
+		assertEq(t, "chat ttl", cfg.ChatLog.GetTTL(), tc.wantChatTTL)
+	}
+	if tc.wantChatMax != 0 {
+		assertEq(t, "chat max", cfg.ChatLog.GetMaxMessagesPerNode(), tc.wantChatMax)
+	}
+}
+
+func assertConfigLocationAndThemeProps(t *testing.T, cfg *config.Config, tc validConfigCase) {
+	t.Helper()
+	if tc.wantLocName != "" && cfg.GetLocationConfig() != nil {
+		assertEq(t, "loc name", cfg.GetLocationConfig().Name, tc.wantLocName)
+	}
+	if tc.wantLat != 0 && cfg.GetLocationConfig() != nil {
+		assertEq(t, "latitude", cfg.GetLocationConfig().GetLatitude(), tc.wantLat)
+	}
+	if tc.wantThemeMode != "" && cfg.Display.Theme != nil {
+		assertEq(t, "theme mode", cfg.Display.Theme.GetMode(), tc.wantThemeMode)
+	}
+	if tc.wantForecastLoc != "" {
+		for _, w := range cfg.Display.Widgets {
+			if w.Type == "weather-forecast" && w.Config != nil {
+				assertEq(t, "forecast loc", w.Config["location_name"].(string), tc.wantForecastLoc)
+			}
+		}
+	}
+}
+
 func TestParseWithEnv_ValidConfigsAndDefaults(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name, yaml                                                                   string
-		nilGetenv                                                                    bool
-		wantTransition, wantWeatherUnits, wantMethod, wantRemoteURL, wantVideoStream string
-		wantLocName, wantThemeMode, wantForecastLoc                                  string
-		wantWeatherInterval, wantChatMax                                             int
-		wantHideCursor, wantVoiceHub, wantSpeakerID, wantFastPath, wantVideoEnabled  bool
-		wantChatTTL                                                                  time.Duration
-		wantLat                                                                      float64
-	}{
+	tests := []validConfigCase{
 		{name: "comment interpolation allowed and default transition", yaml: "# ${VAR} in comment is allowed\n" + withBaseYAML(""), wantTransition: "slide"},
 		{name: "rotation transition fade", yaml: withBaseYAML("  rotation:\n    transition: fade\n"), wantTransition: "fade"},
 		{name: "rotation transition instant", yaml: withBaseYAML("  rotation:\n    transition: instant\n"), wantTransition: "instant"},
@@ -221,61 +297,7 @@ func TestParseWithEnv_ValidConfigsAndDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if tc.wantTransition != "" {
-				assertEq(t, "transition", cfg.Display.Rotation.Transition, tc.wantTransition)
-			}
-			if tc.wantWeatherUnits != "" && cfg.Display.Header.Weather != nil {
-				assertEq(t, "weather units", cfg.Display.Header.Weather.Units, tc.wantWeatherUnits)
-			}
-			if tc.wantWeatherInterval != 0 && cfg.Display.Header.Weather != nil {
-				assertEq(t, "weather interval", cfg.Display.Header.Weather.GetRefreshIntervalSeconds(), tc.wantWeatherInterval)
-			}
-			if tc.wantMethod != "" && len(cfg.Display.Widgets) > 0 {
-				assertEq(t, "widget method", cfg.Display.Widgets[0].Method, tc.wantMethod)
-			}
-			if tc.wantHideCursor {
-				assertEq(t, "hide cursor", cfg.Display.HideCursor, true)
-			}
-			if tc.wantRemoteURL != "" {
-				assertEq(t, "remote url", cfg.Display.RemoteURL, tc.wantRemoteURL)
-			}
-			if tc.wantVoiceHub {
-				assertEq(t, "voice hub", cfg.VoiceHub.IsEnabled(), true)
-			}
-			if tc.wantFastPath {
-				assertEq(t, "fast path", cfg.VoiceHub != nil && cfg.VoiceHub.FastPath.IsEnabled(), true)
-			}
-			if tc.wantSpeakerID {
-				assertEq(t, "speaker id", cfg.VoiceHub != nil && cfg.VoiceHub.SpeakerID.IsEnabled(), true)
-			}
-			if tc.wantVideoEnabled {
-				assertEq(t, "video enabled", cfg.Display.Header.Video != nil && cfg.Display.Header.Video.IsEnabled(), true)
-			}
-			if tc.wantVideoStream != "" && cfg.Display.Header.Video != nil {
-				assertEq(t, "video stream", cfg.Display.Header.Video.GetStreamID(), tc.wantVideoStream)
-			}
-			if tc.wantChatTTL != 0 {
-				assertEq(t, "chat ttl", cfg.ChatLog.GetTTL(), tc.wantChatTTL)
-			}
-			if tc.wantChatMax != 0 {
-				assertEq(t, "chat max", cfg.ChatLog.GetMaxMessagesPerNode(), tc.wantChatMax)
-			}
-			if tc.wantLocName != "" && cfg.GetLocationConfig() != nil {
-				assertEq(t, "loc name", cfg.GetLocationConfig().Name, tc.wantLocName)
-			}
-			if tc.wantLat != 0 && cfg.GetLocationConfig() != nil {
-				assertEq(t, "latitude", cfg.GetLocationConfig().GetLatitude(), tc.wantLat)
-			}
-			if tc.wantThemeMode != "" && cfg.Display.Theme != nil {
-				assertEq(t, "theme mode", cfg.Display.Theme.GetMode(), tc.wantThemeMode)
-			}
-			if tc.wantForecastLoc != "" {
-				for _, w := range cfg.Display.Widgets {
-					if w.Type == "weather-forecast" && w.Config != nil {
-						assertEq(t, "forecast loc", w.Config["location_name"].(string), tc.wantForecastLoc)
-					}
-				}
-			}
+			assertValidConfigResult(t, cfg, tc)
 		})
 	}
 }
@@ -386,8 +408,8 @@ func TestDisplayVoiceWaveform_Parse(t *testing.T) {
 	}
 }
 
-func TestConfig_Accessors(t *testing.T) {
-	t.Parallel()
+func assertLocationAndThemeAccessors(t *testing.T) {
+	t.Helper()
 	var nilLoc *config.LocationConfig
 	assertEq(t, "nil loc lat", nilLoc.GetLatitude(), 0)
 	assertEq(t, "nil loc lon", nilLoc.GetLongitude(), 0)
@@ -402,7 +424,10 @@ func TestConfig_Accessors(t *testing.T) {
 	assertEq(t, "theme zero", (&config.ThemeConfig{}).GetMode(), "day")
 	assertEq(t, "theme ws", (&config.ThemeConfig{Mode: "   "}).GetMode(), "day")
 	assertEq(t, "theme upper", (&config.ThemeConfig{Mode: "NIGHT"}).GetMode(), "night")
+}
 
+func assertVideoAndWaveformAccessors(t *testing.T) {
+	t.Helper()
 	var nilVid *config.HeaderVideoConfig
 	assertEq(t, "vid nil", !nilVid.IsEnabled() && nilVid.GetStreamID() == "chromecast" && nilVid.GetType() == "webrtc", true)
 	assertEq(t, "vid zero", !(&config.HeaderVideoConfig{}).IsEnabled() && (&config.HeaderVideoConfig{}).GetStreamID() == "chromecast" && (&config.HeaderVideoConfig{}).GetType() == "webrtc", true)
@@ -415,7 +440,40 @@ func TestConfig_Accessors(t *testing.T) {
 	popWave := &config.VoiceWaveformConfig{Enabled: new(true), LevelsURL: "http://10.0.0.5:9000/levels", Gain: new(1.5)}
 	assertEq(t, "wave pop", popWave.IsEnabled() && popWave.GetLevelsURL() == "http://10.0.0.5:9000/levels" && popWave.GetGain() == 1.5, true)
 	assertEq(t, "wave blank url", (&config.VoiceWaveformConfig{LevelsURL: "  "}).GetLevelsURL(), "http://127.0.0.1:8765/levels")
+}
 
+func assertSpeakerIDAccessors(t *testing.T) {
+	t.Helper()
+	var nilSID *config.SpeakerIDConfig
+	assertEq(t, "sid nil", !nilSID.IsEnabled() && nilSID.GetThreshold() == 0.70 && nilSID.GetTimeoutSeconds() == 5, true)
+	assertEq(t, "sid zero", !(&config.SpeakerIDConfig{}).IsEnabled() && (&config.SpeakerIDConfig{}).GetThreshold() == 0.70 && (&config.SpeakerIDConfig{}).GetTimeoutSeconds() == 5, true)
+	assertEq(t, "sid nonpos", (&config.SpeakerIDConfig{TimeoutSeconds: new(-5)}).GetTimeoutSeconds(), 5)
+	popSID := &config.SpeakerIDConfig{EmbedURL: "http://embed", Model: "ecapa", Speakers: []config.SpeakerFingerprint{{ID: "a", Embedding: []float64{1.0}}}, Threshold: new(0.85), TimeoutSeconds: new(10)}
+	assertEq(t, "sid pop", popSID.IsEnabled() && popSID.GetThreshold() == 0.85 && popSID.GetTimeoutSeconds() == 10, true)
+}
+
+func assertVoiceHubSubconfigs(t *testing.T) {
+	t.Helper()
+	var nilFP *config.FastPathConfig
+	assertEq(t, "fp nil", !nilFP.IsEnabled() && nilFP.GetTimeoutMS() == 800, true)
+	assertEq(t, "fp zero", !(&config.FastPathConfig{}).IsEnabled() && (&config.FastPathConfig{}).GetTimeoutMS() == 800, true)
+	assertEq(t, "fp nonpos", (&config.FastPathConfig{URL: "http://intent", TimeoutMS: new(-5)}).IsEnabled() && (&config.FastPathConfig{URL: "http://intent", TimeoutMS: new(-5)}).GetTimeoutMS() == 800, true)
+	popFP := &config.FastPathConfig{URL: "http://intent", TimeoutMS: new(500)}
+	assertEq(t, "fp pop", popFP.IsEnabled() && popFP.GetTimeoutMS() == 500, true)
+
+	assertSpeakerIDAccessors(t)
+
+	var nilVH *config.VoiceHubConfig
+	assertEq(t, "vh nil", !nilVH.IsEnabled() && nilVH.GetBrainTimeoutSeconds() == 30 && nilVH.GetTTSTimeoutSeconds() == 10 && nilVH.GetTTSVoice() == "af_bella" && nilVH.GetTTSModel() == "kokoro", true)
+	assertEq(t, "vh zero", !(&config.VoiceHubConfig{}).IsEnabled() && (&config.VoiceHubConfig{}).GetBrainTimeoutSeconds() == 30 && (&config.VoiceHubConfig{}).GetTTSTimeoutSeconds() == 10 && (&config.VoiceHubConfig{}).GetTTSVoice() == "af_bella" && (&config.VoiceHubConfig{}).GetTTSModel() == "kokoro", true)
+	nonPosVH := &config.VoiceHubConfig{BrainTimeoutSeconds: new(-5), TTSTimeoutSeconds: new(0)}
+	assertEq(t, "vh nonpos", nonPosVH.GetBrainTimeoutSeconds() == 30 && nonPosVH.GetTTSTimeoutSeconds() == 10, true)
+	popVH := &config.VoiceHubConfig{Enabled: true, BrainTimeoutSeconds: new(60), TTSTimeoutSeconds: new(20), TTSVoice: "custom_v", TTSModel: "custom_m"}
+	assertEq(t, "vh pop", popVH.IsEnabled() && popVH.GetBrainTimeoutSeconds() == 60 && popVH.GetTTSTimeoutSeconds() == 20 && popVH.GetTTSVoice() == "custom_v" && popVH.GetTTSModel() == "custom_m", true)
+}
+
+func assertVoiceHubAndChatAccessors(t *testing.T) {
+	t.Helper()
 	var nilWeather *config.HeaderWeatherConfig
 	assertEq(t, "weather nil", nilWeather.GetRefreshIntervalSeconds(), 900)
 	assertEq(t, "weather zero", (&config.HeaderWeatherConfig{}).GetRefreshIntervalSeconds(), 900)
@@ -429,28 +487,11 @@ func TestConfig_Accessors(t *testing.T) {
 	popChat := &config.ChatLogConfig{TTLMinutes: new(5), MaxMessagesPerNode: new(10)}
 	assertEq(t, "chat pop", popChat.GetTTL() == 5*time.Minute && popChat.GetMaxMessagesPerNode() == 10, true)
 
-	var nilFP *config.FastPathConfig
-	assertEq(t, "fp nil", !nilFP.IsEnabled() && nilFP.GetTimeoutMS() == 800, true)
-	assertEq(t, "fp zero", !(&config.FastPathConfig{}).IsEnabled() && (&config.FastPathConfig{}).GetTimeoutMS() == 800, true)
-	assertEq(t, "fp nonpos", (&config.FastPathConfig{URL: "http://intent", TimeoutMS: new(-5)}).IsEnabled() && (&config.FastPathConfig{URL: "http://intent", TimeoutMS: new(-5)}).GetTimeoutMS() == 800, true)
-	popFP := &config.FastPathConfig{URL: "http://intent", TimeoutMS: new(500)}
-	assertEq(t, "fp pop", popFP.IsEnabled() && popFP.GetTimeoutMS() == 500, true)
+	assertVoiceHubSubconfigs(t)
+}
 
-	var nilSID *config.SpeakerIDConfig
-	assertEq(t, "sid nil", !nilSID.IsEnabled() && nilSID.GetThreshold() == 0.70 && nilSID.GetTimeoutSeconds() == 5, true)
-	assertEq(t, "sid zero", !(&config.SpeakerIDConfig{}).IsEnabled() && (&config.SpeakerIDConfig{}).GetThreshold() == 0.70 && (&config.SpeakerIDConfig{}).GetTimeoutSeconds() == 5, true)
-	assertEq(t, "sid nonpos", (&config.SpeakerIDConfig{TimeoutSeconds: new(-5)}).GetTimeoutSeconds(), 5)
-	popSID := &config.SpeakerIDConfig{EmbedURL: "http://embed", Model: "ecapa", Speakers: []config.SpeakerFingerprint{{ID: "a", Embedding: []float64{1.0}}}, Threshold: new(0.85), TimeoutSeconds: new(10)}
-	assertEq(t, "sid pop", popSID.IsEnabled() && popSID.GetThreshold() == 0.85 && popSID.GetTimeoutSeconds() == 10, true)
-
-	var nilVH *config.VoiceHubConfig
-	assertEq(t, "vh nil", !nilVH.IsEnabled() && nilVH.GetBrainTimeoutSeconds() == 30 && nilVH.GetTTSTimeoutSeconds() == 10 && nilVH.GetTTSVoice() == "af_bella" && nilVH.GetTTSModel() == "kokoro", true)
-	assertEq(t, "vh zero", !(&config.VoiceHubConfig{}).IsEnabled() && (&config.VoiceHubConfig{}).GetBrainTimeoutSeconds() == 30 && (&config.VoiceHubConfig{}).GetTTSTimeoutSeconds() == 10 && (&config.VoiceHubConfig{}).GetTTSVoice() == "af_bella" && (&config.VoiceHubConfig{}).GetTTSModel() == "kokoro", true)
-	nonPosVH := &config.VoiceHubConfig{BrainTimeoutSeconds: new(-5), TTSTimeoutSeconds: new(0)}
-	assertEq(t, "vh nonpos", nonPosVH.GetBrainTimeoutSeconds() == 30 && nonPosVH.GetTTSTimeoutSeconds() == 10, true)
-	popVH := &config.VoiceHubConfig{Enabled: true, BrainTimeoutSeconds: new(60), TTSTimeoutSeconds: new(20), TTSVoice: "custom_v", TTSModel: "custom_m"}
-	assertEq(t, "vh pop", popVH.IsEnabled() && popVH.GetBrainTimeoutSeconds() == 60 && popVH.GetTTSTimeoutSeconds() == 20 && popVH.GetTTSVoice() == "custom_v" && popVH.GetTTSModel() == "custom_m", true)
-
+func assertHeaderAndDisplayAccessors(t *testing.T) {
+	t.Helper()
 	var nilRot *config.RotationConfig
 	assertEq(t, "rot nil", nilRot.GetIntervalSeconds() == 30 && nilRot.GetPauseDurationSeconds() == 120, true)
 	zeroRot := config.RotationConfig{}
@@ -486,6 +527,14 @@ func TestConfig_Accessors(t *testing.T) {
 	disabledDisplay := config.DisplayConfig{AllowLayoutEdit: new(false), LayoutOverridePath: "/tmp/custom.yaml"}
 	assertEq(t, "layout edit disabled", disabledDisplay.IsLayoutEditAllowed(), false)
 	assertEq(t, "override path custom", disabledDisplay.GetLayoutOverridePath(), "/tmp/custom.yaml")
+}
+
+func TestConfig_Accessors(t *testing.T) {
+	t.Parallel()
+	assertLocationAndThemeAccessors(t)
+	assertVideoAndWaveformAccessors(t)
+	assertVoiceHubAndChatAccessors(t)
+	assertHeaderAndDisplayAccessors(t)
 }
 
 func TestDisplayUI(t *testing.T) {

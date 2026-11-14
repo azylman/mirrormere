@@ -134,6 +134,29 @@ func TestCastClient_HeartbeatPingAndPong(t *testing.T) {
 	}
 }
 
+func sendMediaActionAndRead(ctx context.Context, t *testing.T, client *CastClient, server net.Conn, action string) CastMessage {
+	t.Helper()
+	errCh := make(chan error, 1)
+	go func() { errCh <- client.SendMediaAction(ctx, action) }()
+	msg, err := DecodeCastMessage(server)
+	if err != nil {
+		t.Fatalf("decode %s failed: %v", action, err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("SendMediaAction(%s) failed: %v", action, err)
+	}
+	return msg
+}
+
+func assertMediaActionFrame(t *testing.T, m CastMessage, wantDest, wantNS string, wantPayloadSub string) {
+	t.Helper()
+	if (wantDest != "" && m.DestinationID != wantDest) ||
+		(wantNS != "" && m.Namespace != wantNS) ||
+		(wantPayloadSub != "" && !strings.Contains(m.PayloadUTF8, wantPayloadSub)) {
+		t.Errorf("unexpected cast message frame: %+v (want dest=%s, ns=%s, sub=%s)", m, wantDest, wantNS, wantPayloadSub)
+	}
+}
+
 func TestCastClient_MediaActionsAndSeek(t *testing.T) {
 	client := NewCastClient(ClientConfig{})
 	ctx := context.Background()
@@ -165,30 +188,12 @@ func TestCastClient_MediaActionsAndSeek(t *testing.T) {
 		t.Errorf("expected ErrInvalidAction for negative seek, got: %v", err)
 	}
 
-	sendAction := func(action string) CastMessage {
-		t.Helper()
-		errCh := make(chan error, 1)
-		go func() { errCh <- client.SendMediaAction(ctx, action) }()
-		msg, err := DecodeCastMessage(s1)
-		if err != nil {
-			t.Fatalf("decode %s failed: %v", action, err)
-		}
-		if err := <-errCh; err != nil {
-			t.Fatalf("SendMediaAction(%s) failed: %v", action, err)
-		}
-		return msg
-	}
-
 	client.playerState = "paused"
-	m := sendAction("toggle_playback")
-	if !strings.Contains(m.PayloadUTF8, "PLAY") {
-		t.Errorf("expected PLAY on toggle, got %s", m.PayloadUTF8)
-	}
+	m := sendMediaActionAndRead(ctx, t, client, s1, "toggle_playback")
+	assertMediaActionFrame(t, m, "", "", "PLAY")
 
-	m = sendAction("play")
-	if !strings.Contains(m.PayloadUTF8, "PLAY") {
-		t.Errorf("expected PLAY on play, got %s", m.PayloadUTF8)
-	}
+	m = sendMediaActionAndRead(ctx, t, client, s1, "play")
+	assertMediaActionFrame(t, m, "", "", "PLAY")
 
 	seekErrCh := make(chan error, 1)
 	go func() { seekErrCh <- client.Seek(ctx, 128.5) }()
@@ -196,8 +201,9 @@ func TestCastClient_MediaActionsAndSeek(t *testing.T) {
 	if err := <-seekErrCh; err != nil {
 		t.Fatalf("seek failed: %v", err)
 	}
-	if m.DestinationID != "t1" || m.Namespace != NamespaceMedia || !strings.Contains(m.PayloadUTF8, `"SEEK"`) || !strings.Contains(m.PayloadUTF8, "128.5") {
-		t.Errorf("unexpected seek frame: %+v", m)
+	assertMediaActionFrame(t, m, "t1", NamespaceMedia, `"SEEK"`)
+	if !strings.Contains(m.PayloadUTF8, "128.5") {
+		t.Errorf("expected payload with 128.5, got: %+v", m)
 	}
 	if client.lastPosition != 128.5 || client.lastPositionTime.IsZero() {
 		t.Errorf("expected recorded position 128.5, got %f", client.lastPosition)
@@ -205,14 +211,16 @@ func TestCastClient_MediaActionsAndSeek(t *testing.T) {
 
 	// Test rewind and fast_forward dispatch SEEK frames (#605)
 	client.lastPosition = 100.0
-	m = sendAction("rewind")
-	if m.DestinationID != "t1" || m.Namespace != NamespaceMedia || !strings.Contains(m.PayloadUTF8, `"SEEK"`) || !strings.Contains(m.PayloadUTF8, "90") {
+	m = sendMediaActionAndRead(ctx, t, client, s1, "rewind")
+	assertMediaActionFrame(t, m, "t1", NamespaceMedia, `"SEEK"`)
+	if !strings.Contains(m.PayloadUTF8, "90") {
 		t.Errorf("expected SEEK frame around 90 for rewind, got %+v", m)
 	}
 
 	client.lastPosition = 100.0
-	m = sendAction("fast_forward")
-	if m.DestinationID != "t1" || m.Namespace != NamespaceMedia || !strings.Contains(m.PayloadUTF8, `"SEEK"`) || !strings.Contains(m.PayloadUTF8, "110") {
+	m = sendMediaActionAndRead(ctx, t, client, s1, "fast_forward")
+	assertMediaActionFrame(t, m, "t1", NamespaceMedia, `"SEEK"`)
+	if !strings.Contains(m.PayloadUTF8, "110") {
 		t.Errorf("expected SEEK frame around 110 for fast_forward, got %+v", m)
 	}
 
@@ -220,8 +228,9 @@ func TestCastClient_MediaActionsAndSeek(t *testing.T) {
 	client.playerState = "playing"
 	client.lastPosition = 5.0
 	client.lastPositionTime = time.Now()
-	m = sendAction("rewind")
-	if !strings.Contains(m.PayloadUTF8, `"SEEK"`) || !strings.Contains(m.PayloadUTF8, `"currentTime":0`) {
+	m = sendMediaActionAndRead(ctx, t, client, s1, "rewind")
+	assertMediaActionFrame(t, m, "", "", `"SEEK"`)
+	if !strings.Contains(m.PayloadUTF8, `"currentTime":0`) {
 		t.Errorf("expected clamped SEEK 0 frame for rewind, got %+v", m)
 	}
 }
@@ -302,6 +311,47 @@ func TestCastClient_Wake(t *testing.T) {
 	}
 }
 
+type mediaThrottlingStep struct {
+	name      string
+	payload   string
+	trigger   bool
+	wantCount int
+	wantState string
+	wantTitle string
+	wantSer   string
+	wantS     string
+	wantEp    string
+	wantPos   float64
+	wantDur   float64
+}
+
+func assertMediaThrottlingStep(t *testing.T, step mediaThrottlingStep, last map[string]any) {
+	t.Helper()
+	checkStringField := func(field, want string) {
+		if want != "" && last[field] != want {
+			t.Errorf("[%s] %s=%v, want %s", step.name, field, last[field], want)
+		}
+	}
+	checkStringField("player_state", step.wantState)
+	checkStringField("title", step.wantTitle)
+	checkStringField("series", step.wantSer)
+	checkStringField("season", step.wantS)
+	checkStringField("episode", step.wantEp)
+
+	if step.wantPos != 0 && last["position"] != step.wantPos {
+		t.Errorf("[%s] position=%v, want %f", step.name, last["position"], step.wantPos)
+	}
+	if step.wantDur != 0 && last["duration"] != step.wantDur {
+		t.Errorf("[%s] duration=%v, want %f", step.name, last["duration"], step.wantDur)
+	}
+	if step.name == "same_session_movie" && (last["series"] != "" || last["season"] != "" || last["episode"] != "") {
+		t.Errorf("[%s] expected cleared series/season/episode, got %+v", step.name, last)
+	}
+	if step.name == "post_idle_trigger" && (last["title"] != nil || last["duration"] != nil) {
+		t.Errorf("[%s] expected cleared metadata after repeat terminal idle, got %+v", step.name, last)
+	}
+}
+
 func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 	var mu sync.Mutex
 	var received []map[string]any
@@ -327,19 +377,7 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 		}
 	}
 
-	steps := []struct {
-		name      string
-		payload   string
-		trigger   bool
-		wantCount int
-		wantState string
-		wantTitle string
-		wantSer   string
-		wantS     string
-		wantEp    string
-		wantPos   float64
-		wantDur   float64
-	}{
+	steps := []mediaThrottlingStep{
 		{"initial_rich", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":1,"playerState":"PLAYING","currentTime":10.0,"media":{"duration":3600.0,"metadata":{"title":"Chapter 1","seriesTitle":"Mando","season":2,"episode":3}}}]}`, false, 1, "playing", "Chapter 1", "Mando", "2", "3", 10.0, 0},
 		{"normal_progress", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":1,"playerState":"PLAYING","currentTime":11.0}]}`, false, 1, "", "", "", "", "", 0, 0},
 		{"seek_drift", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":1,"playerState":"PLAYING","currentTime":50.0}]}`, false, 2, "", "Chapter 1", "", "", "", 50.0, 0},
@@ -368,34 +406,7 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 			t.Fatalf("[%s] expected %d dispatches, got %d", step.name, step.wantCount, len(received))
 		}
 		if step.wantCount > 0 && len(received) > 0 {
-			last := received[len(received)-1]
-			if step.wantState != "" && last["player_state"] != step.wantState {
-				t.Errorf("[%s] state=%v, want %s", step.name, last["player_state"], step.wantState)
-			}
-			if step.wantTitle != "" && last["title"] != step.wantTitle {
-				t.Errorf("[%s] title=%v, want %s", step.name, last["title"], step.wantTitle)
-			}
-			if step.wantSer != "" && last["series"] != step.wantSer {
-				t.Errorf("[%s] series=%v, want %s", step.name, last["series"], step.wantSer)
-			}
-			if step.wantS != "" && last["season"] != step.wantS {
-				t.Errorf("[%s] season=%v, want %s", step.name, last["season"], step.wantS)
-			}
-			if step.wantEp != "" && last["episode"] != step.wantEp {
-				t.Errorf("[%s] episode=%v, want %s", step.name, last["episode"], step.wantEp)
-			}
-			if step.wantPos != 0 && last["position"] != step.wantPos {
-				t.Errorf("[%s] position=%v, want %f", step.name, last["position"], step.wantPos)
-			}
-			if step.wantDur != 0 && last["duration"] != step.wantDur {
-				t.Errorf("[%s] duration=%v, want %f", step.name, last["duration"], step.wantDur)
-			}
-			if step.name == "same_session_movie" && (last["series"] != "" || last["season"] != "" || last["episode"] != "") {
-				t.Errorf("[%s] expected cleared series/season/episode, got %+v", step.name, last)
-			}
-			if step.name == "post_idle_trigger" && (last["title"] != nil || last["duration"] != nil) {
-				t.Errorf("[%s] expected cleared metadata after repeat terminal idle, got %+v", step.name, last)
-			}
+			assertMediaThrottlingStep(t, step, received[len(received)-1])
 		}
 		mu.Unlock()
 	}

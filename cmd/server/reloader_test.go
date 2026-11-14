@@ -197,12 +197,96 @@ func TestAssetReloader_ReloadWeb(t *testing.T) {
 	}
 }
 
+func prepareReloaderSetup(t *testing.T, env *reloaderTestEnv, setup, act string) {
+	t.Helper()
+	if setup == "builtin" {
+		_, _ = env.renderEngine.RenderWidgetWithOverrides(context.Background(), "test-instance", "", nil)
+		return
+	}
+	if setup == "" {
+		return
+	}
+	name, man, view, aName, aBody := "c-pkg", "default", "<div>c</div>", "", ""
+	if setup == "custom_incomplete" {
+		name, view = "bad-pkg", ""
+	}
+	if setup == "custom_assets" {
+		name, aName, aBody = "a-pkg", "icons/i.svg", "<svg>1</svg>"
+	}
+	writeWidgetPkg(t, env.customDir, name, man, view, aName, aBody)
+	if act != "none" {
+		env.reloader.ReloadWidgets()
+		drainEvents(env.eventCh)
+	}
+}
+
+func applyReloaderAct(t *testing.T, env *reloaderTestEnv, act string) {
+	t.Helper()
+	pBuiltin := filepath.Join(env.builtinDir, "test-widget")
+	pCustom := filepath.Join(env.customDir, "c-pkg")
+	switch act {
+	case "modify_view":
+		_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>New View</div>"), 0o644)
+	case "modify_manifest":
+		_ = os.WriteFile(filepath.Join(pBuiltin, "manifest.yaml"), []byte("name: test-widget\nversion: \"1.0.1\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n"), 0o644)
+	case "modify_asset":
+		_ = os.WriteFile(filepath.Join(env.customDir, "a-pkg", "assets", "icons", "i.svg"), []byte("<svg>2</svg>"), 0o644)
+	case "remove_view":
+		_ = os.Remove(filepath.Join(pCustom, "views", "widget.html"))
+	case "promote":
+		writeWidgetPkg(t, env.customDir, "bad-pkg", "", "<div>promoted</div>", "", "")
+	case "delete_pkg":
+		_ = os.RemoveAll(pCustom)
+		_ = os.RemoveAll(filepath.Join(env.customDir, "bad-pkg"))
+	case "combined":
+		_ = os.WriteFile(env.customCSSPath, []byte("body { color: red; }"), 0o644)
+		_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>Combined View</div>"), 0o644)
+	}
+}
+
+type reloadWidgetsCase struct {
+	name, setup, act, wantEvt string
+	wantReload, isComb        bool
+	wantSt                    config.ConfigStatus
+}
+
+func verifyReloadWidgetsCase(t *testing.T, env *reloaderTestEnv, tc reloadWidgetsCase) {
+	t.Helper()
+	if tc.isComb {
+		if c, w := env.reloader.Reload(); !c || !w {
+			t.Fatalf("Reload() = (%v, %v)", c, w)
+		}
+		expectEvent(t, env.eventCh, events.EventStyleReload, 2*time.Second)
+		expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
+		return
+	}
+	if got := env.reloader.ReloadWidgets(); got != tc.wantReload {
+		t.Fatalf("ReloadWidgets() = %v, want %v", got, tc.wantReload)
+	}
+	if tc.wantEvt != "" {
+		expectEvent(t, env.eventCh, tc.wantEvt, 2*time.Second)
+	}
+	if tc.wantSt != "" {
+		if tc.wantEvt != events.EventSystemStatus {
+			expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second)
+		}
+		if st := env.configManager.Status().ConfigStatus; st != tc.wantSt {
+			t.Fatalf("status = %v, want %v", st, tc.wantSt)
+		}
+	}
+	if env.reloader.ReloadWidgets() {
+		t.Error("expected subsequent false")
+	}
+	expectNoEvent(t, env.eventCh)
+	if tc.act == "modify_view" {
+		if h, _ := env.renderEngine.RenderWidgetWithOverrides(context.Background(), "test-instance", "", nil); string(h) != "<div>New View</div>" {
+			t.Fatalf("rendered = %s", string(h))
+		}
+	}
+}
+
 func TestAssetReloader_ReloadWidgets(t *testing.T) {
-	tests := []struct {
-		name, setup, act, wantEvt string
-		wantReload, isComb        bool
-		wantSt                    config.ConfigStatus
-	}{
+	tests := []reloadWidgetsCase{
 		{"view_mod", "builtin", "modify_view", events.EventWidgetReload, true, false, ""},
 		{"manifest_mod", "builtin", "modify_manifest", events.EventWidgetReload, true, false, ""},
 		{"assets_mod", "custom_assets", "modify_asset", events.EventWidgetReload, true, false, ""},
@@ -217,74 +301,9 @@ func TestAssetReloader_ReloadWidgets(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := setupReloaderTest(t, tc.isComb)
 			drainEvents(env.eventCh)
-			if tc.setup == "builtin" {
-				_, _ = env.renderEngine.RenderWidgetWithOverrides(context.Background(), "test-instance", "", nil)
-			} else if tc.setup != "" {
-				name, man, view, aName, aBody := "c-pkg", "default", "<div>c</div>", "", ""
-				if tc.setup == "custom_incomplete" {
-					name, view = "bad-pkg", ""
-				}
-				if tc.setup == "custom_assets" {
-					name, aName, aBody = "a-pkg", "icons/i.svg", "<svg>1</svg>"
-				}
-				writeWidgetPkg(t, env.customDir, name, man, view, aName, aBody)
-				if tc.act != "none" {
-					env.reloader.ReloadWidgets()
-					drainEvents(env.eventCh)
-				}
-			}
-			pBuiltin := filepath.Join(env.builtinDir, "test-widget")
-			pCustom := filepath.Join(env.customDir, "c-pkg")
-			switch tc.act {
-			case "modify_view":
-				_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>New View</div>"), 0o644)
-			case "modify_manifest":
-				_ = os.WriteFile(filepath.Join(pBuiltin, "manifest.yaml"), []byte("name: test-widget\nversion: \"1.0.1\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n"), 0o644)
-			case "modify_asset":
-				_ = os.WriteFile(filepath.Join(env.customDir, "a-pkg", "assets", "icons", "i.svg"), []byte("<svg>2</svg>"), 0o644)
-			case "remove_view":
-				_ = os.Remove(filepath.Join(pCustom, "views", "widget.html"))
-			case "promote":
-				writeWidgetPkg(t, env.customDir, "bad-pkg", "", "<div>promoted</div>", "", "")
-			case "delete_pkg":
-				_ = os.RemoveAll(pCustom)
-				_ = os.RemoveAll(filepath.Join(env.customDir, "bad-pkg"))
-			case "combined":
-				_ = os.WriteFile(env.customCSSPath, []byte("body { color: red; }"), 0o644)
-				_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>Combined View</div>"), 0o644)
-			}
-
-			if tc.isComb {
-				if c, w := env.reloader.Reload(); !c || !w {
-					t.Fatalf("Reload() = (%v, %v)", c, w)
-				}
-				expectEvent(t, env.eventCh, events.EventStyleReload, 2*time.Second)
-				expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
-				return
-			}
-			if got := env.reloader.ReloadWidgets(); got != tc.wantReload {
-				t.Fatalf("ReloadWidgets() = %v, want %v", got, tc.wantReload)
-			}
-			if tc.wantEvt != "" {
-				expectEvent(t, env.eventCh, tc.wantEvt, 2*time.Second)
-			}
-			if tc.wantSt != "" {
-				if tc.wantEvt != events.EventSystemStatus {
-					expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second)
-				}
-				if st := env.configManager.Status().ConfigStatus; st != tc.wantSt {
-					t.Fatalf("status = %v, want %v", st, tc.wantSt)
-				}
-			}
-			if env.reloader.ReloadWidgets() {
-				t.Error("expected subsequent false")
-			}
-			expectNoEvent(t, env.eventCh)
-			if tc.act == "modify_view" {
-				if h, _ := env.renderEngine.RenderWidgetWithOverrides(context.Background(), "test-instance", "", nil); string(h) != "<div>New View</div>" {
-					t.Fatalf("rendered = %s", string(h))
-				}
-			}
+			prepareReloaderSetup(t, env, tc.setup, tc.act)
+			applyReloaderAct(t, env, tc.act)
+			verifyReloadWidgetsCase(t, env, tc)
 		})
 	}
 }

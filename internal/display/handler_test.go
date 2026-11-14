@@ -73,6 +73,123 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 	}
 }
 
+func buildTzAndCursorHandler(t *testing.T, mode string, tmpl []byte, legacyOpt display.HandlerOption, wantGetter string) (*display.Handler, bool) {
+	t.Helper()
+	switch mode {
+	case "static_tz":
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithTimezoneProvider(func() string { return "America/Los_Angeles" }))
+		if h.Timezone() != wantGetter {
+			t.Fatalf("tz getter: got %s, want %s", h.Timezone(), wantGetter)
+		}
+		return h, true
+	case "dyn_tz":
+		tz := "Europe/London"
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithTimezoneProvider(func() string { return tz }))
+		if h.Timezone() != "Europe/London" {
+			t.Fatalf("tz initial: got %s, want Europe/London", h.Timezone())
+		}
+		tz = wantGetter
+		if h.Timezone() != wantGetter {
+			t.Fatalf("tz dynamic: got %s, want %s", h.Timezone(), wantGetter)
+		}
+		tz = "Europe/London"
+		return h, true
+	case "static_hide":
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return true }))
+		if !h.HideCursor() {
+			t.Fatalf("hide getter: expected true")
+		}
+		return h, true
+	case "static_unhide":
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return false }))
+		if h.HideCursor() {
+			t.Fatalf("hide getter: expected false")
+		}
+		return h, true
+	case "dyn_hide", "set_hide":
+		val := false
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return val }))
+		val = true
+		if !h.HideCursor() {
+			t.Fatalf("hide getter: expected true")
+		}
+		return h, true
+	default:
+		return nil, false
+	}
+}
+
+func buildMediaAndThemeHandler(t *testing.T, mode string, tmpl []byte, legacyOpt display.HandlerOption, wantGetter string) (*display.Handler, bool) {
+	t.Helper()
+	switch mode {
+	case "static_video":
+		vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "cam1", StreamURL: "http://cam.lan", ControlURL: "http://ctrl.lan", Type: "webrtc"}
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
+		if h.HeaderVideo() != vData {
+			t.Fatalf("video getter mismatch")
+		}
+		return h, true
+	case "dyn_video":
+		vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "live-cam"}
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
+		if h.HeaderVideo().StreamID != wantGetter {
+			t.Fatalf("dyn video getter mismatch")
+		}
+		return h, true
+	case "dyn_theme":
+		th := "night"
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithThemeProvider(func() string { return th }))
+		if h.Theme() != wantGetter {
+			t.Fatalf("theme getter: got %s, want %s", h.Theme(), wantGetter)
+		}
+		return h, true
+	case "dyn_grid":
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithGridProvider(func() string { return "3x6" }))
+		if h.Grid() != wantGetter {
+			t.Fatalf("grid getter: got %s, want %s", h.Grid(), wantGetter)
+		}
+		return h, true
+	default:
+		return nil, false
+	}
+}
+
+func buildTemplateHandlerForMode(t *testing.T, mode string, tmpl []byte, legacyOpt display.HandlerOption, wantGetter string) *display.Handler {
+	t.Helper()
+	if h, ok := buildTzAndCursorHandler(t, mode, tmpl, legacyOpt, wantGetter); ok {
+		return h
+	}
+	if h, ok := buildMediaAndThemeHandler(t, mode, tmpl, legacyOpt, wantGetter); ok {
+		return h
+	}
+	switch mode {
+	case "static_remote":
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithRemoteURLProvider(func() string { return "http://remote.lan" }))
+		if h.RemoteURL() != wantGetter {
+			t.Fatalf("remote getter: got %s, want %s", h.RemoteURL(), wantGetter)
+		}
+		return h
+	case "dyn_remote":
+		url := "http://dyn.lan"
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithRemoteURLProvider(func() string { return url }))
+		if h.RemoteURL() != "http://dyn.lan" {
+			t.Fatalf("remote initial: got %s, want http://dyn.lan", h.RemoteURL())
+		}
+		url = wantGetter
+		if h.RemoteURL() != wantGetter {
+			t.Fatalf("remote dynamic: got %s, want %s", h.RemoteURL(), wantGetter)
+		}
+		url = "http://dyn.lan"
+		return h
+	default:
+		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl))
+		if h.Timezone() != "UTC" || h.HideCursor() || h.RemoteURL() != "" || h.Theme() != "day" || h.HeaderVideo() != nil {
+			t.Fatalf("defaults mismatch")
+		}
+		return h
+	}
+}
+
 func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 	t.Parallel()
 	tmpl := []byte(`<body data-tz="{{ .Timezone }}" class="{{ if .HideCursor }}cursor-hidden{{ end }}" data-remote="{{ .RemoteURL }}" data-theme="{{ .Theme }}" data-grid="{{ .Grid }}">{{ if .HeaderVideo }}<div id="video" data-id="{{ .HeaderVideo.StreamID }}" data-url="{{ .HeaderVideo.StreamURL }}" data-ctrl="{{ .HeaderVideo.ControlURL }}" data-type="{{ .HeaderVideo.Type }}"></div>{{ end }}</body>`)
@@ -103,94 +220,8 @@ func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var h *display.Handler
 			legacyOpt := display.WithUIProvider(func() string { return "legacy" })
-			switch tc.mode {
-			case "static_tz":
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithTimezoneProvider(func() string { return "America/Los_Angeles" }))
-				if h.Timezone() != tc.wantGetter {
-					t.Fatalf("tz getter: got %s, want %s", h.Timezone(), tc.wantGetter)
-				}
-			case "dyn_tz":
-				tz := "Europe/London"
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithTimezoneProvider(func() string { return tz }))
-				if h.Timezone() != "Europe/London" {
-					t.Fatalf("tz initial: got %s, want Europe/London", h.Timezone())
-				}
-				tz = tc.wantGetter
-				if h.Timezone() != tc.wantGetter {
-					t.Fatalf("tz dynamic: got %s, want %s", h.Timezone(), tc.wantGetter)
-				}
-				tz = "Europe/London"
-			case "static_hide":
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return true }))
-				if !h.HideCursor() {
-					t.Fatalf("hide getter: expected true")
-				}
-			case "static_unhide":
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return false }))
-				if h.HideCursor() {
-					t.Fatalf("hide getter: expected false")
-				}
-			case "dyn_hide":
-				val := false
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return val }))
-				val = true
-				if !h.HideCursor() {
-					t.Fatalf("dyn hide getter: expected true")
-				}
-			case "set_hide":
-				val := false
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return val }))
-				val = true
-				if !h.HideCursor() {
-					t.Fatalf("set hide getter: expected true")
-				}
-			case "static_remote":
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithRemoteURLProvider(func() string { return "http://remote.lan" }))
-				if h.RemoteURL() != tc.wantGetter {
-					t.Fatalf("remote getter: got %s, want %s", h.RemoteURL(), tc.wantGetter)
-				}
-			case "dyn_remote":
-				url := "http://dyn.lan"
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithRemoteURLProvider(func() string { return url }))
-				if h.RemoteURL() != "http://dyn.lan" {
-					t.Fatalf("remote initial: got %s, want http://dyn.lan", h.RemoteURL())
-				}
-				url = tc.wantGetter
-				if h.RemoteURL() != tc.wantGetter {
-					t.Fatalf("remote dynamic: got %s, want %s", h.RemoteURL(), tc.wantGetter)
-				}
-				url = "http://dyn.lan"
-			case "static_video":
-				vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "cam1", StreamURL: "http://cam.lan", ControlURL: "http://ctrl.lan", Type: "webrtc"}
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
-				if h.HeaderVideo() != vData {
-					t.Fatalf("video getter mismatch")
-				}
-			case "dyn_video":
-				vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "live-cam"}
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
-				if h.HeaderVideo().StreamID != tc.wantGetter {
-					t.Fatalf("dyn video getter mismatch")
-				}
-			case "dyn_theme":
-				th := "night"
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithThemeProvider(func() string { return th }))
-				if h.Theme() != tc.wantGetter {
-					t.Fatalf("theme getter: got %s, want %s", h.Theme(), tc.wantGetter)
-				}
-			case "dyn_grid":
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithGridProvider(func() string { return "3x6" }))
-				if h.Grid() != tc.wantGetter {
-					t.Fatalf("grid getter: got %s, want %s", h.Grid(), tc.wantGetter)
-				}
-			default:
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl))
-				if h.Timezone() != "UTC" || h.HideCursor() || h.RemoteURL() != "" || h.Theme() != "day" || h.HeaderVideo() != nil {
-					t.Fatalf("defaults mismatch")
-				}
-			}
+			h := buildTemplateHandlerForMode(t, tc.mode, tmpl, legacyOpt, tc.wantGetter)
 			rec := httptest.NewRecorder()
 			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
 			if tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub) {
