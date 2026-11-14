@@ -50,23 +50,100 @@ func TestHTTPProvider_Init(t *testing.T) {
 	}
 }
 
+type httpFetchTestCase struct {
+	name           string
+	method         string
+	status         int
+	respBody       string
+	token          string
+	secrets        map[string]string
+	dims           []int
+	cfg            map[string]any
+	wantVal        float64
+	wantErrSub     string
+	wantStatusCode int
+	cancelCtx      bool
+	badURL         bool
+}
+
+func assertHTTPFetchError(t *testing.T, err error, tc httpFetchTestCase) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+		t.Fatalf("Fetch() error = %v, want substring %q", err, tc.wantErrSub)
+	}
+	if tc.wantStatusCode != 0 {
+		var sc provider.HTTPStatusCoder
+		if !errors.As(err, &sc) || sc.StatusCode() != tc.wantStatusCode {
+			t.Fatalf("want status code %d, got %v", tc.wantStatusCode, err)
+		}
+		delay := provider.DefaultBackoffPolicy().ComputeRetryDelay(err, 1, 900*time.Second)
+		if (tc.wantStatusCode == 503 && delay >= 900*time.Second) || (tc.wantStatusCode == 400 && delay != 900*time.Second) {
+			t.Fatalf("unexpected retry delay for %d: %v", tc.wantStatusCode, delay)
+		}
+	}
+}
+
+func assertHTTPFetchSuccess(t *testing.T, data any, tc httpFetchTestCase, gotMethod, gotDims, gotAuth, gotBody string) {
+	t.Helper()
+	resMap, ok := data.(map[string]any)
+	if !ok || resMap["temperature"] != tc.wantVal {
+		t.Fatalf("unexpected data: %+v", data)
+	}
+	if tc.name == "fetch_post_ok" && (gotMethod != http.MethodPost || gotDims != "2x1" || gotAuth != "Bearer secret-token-123" || !strings.Contains(gotBody, "sensor.lr")) {
+		t.Fatalf("unexpected headers/body: method=%s dims=%s auth=%s body=%s", gotMethod, gotDims, gotAuth, gotBody)
+	}
+	if tc.name == "token_env_dims" && (gotDims != "3x2" || gotAuth != "Bearer secret-from-env") {
+		t.Fatalf("token_env dims header check failed: dims=%s auth=%s", gotDims, gotAuth)
+	}
+}
+
+func runHTTPFetchCase(t *testing.T, tc httpFetchTestCase) {
+	t.Helper()
+	var gotMethod, gotDims, gotAuth, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tc.cancelCtx {
+			<-r.Context().Done()
+			return
+		}
+		gotMethod, gotDims, gotAuth = r.Method, r.Header.Get("X-Widget-Dimensions"), r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(tc.status)
+		_, _ = w.Write([]byte(tc.respBody))
+	}))
+	defer srv.Close()
+
+	endpoint := srv.URL
+	if tc.badURL {
+		endpoint = "://invalid-url"
+	}
+	p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
+	if err := p.Init(context.Background(), tc.cfg, httpOpts(endpoint, tc.method, tc.token, tc.dims, tc.secrets, sampleResponseSchema())); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	ctx := context.Background()
+	if tc.cancelCtx {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		cancel()
+	}
+
+	data, err := p.Fetch(ctx)
+	if tc.wantErrSub != "" {
+		assertHTTPFetchError(t, err, tc)
+		return
+	}
+	if err != nil {
+		t.Fatalf("Fetch() unexpected error: %v", err)
+	}
+	assertHTTPFetchSuccess(t, data, tc, gotMethod, gotDims, gotAuth, gotBody)
+}
+
 func TestHTTPProvider_Fetch(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name           string
-		method         string
-		status         int
-		respBody       string
-		token          string
-		secrets        map[string]string
-		dims           []int
-		cfg            map[string]any
-		wantVal        float64
-		wantErrSub     string
-		wantStatusCode int
-		cancelCtx      bool
-		badURL         bool
-	}{
+	tests := []httpFetchTestCase{
 		{"fetch_post_ok", "POST", 200, `{"temperature":72.5,"humidity":45.0,"status":"good"}`, "secret-token-123", nil, []int{2, 1}, map[string]any{"entity_id": "sensor.lr", "unit": "F"}, 72.5, "", 0, false, false},
 		{"fetch_get_ok", "GET", 200, `{"temperature":68.0,"humidity":50.0}`, "", map[string]string{"token_env": "env-token-456"}, nil, nil, 68.0, "", 0, false, false},
 		{"token_env_dims", "POST", 200, `{"temperature":70.0,"humidity":40.0}`, "", map[string]string{"token_env": "secret-from-env"}, []int{3, 2}, nil, 70.0, "", 0, false, false},
@@ -83,67 +160,7 @@ func TestHTTPProvider_Fetch(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var gotMethod, gotDims, gotAuth, gotBody string
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if tc.cancelCtx {
-					<-r.Context().Done()
-					return
-				}
-				gotMethod, gotDims, gotAuth = r.Method, r.Header.Get("X-Widget-Dimensions"), r.Header.Get("Authorization")
-				b, _ := io.ReadAll(r.Body)
-				gotBody = string(b)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(tc.status)
-				_, _ = w.Write([]byte(tc.respBody))
-			}))
-			defer srv.Close()
-
-			endpoint := srv.URL
-			if tc.badURL {
-				endpoint = "://invalid-url"
-			}
-			p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
-			if err := p.Init(context.Background(), tc.cfg, httpOpts(endpoint, tc.method, tc.token, tc.dims, tc.secrets, sampleResponseSchema())); err != nil {
-				t.Fatalf("Init failed: %v", err)
-			}
-
-			ctx := context.Background()
-			if tc.cancelCtx {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				cancel()
-			}
-
-			data, err := p.Fetch(ctx)
-			if tc.wantErrSub != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
-					t.Fatalf("Fetch() error = %v, want substring %q", err, tc.wantErrSub)
-				}
-				if tc.wantStatusCode != 0 {
-					var sc provider.HTTPStatusCoder
-					if !errors.As(err, &sc) || sc.StatusCode() != tc.wantStatusCode {
-						t.Fatalf("want status code %d, got %v", tc.wantStatusCode, err)
-					}
-					delay := provider.DefaultBackoffPolicy().ComputeRetryDelay(err, 1, 900*time.Second)
-					if (tc.wantStatusCode == 503 && delay >= 900*time.Second) || (tc.wantStatusCode == 400 && delay != 900*time.Second) {
-						t.Fatalf("unexpected retry delay for %d: %v", tc.wantStatusCode, delay)
-					}
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Fetch() unexpected error: %v", err)
-			}
-			resMap, ok := data.(map[string]any)
-			if !ok || resMap["temperature"] != tc.wantVal {
-				t.Fatalf("unexpected data: %+v", data)
-			}
-			if tc.name == "fetch_post_ok" && (gotMethod != http.MethodPost || gotDims != "2x1" || gotAuth != "Bearer secret-token-123" || !strings.Contains(gotBody, "sensor.lr")) {
-				t.Fatalf("unexpected headers/body: method=%s dims=%s auth=%s body=%s", gotMethod, gotDims, gotAuth, gotBody)
-			}
-			if tc.name == "token_env_dims" && (gotDims != "3x2" || gotAuth != "Bearer secret-from-env") {
-				t.Fatalf("token_env dims header check failed: dims=%s auth=%s", gotDims, gotAuth)
-			}
+			runHTTPFetchCase(t, tc)
 		})
 	}
 }

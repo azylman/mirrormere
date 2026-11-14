@@ -147,6 +147,56 @@ func TestTasksProvider_Init_Todoist_EnvFallback(t *testing.T) {
 	}
 }
 
+type tasksFetchTestCase struct {
+	name, wantErrSub, wantListID string
+	adapter                      adapters.Adapter
+	cfg                          map[string]any
+	opts                         provider.InitOptions
+	skipInit                     bool
+	wantItems                    int
+}
+
+func runTasksFetchCase(ctx context.Context, t *testing.T, tc tasksFetchTestCase) {
+	t.Helper()
+	p := provider.NewTasksProviderWithAdapter(tc.adapter)
+	if !tc.skipInit {
+		if err := p.Init(ctx, tc.cfg, tc.opts); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+		defer p.Shutdown(ctx)
+	}
+	res, err := p.Fetch(ctx)
+	if tc.wantErrSub != "" {
+		if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+			t.Fatalf("expected error containing %q, got %v", tc.wantErrSub, err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected Fetch error: %v", err)
+	}
+	assertTasksFetchSnapshot(t, res, tc)
+}
+
+func assertTasksFetchSnapshot(t *testing.T, res any, tc tasksFetchTestCase) {
+	t.Helper()
+	snap, ok := res.(*tasks.TasksSnapshot)
+	if !ok || snap == nil {
+		t.Fatalf("expected *tasks.TasksSnapshot, got %T", res)
+	}
+	if tc.wantListID != "" && snap.List.ID != tc.wantListID {
+		t.Errorf("expected List.ID %q, got %q", tc.wantListID, snap.List.ID)
+	}
+	for _, itm := range snap.Items {
+		if tc.wantListID != "" && itm.ListID != tc.wantListID {
+			t.Errorf("expected item ListID %q, got %q", tc.wantListID, itm.ListID)
+		}
+	}
+	if tc.wantItems >= 0 && len(snap.Items) != tc.wantItems {
+		t.Errorf("expected %d items, got %d", tc.wantItems, len(snap.Items))
+	}
+}
+
 func TestTasksProvider_Fetch(t *testing.T) {
 	t.Parallel()
 
@@ -170,14 +220,7 @@ func TestTasksProvider_Fetch(t *testing.T) {
 	due := "2026-10-01"
 	lCh := mkTaskList("daily-chores", "Daily Chores", "todoist")
 	fakeWithDue := &fakeAdapter{name: "todoist", list: &lCh, items: []tasks.ListItem{{ID: "t1", ListID: "daily-chores", Title: "Water plants", DueDate: &due}}}
-	tests := []struct {
-		name, wantErrSub, wantListID string
-		adapter                      adapters.Adapter
-		cfg                          map[string]any
-		opts                         provider.InitOptions
-		skipInit                     bool
-		wantItems                    int
-	}{
+	tests := []tasksFetchTestCase{
 		{"uninitialized", "not initialized", "", nil, nil, provider.InitOptions{}, true, 0},
 		{"adapter_success", "", "daily-chores", fakeWithDue, map[string]any{"list_id": "daily-chores", "source": "todoist", "show_completed": 5}, mkOpts("widget-chores", nil, ""), false, 1},
 		{"adapter_failure", "upstream timeout", "", &fakeAdapter{name: "todoist", fetchErr: errors.New("upstream timeout")}, map[string]any{"list_id": "daily-chores"}, mkOpts("widget-chores", nil, ""), false, 0},
@@ -188,39 +231,7 @@ func TestTasksProvider_Fetch(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ctx := context.Background()
-			p := provider.NewTasksProviderWithAdapter(tc.adapter)
-			if !tc.skipInit {
-				if err := p.Init(ctx, tc.cfg, tc.opts); err != nil {
-					t.Fatalf("Init failed: %v", err)
-				}
-				defer p.Shutdown(ctx)
-			}
-			res, err := p.Fetch(ctx)
-			if tc.wantErrSub != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErrSub)) {
-				t.Fatalf("expected error containing %q, got %v", tc.wantErrSub, err)
-			}
-			if tc.wantErrSub == "" && err != nil {
-				t.Fatalf("unexpected Fetch error: %v", err)
-			}
-			if tc.wantErrSub != "" {
-				return
-			}
-			snap, ok := res.(*tasks.TasksSnapshot)
-			if !ok || snap == nil {
-				t.Fatalf("expected *tasks.TasksSnapshot, got %T", res)
-			}
-			if tc.wantListID != "" && snap.List.ID != tc.wantListID {
-				t.Errorf("expected List.ID %q, got %q", tc.wantListID, snap.List.ID)
-			}
-			for _, itm := range snap.Items {
-				if tc.wantListID != "" && itm.ListID != tc.wantListID {
-					t.Errorf("expected item ListID %q, got %q", tc.wantListID, itm.ListID)
-				}
-			}
-			if tc.wantItems >= 0 && len(snap.Items) != tc.wantItems {
-				t.Errorf("expected %d items, got %d", tc.wantItems, len(snap.Items))
-			}
+			runTasksFetchCase(context.Background(), t, tc)
 		})
 	}
 }
