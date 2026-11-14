@@ -94,6 +94,29 @@ func TestFormatDeficitError_Formatting(t *testing.T) {
 	}
 }
 
+func verifyArchetypeScreens(t *testing.T, res *layout.Layout, wantScreens int) {
+	t.Helper()
+	if res.TotalScreens != wantScreens || len(res.Screens) != wantScreens {
+		t.Fatalf("TotalScreens = %d, want %d", res.TotalScreens, wantScreens)
+	}
+	for i, s := range res.Screens {
+		if s.Index != i {
+			t.Errorf("screen %d has index %d", i, s.Index)
+		}
+		if s.Bitmask != layout.FullGridMask {
+			t.Errorf("screen %d bitmask %012b; want %012b", i, s.Bitmask, layout.FullGridMask)
+		}
+		for _, pw := range s.Widgets {
+			if pw.Cols() != pw.Dimensions.Cols || pw.Rows() != pw.Dimensions.Rows {
+				t.Errorf("size mismatch for %s", pw.WidgetID)
+			}
+			if pw.Col() != pw.Origin[0] || pw.Row() != pw.Origin[1] {
+				t.Errorf("origin mismatch for %s", pw.WidgetID)
+			}
+		}
+	}
+}
+
 func TestSolve_Archetypes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -119,25 +142,7 @@ func TestSolve_Archetypes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Solve failed: %v", err)
 			}
-			if res.TotalScreens != tc.wantScreens || len(res.Screens) != tc.wantScreens {
-				t.Fatalf("TotalScreens = %d, want %d", res.TotalScreens, tc.wantScreens)
-			}
-			for i, s := range res.Screens {
-				if s.Index != i {
-					t.Errorf("screen %d has index %d", i, s.Index)
-				}
-				if s.Bitmask != layout.FullGridMask {
-					t.Errorf("screen %d bitmask %012b; want %012b", i, s.Bitmask, layout.FullGridMask)
-				}
-				for _, pw := range s.Widgets {
-					if pw.Cols() != pw.Dimensions.Cols || pw.Rows() != pw.Dimensions.Rows {
-						t.Errorf("size mismatch for %s", pw.WidgetID)
-					}
-					if pw.Col() != pw.Origin[0] || pw.Row() != pw.Origin[1] {
-						t.Errorf("origin mismatch for %s", pw.WidgetID)
-					}
-				}
-			}
+			verifyArchetypeScreens(t, res, tc.wantScreens)
 		})
 	}
 }
@@ -390,17 +395,18 @@ func mkExp(id, typ string, screen, col, row, cols, rows int, pinned bool) layout
 	}
 }
 
-func TestSolveExplicit(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		placements  []layout.ExplicitPlacement
-		gridCols    int
-		gridRows    int
-		wantScreens int
-		wantSpacers int
-		wantErr     string
-	}{
+type solveExplicitCase struct {
+	name        string
+	placements  []layout.ExplicitPlacement
+	gridCols    int
+	gridRows    int
+	wantScreens int
+	wantSpacers int
+	wantErr     string
+}
+
+func solveExplicitValidCases() []solveExplicitCase {
+	return []solveExplicitCase{
 		{
 			name:        "empty placements fills single screen with spacer",
 			placements:  nil,
@@ -484,6 +490,11 @@ func TestSolveExplicit(t *testing.T) {
 			wantScreens: 1,
 			wantSpacers: 0,
 		},
+	}
+}
+
+func solveExplicitErrorCases() []solveExplicitCase {
+	return []solveExplicitCase{
 		{
 			name: "empty id error",
 			placements: []layout.ExplicitPlacement{
@@ -570,31 +581,41 @@ func TestSolveExplicit(t *testing.T) {
 			wantErr:  "widget overlap",
 		},
 	}
+}
+
+func verifySolveExplicitCase(t *testing.T, tc solveExplicitCase) {
+	t.Helper()
+	layoutRes, spacers, err := layout.SolveExplicit(tc.placements, tc.gridCols, tc.gridRows)
+	if tc.wantErr != "" {
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Fatalf("SolveExplicit() err = %v, want substring %q", err, tc.wantErr)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("SolveExplicit() unexpected error: %v", err)
+	}
+	if layoutRes.TotalScreens != tc.wantScreens {
+		t.Errorf("TotalScreens = %d, want %d", layoutRes.TotalScreens, tc.wantScreens)
+	}
+	if len(spacers) != tc.wantSpacers {
+		t.Errorf("len(spacers) = %d, want %d", len(spacers), tc.wantSpacers)
+	}
+	for s, scr := range layoutRes.Screens {
+		wantMask := fullGridMask(tc.gridCols, tc.gridRows)
+		if scr.Bitmask != wantMask {
+			t.Errorf("screen %d Bitmask = 0x%05X, want fullGridMask(%d, %d) (0x%05X)", s, scr.Bitmask, tc.gridCols, tc.gridRows, wantMask)
+		}
+	}
+}
+
+func TestSolveExplicit(t *testing.T) {
+	t.Parallel()
+	tests := append(solveExplicitValidCases(), solveExplicitErrorCases()...)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			layoutRes, spacers, err := layout.SolveExplicit(tc.placements, tc.gridCols, tc.gridRows)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("SolveExplicit() err = %v, want substring %q", err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("SolveExplicit() unexpected error: %v", err)
-			}
-			if layoutRes.TotalScreens != tc.wantScreens {
-				t.Errorf("TotalScreens = %d, want %d", layoutRes.TotalScreens, tc.wantScreens)
-			}
-			if len(spacers) != tc.wantSpacers {
-				t.Errorf("len(spacers) = %d, want %d", len(spacers), tc.wantSpacers)
-			}
-			for s, scr := range layoutRes.Screens {
-				wantMask := fullGridMask(tc.gridCols, tc.gridRows)
-				if scr.Bitmask != wantMask {
-					t.Errorf("screen %d Bitmask = 0x%05X, want fullGridMask(%d, %d) (0x%05X)", s, scr.Bitmask, tc.gridCols, tc.gridRows, wantMask)
-				}
-			}
+			verifySolveExplicitCase(t, tc)
 		})
 	}
 }

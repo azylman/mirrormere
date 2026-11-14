@@ -154,6 +154,58 @@ func (f *fakeSnapProvider) CurrentStatus() config.Status { return config.Status{
 func (f *fakeSnapProvider) GetTheme() string             { return f.theme }
 func (f *fakeSnapProvider) SetTheme(s string)            { f.theme = s }
 
+func runHouseholdNowCase(t *testing.T, sp *fakeSnapProvider, wantTheme string) {
+	t.Helper()
+	var prov render.StateSnapshotProvider
+	if sp != nil {
+		prov = sp
+	}
+	now := householdNowFunc(prov)()
+	if wantTheme != "" {
+		if z, _ := now.Zone(); z != wantTheme {
+			t.Fatalf("zone = %s, want %s", z, wantTheme)
+		}
+	} else if now.IsZero() {
+		t.Fatal("expected non-zero time")
+	}
+}
+
+func runHouseholdThemeCase(t *testing.T, sp *fakeSnapProvider, wantTheme string) {
+	t.Helper()
+	var prov render.StateSnapshotProvider
+	if sp != nil {
+		prov = sp
+	}
+	got := householdThemeFunc(prov)()
+	if wantTheme == "auto" {
+		if got != "day" && got != "night" {
+			t.Fatalf("auto theme = %s", got)
+		}
+	} else if got != wantTheme {
+		t.Fatalf("theme = %s, want %s", got, wantTheme)
+	}
+}
+
+func runHouseholdTransitionCase(t *testing.T, sp *fakeSnapProvider, tcName, themeMode string, wantBool bool) {
+	t.Helper()
+	var cur func() string
+	if tcName != "trans_nil_fn" {
+		cur = func() string { return themeMode }
+	}
+	var prov interface {
+		GetTheme() string
+		SetTheme(theme string)
+	}
+	if sp != nil {
+		prov = sp
+	}
+	hub := events.NewHub(events.HubConfig{}, nil, nil)
+	defer hub.Close()
+	if changed := evaluateThemeTransition(cur, prov, hub, slog.Default()); changed != wantBool {
+		t.Fatalf("transition = %v, want %v", changed, wantBool)
+	}
+}
+
 func TestHouseholdHelpers(t *testing.T) {
 	tests := []struct {
 		name, helper, tz, themeMode string
@@ -192,48 +244,11 @@ func TestHouseholdHelpers(t *testing.T) {
 			}
 			switch tc.helper {
 			case "now":
-				var prov render.StateSnapshotProvider
-				if sp != nil {
-					prov = sp
-				}
-				now := householdNowFunc(prov)()
-				if tc.wantTheme != "" {
-					if z, _ := now.Zone(); z != tc.wantTheme {
-						t.Fatalf("zone = %s, want %s", z, tc.wantTheme)
-					}
-				} else if now.IsZero() {
-					t.Fatal("expected non-zero time")
-				}
+				runHouseholdNowCase(t, sp, tc.wantTheme)
 			case "theme":
-				var prov render.StateSnapshotProvider
-				if sp != nil {
-					prov = sp
-				}
-				got := householdThemeFunc(prov)()
-				if tc.wantTheme == "auto" {
-					if got != "day" && got != "night" {
-						t.Fatalf("auto theme = %s", got)
-					}
-				} else if got != tc.wantTheme {
-					t.Fatalf("theme = %s, want %s", got, tc.wantTheme)
-				}
+				runHouseholdThemeCase(t, sp, tc.wantTheme)
 			case "transition":
-				var cur func() string
-				if tc.name != "trans_nil_fn" {
-					cur = func() string { return tc.themeMode }
-				}
-				var prov interface {
-					GetTheme() string
-					SetTheme(theme string)
-				}
-				if sp != nil {
-					prov = sp
-				}
-				hub := events.NewHub(events.HubConfig{}, nil, nil)
-				defer hub.Close()
-				if changed := evaluateThemeTransition(cur, prov, hub, slog.Default()); changed != tc.wantBool {
-					t.Fatalf("transition = %v, want %v", changed, tc.wantBool)
-				}
+				runHouseholdTransitionCase(t, sp, tc.name, tc.themeMode, tc.wantBool)
 			}
 		})
 	}
@@ -334,6 +349,53 @@ func TestRun_CLIAndErrors(t *testing.T) {
 	}
 }
 
+func runDaemonSmokeEndpoints(t *testing.T, baseURL string) {
+	t.Helper()
+	c := &http.Client{Timeout: 5 * time.Second}
+	endpoints := []struct {
+		path, match string
+		status      int
+	}{
+		{"/healthz", "", 200},
+		{"/api/audio", `"volume":75`, 200},
+		{"/api/video/state", `"mode":"widgets"`, 200},
+		{"/display", "static/ui/app.js", 200},
+		{"/display?ui=legacy", "mirrormere-app", 200},
+		{"/style.css", "", 200},
+	}
+	for _, ep := range endpoints {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+ep.path, nil)
+		r, err := c.Do(req)
+		if err != nil || r.StatusCode != ep.status {
+			t.Fatalf("GET %s = %v, err=%v", ep.path, r.StatusCode, err)
+		}
+		b, _ := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		if ep.match != "" && !strings.Contains(string(b), ep.match) {
+			t.Fatalf("GET %s = %s", ep.path, string(b))
+		}
+	}
+
+	completeReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/lists/test/items/item-1/complete", nil)
+	completeResp, err := c.Do(completeReq)
+	if err != nil || completeResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("POST /api/lists/test/items/item-1/complete = %v, err=%v", completeResp.StatusCode, err)
+	}
+	_ = completeResp.Body.Close()
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/events", nil)
+	r, err := http.DefaultClient.Do(req)
+	if err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("events: %v", err)
+	}
+	buf := make([]byte, 256)
+	n, _ := r.Body.Read(buf)
+	_ = r.Body.Close()
+	if n == 0 {
+		t.Fatal("empty events chunk")
+	}
+}
+
 func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 	tests := []struct {
 		name, envHost, envPort string
@@ -355,53 +417,84 @@ func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 			d := startDaemon(t, yamlContent, "", nil)
 
 			if tc.smokeCheck {
-				c := &http.Client{Timeout: 5 * time.Second}
-				for _, ep := range []struct {
-					path, match string
-					status      int
-				}{
-					{"/healthz", "", 200},
-					{"/api/audio", `"volume":75`, 200},
-					{"/api/video/state", `"mode":"widgets"`, 200},
-					{"/display", "static/ui/app.js", 200},
-					{"/display?ui=legacy", "mirrormere-app", 200},
-					{"/style.css", "", 200},
-				} {
-					r, err := c.Get(d.baseURL + ep.path)
-					if err != nil || r.StatusCode != ep.status {
-						t.Fatalf("GET %s = %v, err=%v", ep.path, r.StatusCode, err)
-					}
-					b, _ := io.ReadAll(r.Body)
-					_ = r.Body.Close()
-					if ep.match != "" && !strings.Contains(string(b), ep.match) {
-						t.Fatalf("GET %s = %s", ep.path, string(b))
-					}
-				}
-
-				completeReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, d.baseURL+"/api/lists/test/items/item-1/complete", nil)
-				completeResp, err := c.Do(completeReq)
-				if err != nil || completeResp.StatusCode != http.StatusNotFound {
-					t.Fatalf("POST /api/lists/test/items/item-1/complete = %v, err=%v", completeResp.StatusCode, err)
-				}
-				_ = completeResp.Body.Close()
-
-				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, d.baseURL+"/api/events", nil)
-				r, err := http.DefaultClient.Do(req)
-				if err != nil || r.StatusCode != http.StatusOK {
-					t.Fatalf("events: %v", err)
-				}
-				buf := make([]byte, 256)
-				n, _ := r.Body.Read(buf)
-				_ = r.Body.Close()
-				if n == 0 {
-					t.Fatal("empty events chunk")
-				}
-			} else if tc.envHost != "" {
+				runDaemonSmokeEndpoints(t, d.baseURL)
+				return
+			}
+			if tc.envHost != "" {
 				if strings.Contains(d.baseURL, "1.2.3.4") || strings.HasSuffix(d.baseURL, ":9999") {
 					t.Fatalf("env host/port not ignored: %s", d.baseURL)
 				}
 			}
 		})
+	}
+}
+
+func applySighupAction(d *testDaemon, action string) {
+	switch action {
+	case "valid_yaml":
+		_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.1\"\nport: 0\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
+	case "invalid_yaml":
+		_ = os.WriteFile(d.configPath, []byte("timezone: [invalid: -"), 0o644)
+	case "read_error":
+		_ = os.Remove(d.configPath)
+	case "style_reload":
+		_ = os.WriteFile(filepath.Join(d.tmpDir, "custom.css"), []byte("body { background: #9b59b6; }"), 0o644)
+	case "widget_reload":
+		_ = os.WriteFile(filepath.Join(d.tmpDir, "widgets", "clock", "views", "widget.html"), []byte("<div>Hot Reloaded Clock View</div>"), 0o644)
+	case "web_reload":
+		_ = os.WriteFile(filepath.Join(d.tmpDir, "web", "static", "ui", "app.js"), []byte("console.log('hot-reloaded');"), 0o644)
+	case "host_port_change":
+		_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.2\"\nport: 9090\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
+	}
+}
+
+func listenSseEvents(ctx context.Context, t *testing.T, baseURL string) <-chan string {
+	t.Helper()
+	sseEvents := make(chan string, 20)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("SSE connect: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if after, ok := strings.CutPrefix(line, "event: "); ok {
+				sseEvents <- after
+			}
+		}
+	}()
+	return sseEvents
+}
+
+func waitSseEvent(t *testing.T, sseEvents <-chan string, wantEvt string) {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case evt := <-sseEvents:
+			if evt == wantEvt {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for SSE event %s", wantEvt)
+		}
+	}
+}
+
+func assertDaemonHTTPResponse(t *testing.T, baseURL, path, wantBody string) {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+path, nil)
+	r, err := http.DefaultClient.Do(req)
+	if err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s failed: %v", path, err)
+	}
+	b, _ := io.ReadAll(r.Body)
+	_ = r.Body.Close()
+	if !strings.Contains(string(b), wantBody) {
+		t.Fatalf("GET %s = %s, want %s", path, string(b), wantBody)
 	}
 }
 
@@ -428,43 +521,12 @@ func TestRun_SIGHUP(t *testing.T) {
 			initCSS := "body { background: #000; }"
 			d := startDaemon(t, initYAML, initCSS, customWidget)
 
-			var sseEvents chan string
+			var sseEvents <-chan string
 			if tc.wantEvtType != "" {
-				sseEvents = make(chan string, 20)
-				sseCtx := t.Context()
-				req, _ := http.NewRequestWithContext(sseCtx, http.MethodGet, d.baseURL+"/api/events", nil)
-				resp, err := http.DefaultClient.Do(req)
-				if err != nil {
-					t.Fatalf("SSE connect: %v", err)
-				}
-				t.Cleanup(func() { _ = resp.Body.Close() })
-				go func() {
-					scanner := bufio.NewScanner(resp.Body)
-					for scanner.Scan() {
-						line := scanner.Text()
-						if after, ok := strings.CutPrefix(line, "event: "); ok {
-							sseEvents <- after
-						}
-					}
-				}()
+				sseEvents = listenSseEvents(t.Context(), t, d.baseURL)
 			}
 
-			switch tc.action {
-			case "valid_yaml":
-				_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.1\"\nport: 0\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
-			case "invalid_yaml":
-				_ = os.WriteFile(d.configPath, []byte("timezone: [invalid: -"), 0o644)
-			case "read_error":
-				_ = os.Remove(d.configPath)
-			case "style_reload":
-				_ = os.WriteFile(filepath.Join(d.tmpDir, "custom.css"), []byte("body { background: #9b59b6; }"), 0o644)
-			case "widget_reload":
-				_ = os.WriteFile(filepath.Join(d.tmpDir, "widgets", "clock", "views", "widget.html"), []byte("<div>Hot Reloaded Clock View</div>"), 0o644)
-			case "web_reload":
-				_ = os.WriteFile(filepath.Join(d.tmpDir, "web", "static", "ui", "app.js"), []byte("console.log('hot-reloaded');"), 0o644)
-			case "host_port_change":
-				_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.2\"\nport: 9090\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
-			}
+			applySighupAction(d, tc.action)
 
 			d.hupChan <- syscall.SIGHUP
 			select {
@@ -474,29 +536,11 @@ func TestRun_SIGHUP(t *testing.T) {
 			}
 
 			if tc.wantEvtType != "" {
-				deadline := time.After(3 * time.Second)
-				for found := false; !found; {
-					select {
-					case evt := <-sseEvents:
-						if evt == tc.wantEvtType {
-							found = true
-						}
-					case <-deadline:
-						t.Fatalf("timeout waiting for SSE event %s", tc.wantEvtType)
-					}
-				}
+				waitSseEvent(t, sseEvents, tc.wantEvtType)
 			}
 
 			if tc.wantHTTPPath != "" {
-				r, err := http.Get(d.baseURL + tc.wantHTTPPath)
-				if err != nil || r.StatusCode != http.StatusOK {
-					t.Fatalf("GET %s failed: %v", tc.wantHTTPPath, err)
-				}
-				b, _ := io.ReadAll(r.Body)
-				_ = r.Body.Close()
-				if !strings.Contains(string(b), tc.wantHTTPBody) {
-					t.Fatalf("GET %s = %s, want %s", tc.wantHTTPPath, string(b), tc.wantHTTPBody)
-				}
+				assertDaemonHTTPResponse(t, d.baseURL, tc.wantHTTPPath, tc.wantHTTPBody)
 			}
 
 			if tc.wantLogSub != "" {
@@ -505,7 +549,8 @@ func TestRun_SIGHUP(t *testing.T) {
 				}
 			}
 			if tc.action == "invalid_yaml" || tc.action == "read_error" {
-				if r, err := http.Get(d.baseURL + "/display"); err != nil || r.StatusCode != http.StatusOK {
+				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, d.baseURL+"/display", nil)
+				if r, err := http.DefaultClient.Do(req); err != nil || r.StatusCode != http.StatusOK {
 					t.Fatalf("display LKGC: %v", err)
 				} else {
 					_ = r.Body.Close()

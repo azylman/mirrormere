@@ -10,10 +10,8 @@ import (
 	"github.com/azylman/mirrormere/internal/layout"
 )
 
-func TestInMemoryStateProvider(t *testing.T) {
-	t.Parallel()
-	provider := NewInMemoryStateProvider(nil)
-
+func assertProviderDefaultsAndSnapshot(t *testing.T, provider *InMemoryStateProvider) {
+	t.Helper()
 	if provider.CurrentSnapshot() != nil || provider.CurrentStatus().ConfigStatus != config.ConfigStatusOK ||
 		provider.GetVideoState().Mode != "widgets" || provider.GetAudioState().Volume != 75 || provider.GetAudioState().Muted ||
 		provider.GetVoiceState().State != "idle" || provider.GetTheme() != "day" || provider.GetProvidersStatus() != nil ||
@@ -41,7 +39,10 @@ func TestInMemoryStateProvider(t *testing.T) {
 	if provider.CurrentStatus().ConfigStatus != config.ConfigStatusError {
 		t.Fatal("SetStatus failed")
 	}
+}
 
+func assertProviderWidgetAndMedia(t *testing.T, provider *InMemoryStateProvider) {
+	t.Helper()
 	provider.SetWidgetState("w1", map[string]string{"k": "v"}, "healthy", "2026-09-25T10:00:00Z")
 	d, s, ts, ok := provider.GetWidgetState("w1")
 	if !ok || s != "healthy" || d == nil || ts != "2026-09-25T10:00:00Z" {
@@ -73,7 +74,10 @@ func TestInMemoryStateProvider(t *testing.T) {
 	if provider.GetAudioState().Volume != 75 {
 		t.Fatal("expected fallback audio volume 75")
 	}
+}
 
+func assertProviderVoiceThemeRotate(t *testing.T, provider *InMemoryStateProvider) {
+	t.Helper()
 	txt := "hi"
 	provider.SetVoiceState(&VoiceStateData{State: "speaking", Transcript: &txt})
 	if provider.GetVoiceState().State != "speaking" || *provider.GetVoiceState().Transcript != "hi" {
@@ -104,6 +108,46 @@ func TestInMemoryStateProvider(t *testing.T) {
 	}
 }
 
+func TestInMemoryStateProvider(t *testing.T) {
+	t.Parallel()
+	provider := NewInMemoryStateProvider(nil)
+	assertProviderDefaultsAndSnapshot(t, provider)
+	assertProviderWidgetAndMedia(t, provider)
+	assertProviderVoiceThemeRotate(t, provider)
+}
+
+type hydrationTestCase struct {
+	name      string
+	provider  StateProvider
+	wantLen   int
+	wantTypes []string
+	wantSub   string
+}
+
+func verifyHydrationBatchEvents(t *testing.T, batch []*Event, tc hydrationTestCase) {
+	t.Helper()
+	if len(batch) != tc.wantLen {
+		t.Fatalf("expected batch length %d, got %d", tc.wantLen, len(batch))
+	}
+	for i, wantType := range tc.wantTypes {
+		if batch[i].Type != wantType {
+			t.Errorf("event %d: expected type %s, got %s", i, wantType, batch[i].Type)
+		}
+	}
+	if tc.wantSub != "" {
+		var found bool
+		for _, evt := range batch {
+			if strings.Contains(string(evt.Data), tc.wantSub) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected batch to contain %q", tc.wantSub)
+		}
+	}
+}
+
 func TestBuildHydrationBatch(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 25, 20, 0, 0, 0, time.UTC)
@@ -131,13 +175,7 @@ func TestBuildHydrationBatch(t *testing.T) {
 		return p
 	}
 
-	tests := []struct {
-		name      string
-		provider  StateProvider
-		wantLen   int
-		wantTypes []string
-		wantSub   string
-	}{
+	tests := []hydrationTestCase{
 		{
 			name: "nil_provider", provider: nil, wantLen: 7,
 			wantTypes: []string{EventScreenRotate, EventHeaderUpdate, EventVideoState, EventAudioState, EventVoiceState, EventSystemStatus, EventThemeUpdate},
@@ -158,26 +196,7 @@ func TestBuildHydrationBatch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			batch := BuildHydrationBatch(tc.provider, idGen, now)
-			if len(batch) != tc.wantLen {
-				t.Fatalf("expected batch length %d, got %d", tc.wantLen, len(batch))
-			}
-			for i, wantType := range tc.wantTypes {
-				if batch[i].Type != wantType {
-					t.Errorf("event %d: expected type %s, got %s", i, wantType, batch[i].Type)
-				}
-			}
-			if tc.wantSub != "" {
-				var found bool
-				for _, evt := range batch {
-					if strings.Contains(string(evt.Data), tc.wantSub) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Fatalf("expected batch to contain %q", tc.wantSub)
-				}
-			}
+			verifyHydrationBatchEvents(t, batch, tc)
 		})
 	}
 }

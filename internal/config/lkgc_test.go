@@ -135,32 +135,8 @@ func mkCfg(ws ...config.WidgetConfig) *config.Config {
 	return &config.Config{Display: config.DisplayConfig{Widgets: ws}}
 }
 
-func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
-	t.Parallel()
-	loader := &mockPackageLoader{packages: createStandardPackages()}
-
-	if _, err := config.NewManager([]byte(validBaseYAML), nil, nil, nil); err == nil || !strings.Contains(err.Error(), "package loader cannot be nil") {
-		t.Fatalf("expected nil loader error, got %v", err)
-	}
-	if _, err := config.NewManager([]byte("invalid: yaml: ["), loader, nil, nil); err == nil || !strings.Contains(err.Error(), "initial configuration validation failed") {
-		t.Fatalf("expected initial validation error, got %v", err)
-	}
-	var emptyManager config.Manager
-	if emptyManager.Current() != nil || emptyManager.CurrentSnapshot() != nil || emptyManager.Status().ConfigStatus != config.ConfigStatusOK {
-		t.Errorf("expected zero-value manager defaults")
-	}
-	if _, err := config.ValidatePipeline([]byte(validBaseYAML), nil, nil); err == nil || !strings.Contains(err.Error(), "package loader cannot be nil") {
-		t.Fatalf("expected nil loader error, got %v", err)
-	}
-	if snap, err := config.ValidatePipeline([]byte(validBaseYAML), loader, nil); err != nil || snap == nil {
-		t.Fatalf("unexpected error with nil getenv: %v", err)
-	}
-
-	m, err := config.NewManager([]byte(validBaseYAML), loader, nil, nil)
-	if err != nil || m.Current() == nil || m.CurrentSnapshot() == nil {
-		t.Fatalf("cold boot failed: %v", err)
-	}
-
+func verifyManagerLifecycleStep(t *testing.T, m *config.Manager) {
+	t.Helper()
 	checkStatus := func(want config.ConfigStatus, wantSub string) {
 		t.Helper()
 		st := m.Status()
@@ -187,6 +163,17 @@ func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 	checkStatus(config.ConfigStatusOK, "")
 	if m.Status().LastSuccess.Before(origSuccess) {
 		t.Errorf("expected !LastSuccess.Before(origSuccess)")
+	}
+}
+
+func verifyManagerPackageErrors(t *testing.T, m *config.Manager) {
+	t.Helper()
+	checkStatus := func(want config.ConfigStatus, wantSub string) {
+		t.Helper()
+		st := m.Status()
+		if st.ConfigStatus != want || (wantSub != "" && (st.ConfigError == nil || !strings.Contains(*st.ConfigError, wantSub))) || (want == config.ConfigStatusOK && st.ConfigError != nil) {
+			t.Fatalf("checkStatus failed: want (%v, sub %q), got (%v, err %v)", want, wantSub, st.ConfigStatus, st.ConfigError)
+		}
 	}
 
 	m.SetPackageError("pkg-a", nil)
@@ -217,6 +204,36 @@ func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 		t.Fatalf("Reload failed: %v", err)
 	}
 	checkStatus(config.ConfigStatusOK, "")
+}
+
+func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
+	t.Parallel()
+	loader := &mockPackageLoader{packages: createStandardPackages()}
+
+	if _, err := config.NewManager([]byte(validBaseYAML), nil, nil, nil); err == nil || !strings.Contains(err.Error(), "package loader cannot be nil") {
+		t.Fatalf("expected nil loader error, got %v", err)
+	}
+	if _, err := config.NewManager([]byte("invalid: yaml: ["), loader, nil, nil); err == nil || !strings.Contains(err.Error(), "initial configuration validation failed") {
+		t.Fatalf("expected initial validation error, got %v", err)
+	}
+	var emptyManager config.Manager
+	if emptyManager.Current() != nil || emptyManager.CurrentSnapshot() != nil || emptyManager.Status().ConfigStatus != config.ConfigStatusOK {
+		t.Errorf("expected zero-value manager defaults")
+	}
+	if _, err := config.ValidatePipeline([]byte(validBaseYAML), nil, nil); err == nil || !strings.Contains(err.Error(), "package loader cannot be nil") {
+		t.Fatalf("expected nil loader error, got %v", err)
+	}
+	if snap, err := config.ValidatePipeline([]byte(validBaseYAML), loader, nil); err != nil || snap == nil {
+		t.Fatalf("unexpected error with nil getenv: %v", err)
+	}
+
+	m, err := config.NewManager([]byte(validBaseYAML), loader, nil, nil)
+	if err != nil || m.Current() == nil || m.CurrentSnapshot() == nil {
+		t.Fatalf("cold boot failed: %v", err)
+	}
+
+	verifyManagerLifecycleStep(t, m)
+	verifyManagerPackageErrors(t, m)
 }
 
 func TestLKGC_ReloadValidationFailures(t *testing.T) {
@@ -320,6 +337,18 @@ func TestLKGC_ReloadValidDomainConfigs(t *testing.T) {
 	}
 }
 
+func assertModifiedInstanceDiffs(t *testing.T, diff *config.ConfigDiff) {
+	t.Helper()
+	for _, m := range diff.Modified {
+		if (m.ID == "mod-transport" && (m.DomainChange || m.Change != config.ChangeModified)) ||
+			(m.ID == "mod-domain" && (!m.DomainChange || m.Change != config.ChangeModified)) ||
+			(m.ID == "replaced-1" && m.Change != config.ChangeReplaced) ||
+			(m.ID == "resized-only" || m.ID == "pinned-only") {
+			t.Errorf("unexpected modified instance diff: %+v", m)
+		}
+	}
+}
+
 func TestLKGC_DiffConfigs(t *testing.T) {
 	t.Parallel()
 	newInterval := 60
@@ -347,14 +376,7 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 		t.Fatalf("unexpected diff counts: %+v", diff)
 	}
 
-	for _, m := range diff.Modified {
-		if (m.ID == "mod-transport" && (m.DomainChange || m.Change != config.ChangeModified)) ||
-			(m.ID == "mod-domain" && (!m.DomainChange || m.Change != config.ChangeModified)) ||
-			(m.ID == "replaced-1" && m.Change != config.ChangeReplaced) ||
-			(m.ID == "resized-only" || m.ID == "pinned-only") {
-			t.Errorf("unexpected modified instance diff: %+v", m)
-		}
-	}
+	assertModifiedInstanceDiffs(t, diff)
 
 	if config.DiffConfigs(oldCfg, oldCfg).TimezoneChanged || !config.DiffConfigs(&config.Config{Timezone: "America/Los_Angeles"}, &config.Config{Timezone: "America/New_York"}).TimezoneChanged {
 		t.Error("unexpected TimezoneChanged result")
@@ -548,6 +570,28 @@ func TestResolveWidgetDefaultDimensions_Portrait3x6(t *testing.T) {
 	}
 }
 
+func verifyLoadedOverride(t *testing.T, loaded *config.LayoutOverrideFile, err error, wantErr error, wantAnyErr bool, wantVer int) {
+	t.Helper()
+	if wantErr != nil {
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("err = %v, want %v", err, wantErr)
+		}
+		return
+	}
+	if wantAnyErr {
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if loaded == nil || loaded.Version != wantVer || len(loaded.Widgets) != 1 || loaded.Widgets[0].ID != "w1" {
+		t.Fatalf("unexpected loaded override: %+v", loaded)
+	}
+}
+
 func TestLoadLayoutOverride(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -583,24 +627,7 @@ func TestLoadLayoutOverride(t *testing.T) {
 			}
 
 			loaded, err := config.LoadLayoutOverride(path)
-			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("err = %v, want %v", err, tc.wantErr)
-				}
-				return
-			}
-			if tc.wantAnyErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if loaded == nil || loaded.Version != tc.wantVer || len(loaded.Widgets) != 1 || loaded.Widgets[0].ID != "w1" {
-				t.Fatalf("unexpected loaded override: %+v", loaded)
-			}
+			verifyLoadedOverride(t, loaded, err, tc.wantErr, tc.wantAnyErr, tc.wantVer)
 		})
 	}
 }
@@ -676,6 +703,126 @@ func TestRemoveLayoutOverride(t *testing.T) {
 	}
 }
 
+func applyAndVerifyOverride(t *testing.T, m *config.Manager, ov *config.LayoutOverrideFile, wantApplyErrSub string, doReset bool, wantResetErr error) bool {
+	t.Helper()
+	if ov == nil && wantApplyErrSub == "" {
+		return true
+	}
+	_, _, applyErr := m.ApplyLayoutOverride(ov)
+	if wantApplyErrSub == "" {
+		if applyErr != nil {
+			t.Fatalf("ApplyLayoutOverride failed: %v", applyErr)
+		}
+		return true
+	}
+	if applyErr == nil || !strings.Contains(applyErr.Error(), wantApplyErrSub) {
+		t.Fatalf("ApplyLayoutOverride err = %v, want substring %q", applyErr, wantApplyErrSub)
+	}
+	if doReset {
+		if _, _, resetErr := m.ResetLayoutOverride(); !errors.Is(resetErr, wantResetErr) {
+			t.Fatalf("ResetLayoutOverride err = %v, want %v", resetErr, wantResetErr)
+		}
+	}
+	return false
+}
+
+func verifySnapshotPostOverride(t *testing.T, snap *config.Snapshot, wantHasOverride, wantAutoSpacer bool, wantMinScreens int, forbidWidgetID string) {
+	t.Helper()
+	if snap.HasOverride != wantHasOverride {
+		t.Fatalf("HasOverride = %v, want %v", snap.HasOverride, wantHasOverride)
+	}
+	if wantMinScreens > 0 && len(snap.Layout.Screens) < wantMinScreens {
+		t.Fatalf("screens = %d, want >= %d", len(snap.Layout.Screens), wantMinScreens)
+	}
+	if wantAutoSpacer {
+		var found bool
+		for _, w := range snap.Config.Display.Widgets {
+			if strings.HasPrefix(w.ID, "auto-spacer-") && w.Type == "spacer" {
+				found = true
+			}
+		}
+		if !found || snap.Packages["spacer"] == nil {
+			t.Fatalf("expected auto-spacer widget and spacer package, got widgets=%+v", snap.Config.Display.Widgets)
+		}
+	}
+	if forbidWidgetID != "" {
+		for _, pw := range snap.Layout.Screens[0].Widgets {
+			if pw.WidgetID == forbidWidgetID {
+				t.Fatalf("expected widget %s omitted, found in screen", forbidWidgetID)
+			}
+		}
+	}
+}
+
+type layoutOverrideTestCase struct {
+	name            string
+	baseYAML        string
+	useConfigPath   bool
+	omitPath        bool
+	seedCorrupt     bool
+	seedOverlap     bool
+	ov              *config.LayoutOverrideFile
+	doReload        bool
+	doReset         bool
+	wantApplyErrSub string
+	wantResetErr    error
+	wantHasOverride bool
+	wantAutoSpacer  bool
+	forbidWidgetID  string
+	wantMinScreens  int
+}
+
+func runLayoutOverrideTestStep(t *testing.T, tc layoutOverrideTestCase) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "layout-override.yaml")
+	loader := &mockPackageLoader{packages: createStandardPackages()}
+
+	yamlText := tc.baseYAML
+	var opts []config.ManagerOption
+	if tc.useConfigPath {
+		yamlText = fmt.Sprintf("timezone: America/New_York\ndisplay:\n  layout_override_path: %q\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n", path)
+		opts = append(opts, config.WithUseConfigOverridePath())
+	} else if !tc.omitPath {
+		opts = append(opts, config.WithOverridePath(path))
+	}
+
+	if tc.seedCorrupt {
+		_ = os.WriteFile(path, []byte("invalid: [yaml"), 0o644)
+	}
+	if tc.seedOverlap {
+		_ = config.SaveLayoutOverrideAtomic(path, &config.LayoutOverrideFile{
+			Version: 1,
+			Widgets: []config.WidgetOverride{
+				{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}},
+				{ID: "weather-1", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{2, 1}},
+			},
+		})
+	}
+
+	m, err := config.NewManager([]byte(yamlText), loader, nil, nil, opts...)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	if !applyAndVerifyOverride(t, m, tc.ov, tc.wantApplyErrSub, tc.doReset, tc.wantResetErr) {
+		return
+	}
+
+	if tc.doReload {
+		if _, _, err := m.Reload([]byte(yamlText)); err != nil {
+			t.Fatalf("Reload failed: %v", err)
+		}
+	}
+	if tc.doReset {
+		if _, _, err := m.ResetLayoutOverride(); err != nil {
+			t.Fatalf("ResetLayoutOverride failed: %v", err)
+		}
+	}
+
+	verifySnapshotPostOverride(t, m.CurrentSnapshot(), tc.wantHasOverride, tc.wantAutoSpacer, tc.wantMinScreens, tc.forbidWidgetID)
+}
+
 func TestLayoutOverride_ManagerLifecycle(t *testing.T) {
 	t.Parallel()
 	fullOV := &config.LayoutOverrideFile{
@@ -691,23 +838,7 @@ func TestLayoutOverride_ManagerLifecycle(t *testing.T) {
 	userSpacerYAML := "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      config: {calendars: [{name: Family}]}\n    - id: user-spacer\n      type: spacer\n      dimensions: [2, 2]\n"
 	pinnedBaseYAML := "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      pinned: true\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
 
-	tests := []struct {
-		name            string
-		baseYAML        string
-		useConfigPath   bool
-		omitPath        bool
-		seedCorrupt     bool
-		seedOverlap     bool
-		ov              *config.LayoutOverrideFile
-		doReload        bool
-		doReset         bool
-		wantApplyErrSub string
-		wantResetErr    error
-		wantHasOverride bool
-		wantAutoSpacer  bool
-		forbidWidgetID  string
-		wantMinScreens  int
-	}{
+	tests := []layoutOverrideTestCase{
 		{
 			name:            "apply_and_reload_retains_override",
 			baseYAML:        validBaseYAML,
@@ -840,91 +971,7 @@ func TestLayoutOverride_ManagerLifecycle(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
-			path := filepath.Join(dir, "layout-override.yaml")
-			loader := &mockPackageLoader{packages: createStandardPackages()}
-
-			yamlText := tc.baseYAML
-			var opts []config.ManagerOption
-			if tc.useConfigPath {
-				yamlText = fmt.Sprintf("timezone: America/New_York\ndisplay:\n  layout_override_path: %q\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n", path)
-				opts = append(opts, config.WithUseConfigOverridePath())
-			} else if !tc.omitPath {
-				opts = append(opts, config.WithOverridePath(path))
-			}
-
-			if tc.seedCorrupt {
-				_ = os.WriteFile(path, []byte("invalid: [yaml"), 0o644)
-			}
-			if tc.seedOverlap {
-				_ = config.SaveLayoutOverrideAtomic(path, &config.LayoutOverrideFile{
-					Version: 1,
-					Widgets: []config.WidgetOverride{
-						{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}},
-						{ID: "weather-1", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{2, 1}},
-					},
-				})
-			}
-
-			m, err := config.NewManager([]byte(yamlText), loader, nil, nil, opts...)
-			if err != nil {
-				t.Fatalf("NewManager failed: %v", err)
-			}
-
-			if tc.ov != nil || tc.wantApplyErrSub != "" {
-				_, _, applyErr := m.ApplyLayoutOverride(tc.ov)
-				if tc.wantApplyErrSub != "" {
-					if applyErr == nil || !strings.Contains(applyErr.Error(), tc.wantApplyErrSub) {
-						t.Fatalf("ApplyLayoutOverride err = %v, want substring %q", applyErr, tc.wantApplyErrSub)
-					}
-					if tc.doReset {
-						if _, _, resetErr := m.ResetLayoutOverride(); !errors.Is(resetErr, tc.wantResetErr) {
-							t.Fatalf("ResetLayoutOverride err = %v, want %v", resetErr, tc.wantResetErr)
-						}
-					}
-					return
-				}
-				if applyErr != nil {
-					t.Fatalf("ApplyLayoutOverride failed: %v", applyErr)
-				}
-			}
-
-			if tc.doReload {
-				if _, _, err := m.Reload([]byte(yamlText)); err != nil {
-					t.Fatalf("Reload failed: %v", err)
-				}
-			}
-			if tc.doReset {
-				if _, _, err := m.ResetLayoutOverride(); err != nil {
-					t.Fatalf("ResetLayoutOverride failed: %v", err)
-				}
-			}
-
-			snap := m.CurrentSnapshot()
-			if snap.HasOverride != tc.wantHasOverride {
-				t.Fatalf("HasOverride = %v, want %v", snap.HasOverride, tc.wantHasOverride)
-			}
-			if tc.wantMinScreens > 0 && len(snap.Layout.Screens) < tc.wantMinScreens {
-				t.Fatalf("screens = %d, want >= %d", len(snap.Layout.Screens), tc.wantMinScreens)
-			}
-			if tc.wantAutoSpacer {
-				var found bool
-				for _, w := range snap.Config.Display.Widgets {
-					if strings.HasPrefix(w.ID, "auto-spacer-") && w.Type == "spacer" {
-						found = true
-					}
-				}
-				if !found || snap.Packages["spacer"] == nil {
-					t.Fatalf("expected auto-spacer widget and spacer package, got widgets=%+v", snap.Config.Display.Widgets)
-				}
-			}
-			if tc.forbidWidgetID != "" {
-				for _, pw := range snap.Layout.Screens[0].Widgets {
-					if pw.WidgetID == tc.forbidWidgetID {
-						t.Fatalf("expected widget %s omitted, found in screen", tc.forbidWidgetID)
-					}
-				}
-			}
+			runLayoutOverrideTestStep(t, tc)
 		})
 	}
 }
