@@ -307,6 +307,24 @@ func TestBuildFamilyView(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "explicit fractional hours window formats as 12h compact markers",
+			cfg: withFamilyCfg(map[string]any{
+				"time_format": "12h",
+				"hours":       []any{"08:30", "12:00"},
+			}),
+			exp: buildFamilyViewExpectations{
+				daysCount:   7,
+				hourMarkers: []string{"8:30am", "9am", "10am", "11am", "12pm"},
+				timelineMarkers: []TimelineMarker{
+					{Label: "8:30am", TopPct: 0, IsStart: true},
+					{Label: "9am", TopPct: 14.29},
+					{Label: "10am", TopPct: 42.86},
+					{Label: "11am", TopPct: 71.43},
+					{Label: "12pm", TopPct: 100, IsEnd: true},
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -583,67 +601,6 @@ func assertFamilyViewExpectations(t *testing.T, view *FamilyViewModel, exp build
 	assertDayExpectations(t, view, exp)
 	assertEventExpectations(t, view, exp)
 	assertPositionAndMarkers(t, view, exp)
-}
-
-func assertHourAndTimelineMarkers(t *testing.T, view *FamilyViewModel, wantMarkers []string) {
-	t.Helper()
-	if len(view.HourMarkers) != len(wantMarkers) {
-		t.Fatalf("len(HourMarkers) = %d, want %d: %v", len(view.HourMarkers), len(wantMarkers), view.HourMarkers)
-	}
-	for i, m := range wantMarkers {
-		if view.HourMarkers[i] != m {
-			t.Errorf("HourMarkers[%d] = %q, want %q", i, view.HourMarkers[i], m)
-		}
-	}
-	if len(view.TimelineMarkers) != len(wantMarkers) {
-		t.Fatalf("len(TimelineMarkers) = %d, want %d", len(view.TimelineMarkers), len(wantMarkers))
-	}
-	for i, m := range wantMarkers {
-		if view.TimelineMarkers[i].Label != m {
-			t.Errorf("TimelineMarkers[%d].Label = %q, want %q", i, view.TimelineMarkers[i].Label, m)
-		}
-	}
-}
-
-func TestBuildFamilyView_TimeFormat12h(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		cfg         map[string]any
-		wantMarkers []string
-	}{
-		{
-			name: "default hours window formats as 12h compact markers",
-			cfg: withFamilyCfg(map[string]any{
-				"time_format": "12h",
-			}),
-			wantMarkers: []string{
-				"7am", "8am", "9am", "10am", "11am", "12pm",
-				"1pm", "2pm", "3pm", "4pm", "5pm", "6pm",
-				"7pm", "8pm", "9pm",
-			},
-		},
-		{
-			name: "explicit fractional hours window formats as 12h compact markers",
-			cfg: withFamilyCfg(map[string]any{
-				"time_format": "12h",
-				"hours":       []any{"08:30", "12:00"},
-			}),
-			wantMarkers: []string{"8:30am", "9am", "10am", "11am", "12pm"},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			view, err := BuildFamilyView(nil, tc.cfg, domain.NewDimension(6, 2), testNow)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			assertHourAndTimelineMarkers(t, view, tc.wantMarkers)
-		})
-	}
 }
 
 func assertColorAndParsingHelpers(t *testing.T) {
