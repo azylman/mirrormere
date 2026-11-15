@@ -11,15 +11,17 @@ import unittest
 import urllib.request
 import zlib
 
-from config import EinkConfig, PanelPinsConfig
-from image import validate_png, stamp_offline_dot, save_last_image, load_last_image
-from panel import FakePanel, PanelManager, PanelTimeoutError, WaveshareEPDPanel, patch_bonnet_pins
-from offline import OfflineGuard
 from buttons import ButtonHandler
+from config import EinkConfig, PanelPinsConfig
 from health import HealthServer
+from image import stamp_offline_dot, validate_png
+from offline import OfflineGuard
+from panel import FakePanel, PanelManager, PanelTimeoutError, WaveshareEPDPanel, patch_bonnet_pins
 
 
-def make_test_png(width: int = 800, height: int = 480, bit_depth: int = 1, fill_byte: int = 0xFF) -> bytes:
+def make_test_png(
+    width: int = 800, height: int = 480, bit_depth: int = 1, fill_byte: int = 0xFF
+) -> bytes:
     """Creates a valid 1-bit PNG test buffer."""
     row_bytes = width // 8
     raw = bytearray()
@@ -32,7 +34,12 @@ def make_test_png(width: int = 800, height: int = 480, bit_depth: int = 1, fill_
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
 
     ihdr = struct.pack(">IIBBBBB", width, height, bit_depth, 0, 0, 0, 0)
-    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(bytes(raw)))
+        + chunk(b"IEND", b"")
+    )
 
 
 class MockClock:
@@ -58,6 +65,7 @@ class TestEinkPanelAndHardware(unittest.TestCase):
         Verifies that patch_bonnet_pins overrides driver module constants with
         the Adafruit Bonnet pin mapping (RST=27, DC=22, BUSY=17, CS=8, PWR=None).
         """
+
         class MockEPDConfig:
             RST_PIN = 17
             DC_PIN = 25
@@ -98,14 +106,14 @@ class TestEinkPanelAndHardware(unittest.TestCase):
 
         pins = PanelPinsConfig(rst=27, dc=22, busy=17, cs=8, pwr=None)
         with mock.patch("panel._repin_implementation") as repin:
+
             def apply(impl, p):
                 impl.RST_PIN, impl.DC_PIN, impl.BUSY_PIN, impl.CS_PIN = p.rst, p.dc, p.busy, p.cs
+
             repin.side_effect = apply
             patch_bonnet_pins(pins, epdconfig)
         epd = EPD()
-        self.assertEqual(
-            (epd.reset_pin, epd.dc_pin, epd.busy_pin, epd.cs_pin), (27, 22, 17, 8)
-        )
+        self.assertEqual((epd.reset_pin, epd.dc_pin, epd.busy_pin, epd.cs_pin), (27, 22, 17, 8))
 
     def test_image_validation(self):
         """
@@ -170,7 +178,9 @@ class TestEinkPanelAndHardware(unittest.TestCase):
         type_31 = self.manager.write_frame(frame)
         self.assertEqual(type_31, "full")
         self.assertEqual(self.panel.full_refreshes, 2)
-        self.assertEqual(self.manager.consecutive_partials, 0, "Counter must reset after full refresh")
+        self.assertEqual(
+            self.manager.consecutive_partials, 0, "Counter must reset after full refresh"
+        )
         self.assertEqual(self.panel.sleeps, 32)
 
     def test_full_refresh_interval_timer(self):
@@ -375,7 +385,9 @@ class TestPartialRecovery(unittest.TestCase):
 
         self.assertEqual(manager.write_frame(frame), "full")
         clock.advance(10.0)
-        self.assertEqual(manager.write_frame(frame), "full", "failed partial must be redone as full")
+        self.assertEqual(
+            manager.write_frame(frame), "full", "failed partial must be redone as full"
+        )
         self.assertEqual(panel.recovers, 1)
         self.assertEqual(panel.full_refreshes, 2)
         self.assertEqual(manager.partial_fallbacks, 1)

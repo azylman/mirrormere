@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """HEARTH Configurable OAuth-to-iCal, Mealie Recipe + Image Proxy & Plex/Arr/Seerr Bridge."""
 
-import socket
-
-from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+import contextlib
 import datetime
 import ipaddress
 import json
 import os
 import re
+import socket
 import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
+
 try:
     import yaml
 except ImportError:
@@ -26,7 +27,7 @@ try:
     PT = ZoneInfo(os.environ.get("TZ", "UTC"))
 except Exception:
     PT = ZoneInfo("UTC")
-UTC = datetime.timezone.utc
+UTC = datetime.UTC
 
 CACHE_LOCK = threading.Lock()
 CACHE = {}
@@ -91,14 +92,16 @@ def _load_config():
     for path in candidates:
         if path and os.path.exists(path):
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     content = f.read()
-                if path.endswith((".yaml", ".yml")) or "---" in content or ":" in content:
-                    if yaml is not None:
-                        parsed = yaml.safe_load(content)
-                        if isinstance(parsed, dict):
-                            raw_cfg = parsed
-                            break
+                looks_like_yaml = (
+                    path.endswith((".yaml", ".yml")) or "---" in content or ":" in content
+                )
+                if looks_like_yaml and yaml is not None:
+                    parsed = yaml.safe_load(content)
+                    if isinstance(parsed, dict):
+                        raw_cfg = parsed
+                        break
                 parsed = json.loads(content)
                 if isinstance(parsed, dict):
                     raw_cfg = parsed
@@ -207,12 +210,14 @@ def get_google_token():
         oauth_path = os.environ.get("GOOGLE_OAUTH_FILE", "/secrets/google_oauth.json")
         with open(oauth_path) as f:
             oauth = json.load(f)
-        data = urllib.parse.urlencode({
-            "client_id": oauth["client_id"],
-            "client_secret": oauth["client_secret"],
-            "refresh_token": oauth["refresh_token"],
-            "grant_type": "refresh_token",
-        }).encode()
+        data = urllib.parse.urlencode(
+            {
+                "client_id": oauth["client_id"],
+                "client_secret": oauth["client_secret"],
+                "refresh_token": oauth["refresh_token"],
+                "grant_type": "refresh_token",
+            }
+        ).encode()
         req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data)
         with urllib.request.urlopen(req, timeout=10) as r:
             resp = json.loads(r.read().decode())
@@ -237,15 +242,21 @@ def fetch_gcal_events(cal_id):
         items = []
         try:
             token = get_google_token()
-            tmin = (datetime.datetime.now(UTC) - datetime.timedelta(days=45)).strftime("%Y-%m-%dT00:00:00Z")
-            tmax = (datetime.datetime.now(UTC) + datetime.timedelta(days=120)).strftime("%Y-%m-%dT00:00:00Z")
-            q = urllib.parse.urlencode({
-                "singleEvents": "true",
-                "orderBy": "startTime",
-                "maxResults": "500",
-                "timeMin": tmin,
-                "timeMax": tmax,
-            })
+            tmin = (datetime.datetime.now(UTC) - datetime.timedelta(days=45)).strftime(
+                "%Y-%m-%dT00:00:00Z"
+            )
+            tmax = (datetime.datetime.now(UTC) + datetime.timedelta(days=120)).strftime(
+                "%Y-%m-%dT00:00:00Z"
+            )
+            q = urllib.parse.urlencode(
+                {
+                    "singleEvents": "true",
+                    "orderBy": "startTime",
+                    "maxResults": "500",
+                    "timeMin": tmin,
+                    "timeMax": tmax,
+                }
+            )
             url = f"https://www.googleapis.com/calendar/v3/calendars/{urllib.parse.quote(cal_id)}/events?{q}"
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
             with urllib.request.urlopen(req, timeout=6) as r:
@@ -303,15 +314,21 @@ def fetch_mealie_events():
         try:
             with urllib.request.urlopen(req, timeout=8) as r:
                 items = json.loads(r.read().decode()).get("items", [])
-            slugs = sorted({
-                (item.get("recipe") or {}).get("slug")
-                for item in items
-                if (item.get("recipe") or {}).get("slug")
-            })
+            slugs = sorted(
+                {
+                    (item.get("recipe") or {}).get("slug")
+                    for item in items
+                    if (item.get("recipe") or {}).get("slug")
+                }
+            )
             if slugs:
                 with ThreadPoolExecutor(max_workers=6) as pool:
                     detail_map = dict(
-                        zip(slugs, pool.map(lambda s: fetch_mealie_recipe_detail(s, base, tok), slugs))
+                        zip(
+                            slugs,
+                            pool.map(lambda s: fetch_mealie_recipe_detail(s, base, tok), slugs),
+                            strict=True,
+                        )
                     )
                 for item in items:
                     slug = (item.get("recipe") or {}).get("slug")
@@ -397,8 +414,14 @@ def fetch_plex_recent():
                 else:
                     subtitle = str(m.get("year") or "")
 
-                thumb_path = m.get("thumb") or m.get("parentThumb") or m.get("grandparentThumb") or ""
-                thumb_url = f"/hearth-api/plex/thumb?path={urllib.parse.quote(thumb_path)}" if thumb_path else ""
+                thumb_path = (
+                    m.get("thumb") or m.get("parentThumb") or m.get("grandparentThumb") or ""
+                )
+                thumb_url = (
+                    f"/hearth-api/plex/thumb?path={urllib.parse.quote(thumb_path)}"
+                    if thumb_path
+                    else ""
+                )
                 added_at = int(m.get("addedAt") or 0)
                 category = "movie"
                 lib_title = (m.get("librarySectionTitle") or "").lower()
@@ -407,18 +430,20 @@ def fetch_plex_recent():
                 elif mtype in ("show", "season", "episode") or "tv" in lib_title:
                     category = "tv"
 
-                out.append({
-                    "id": str(m.get("ratingKey", "")),
-                    "title": title,
-                    "subtitle": subtitle,
-                    "type": mtype,
-                    "category": category,
-                    "year": m.get("year"),
-                    "rating": m.get("audienceRating") or m.get("rating"),
-                    "summary": (m.get("summary") or "")[:280],
-                    "thumb": thumb_url,
-                    "added_at": added_at,
-                })
+                out.append(
+                    {
+                        "id": str(m.get("ratingKey", "")),
+                        "title": title,
+                        "subtitle": subtitle,
+                        "type": mtype,
+                        "category": category,
+                        "year": m.get("year"),
+                        "rating": m.get("audienceRating") or m.get("rating"),
+                        "summary": (m.get("summary") or "")[:280],
+                        "thumb": thumb_url,
+                        "added_at": added_at,
+                    }
+                )
         except Exception as e:
             print(f"[HEARTH-Bridge] Error fetching Plex recent: {e}", flush=True)
             with CACHE_LOCK:
@@ -479,7 +504,9 @@ def fetch_arr_upcoming():
         if s_base and s_key:
             try:
                 url = f"{s_base}/api/v3/calendar?start={start_s}&end={end_s}&includeSeries=true"
-                req = urllib.request.Request(url, headers={"X-Api-Key": s_key, "Accept": "application/json"})
+                req = urllib.request.Request(
+                    url, headers={"X-Api-Key": s_key, "Accept": "application/json"}
+                )
                 with urllib.request.urlopen(req, timeout=8) as r:
                     eps = json.loads(r.read().decode())
                 for ep in eps:
@@ -492,7 +519,9 @@ def fetch_arr_upcoming():
                     sort_ts = 0
                     if air_utc and "T" in air_utc:
                         try:
-                            dt = datetime.datetime.fromisoformat(air_utc.replace("Z", "+00:00")).astimezone(PT)
+                            dt = datetime.datetime.fromisoformat(
+                                air_utc.replace("Z", "+00:00")
+                            ).astimezone(PT)
                             sort_ts = int(dt.timestamp())
                             if dt.date() == today:
                                 air_label = f"Tonight · {dt.strftime('%-I:%M %p')}"
@@ -503,20 +532,22 @@ def fetch_arr_upcoming():
                         except Exception:
                             pass
                     poster = ""
-                    for img in (series.get("images") or []):
+                    for img in series.get("images") or []:
                         if img.get("coverType") == "poster" and img.get("remoteUrl"):
                             poster = img["remoteUrl"]
                             break
-                    items.append({
-                        "id": f"sonarr_{ep.get('id')}",
-                        "title": stitle,
-                        "subtitle": f"S{int(s_num):02d}E{int(e_num):02d} · {air_label}",
-                        "badge": "AIRING",
-                        "category": "upcoming",
-                        "thumb": poster,
-                        "sort_ts": sort_ts,
-                        "summary": (ep.get("overview") or series.get("overview") or "")[:240],
-                    })
+                    items.append(
+                        {
+                            "id": f"sonarr_{ep.get('id')}",
+                            "title": stitle,
+                            "subtitle": f"S{int(s_num):02d}E{int(e_num):02d} · {air_label}",
+                            "badge": "AIRING",
+                            "category": "upcoming",
+                            "thumb": poster,
+                            "sort_ts": sort_ts,
+                            "summary": (ep.get("overview") or series.get("overview") or "")[:240],
+                        }
+                    )
             except Exception as e:
                 print(f"[HEARTH-Bridge] Sonarr calendar error: {e}", flush=True)
 
@@ -526,36 +557,47 @@ def fetch_arr_upcoming():
         if r_base and r_key:
             try:
                 url = f"{r_base}/api/v3/calendar?start={start_s}&end={end_s}"
-                req = urllib.request.Request(url, headers={"X-Api-Key": r_key, "Accept": "application/json"})
+                req = urllib.request.Request(
+                    url, headers={"X-Api-Key": r_key, "Accept": "application/json"}
+                )
                 with urllib.request.urlopen(req, timeout=8) as r:
                     movies = json.loads(r.read().decode())
                 for mv in movies:
                     mtitle = mv.get("title") or "Movie"
-                    rel_raw = mv.get("digitalRelease") or mv.get("physicalRelease") or mv.get("inCinemas") or ""
+                    rel_raw = (
+                        mv.get("digitalRelease")
+                        or mv.get("physicalRelease")
+                        or mv.get("inCinemas")
+                        or ""
+                    )
                     rel_label = rel_raw[:10]
                     sort_ts = 0
                     if rel_raw:
                         try:
-                            dt = datetime.datetime.fromisoformat(rel_raw.replace("Z", "+00:00")).astimezone(PT)
+                            dt = datetime.datetime.fromisoformat(
+                                rel_raw.replace("Z", "+00:00")
+                            ).astimezone(PT)
                             sort_ts = int(dt.timestamp())
                             rel_label = dt.strftime("%b %-d")
                         except Exception:
                             pass
                     poster = ""
-                    for img in (mv.get("images") or []):
+                    for img in mv.get("images") or []:
                         if img.get("coverType") == "poster" and img.get("remoteUrl"):
                             poster = img["remoteUrl"]
                             break
-                    items.append({
-                        "id": f"radarr_{mv.get('id')}",
-                        "title": mtitle,
-                        "subtitle": f"Drops {rel_label}",
-                        "badge": "SOON",
-                        "category": "upcoming",
-                        "thumb": poster,
-                        "sort_ts": sort_ts,
-                        "summary": (mv.get("overview") or "")[:240],
-                    })
+                    items.append(
+                        {
+                            "id": f"radarr_{mv.get('id')}",
+                            "title": mtitle,
+                            "subtitle": f"Drops {rel_label}",
+                            "badge": "SOON",
+                            "category": "upcoming",
+                            "thumb": poster,
+                            "sort_ts": sort_ts,
+                            "summary": (mv.get("overview") or "")[:240],
+                        }
+                    )
             except Exception as e:
                 print(f"[HEARTH-Bridge] Radarr calendar error: {e}", flush=True)
 
@@ -589,19 +631,25 @@ def seerr_search(query):
             m_info = r_item.get("mediaInfo") or {}
             status_code = m_info.get("status", 1)
             # Seerr status codes: 1=unknown/unrequested, 2=pending, 3=processing, 4=partially available, 5=available
-            status_label = "available" if status_code == 5 else ("requested" if status_code in (2, 3, 4) else "")
+            status_label = (
+                "available"
+                if status_code == 5
+                else ("requested" if status_code in (2, 3, 4) else "")
+            )
             item_id = r_item.get("id")
-            out.append({
-                "id": item_id,
-                "tmdb_id": item_id,
-                "media_type": mtype,
-                "title": title,
-                "year": year,
-                "summary": (r_item.get("overview") or "")[:220],
-                "thumb": poster,
-                "status": status_label,
-                "rating": r_item.get("voteAverage"),
-            })
+            out.append(
+                {
+                    "id": item_id,
+                    "tmdb_id": item_id,
+                    "media_type": mtype,
+                    "title": title,
+                    "year": year,
+                    "summary": (r_item.get("overview") or "")[:220],
+                    "thumb": poster,
+                    "status": status_label,
+                    "rating": r_item.get("voteAverage"),
+                }
+            )
         return out
     except Exception as e:
         print(f"[HEARTH-Bridge] Seerr search error: {e}", flush=True)
@@ -627,7 +675,11 @@ def seerr_request(media_type, tmdb_id):
         f"{base}/api/v1/request",
         data=payload,
         method="POST",
-        headers={"X-Api-Key": key, "Content-Type": "application/json", "Accept": "application/json"},
+        headers={
+            "X-Api-Key": key,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -637,10 +689,7 @@ def seerr_request(media_type, tmdb_id):
         return False, {"error": str(e)}
 
 
-
 # === PLEX LIVING ROOM TV CAST & YOUTUBE MUSIC / GOOGLE HOME CONTROLLER ===
-import subprocess
-import shutil
 
 PACKAGES_DIR = "/app/.packages"
 if os.path.isdir(PACKAGES_DIR) and PACKAGES_DIR not in sys.path:
@@ -719,20 +768,20 @@ def get_yt_oauth_token():
         raw = _cfg("YT_MUSIC_OAUTH", {})
         oauth = {}
         if isinstance(raw, str) and raw.strip():
-            try:
+            with contextlib.suppress(Exception):
                 oauth = json.loads(raw)
-            except Exception:
-                pass
         elif isinstance(raw, dict):
             oauth = raw
         if not oauth.get("client_id") or not oauth.get("refresh_token"):
             return None
-        data = urllib.parse.urlencode({
-            "client_id": oauth["client_id"],
-            "client_secret": oauth.get("client_secret", ""),
-            "refresh_token": oauth["refresh_token"],
-            "grant_type": "refresh_token",
-        }).encode()
+        data = urllib.parse.urlencode(
+            {
+                "client_id": oauth["client_id"],
+                "client_secret": oauth.get("client_secret", ""),
+                "refresh_token": oauth["refresh_token"],
+                "grant_type": "refresh_token",
+            }
+        ).encode()
         try:
             req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data)
             with urllib.request.urlopen(req, timeout=10) as r:
@@ -808,15 +857,19 @@ def fetch_yt_playlists():
                 or ""
             )
             count = (p.get("contentDetails") or {}).get("itemCount", 0)
-            out.append({
-                "playlist_id": p.get("id", ""),
-                "title": snip.get("title", "Playlist"),
-                "count": count,
-                "thumb": thumb_url,
-            })
+            out.append(
+                {
+                    "playlist_id": p.get("id", ""),
+                    "title": snip.get("title", "Playlist"),
+                    "count": count,
+                    "thumb": thumb_url,
+                }
+            )
 
         # 3. Prepend native YouTube Music "My Supermix" (RDTMAK5uy_kset8DisdE7LSD4TNjEVvrKRTmG7a56sY) and "Liked Music" (LM)
-        supermix_thumb = "https://www.gstatic.com/youtube/media/ytm/images/pbg/my-supermix-en-@576.png"
+        supermix_thumb = (
+            "https://www.gstatic.com/youtube/media/ytm/images/pbg/my-supermix-en-@576.png"
+        )
         sm_count = 50
         try:
             sm_tracks = fetch_yt_playlist_tracks(YT_NATIVE_SUPERMIX_ID)
@@ -861,13 +914,17 @@ def fetch_yt_playlist_tracks(playlist_id):
             f"https://www.googleapis.com/youtube/v3/playlistItems?"
             f"part=snippet,contentDetails&playlistId={urllib.parse.quote(playlist_id)}&maxResults=50"
         )
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"})
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"}
+        )
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
             for item in data.get("items", []):
                 snip = item.get("snippet") or {}
-                vid = (item.get("contentDetails") or {}).get("videoId") or (snip.get("resourceId") or {}).get("videoId")
+                vid = (item.get("contentDetails") or {}).get("videoId") or (
+                    snip.get("resourceId") or {}
+                ).get("videoId")
                 if not vid:
                     continue
                 thumbs = snip.get("thumbnails") or {}
@@ -877,18 +934,21 @@ def fetch_yt_playlist_tracks(playlist_id):
                     or (thumbs.get("default") or {}).get("url")
                     or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
                 )
-                tracks.append({
-                    "video_id": vid,
-                    "title": snip.get("title", "Track"),
-                    "artist": snip.get("videoOwnerChannelTitle", "").replace(" - Topic", ""),
-                    "thumb": thumb,
-                })
+                tracks.append(
+                    {
+                        "video_id": vid,
+                        "title": snip.get("title", "Track"),
+                        "artist": snip.get("videoOwnerChannelTitle", "").replace(" - Topic", ""),
+                        "thumb": thumb,
+                    }
+                )
         except Exception as e:
             print(f"[HEARTH-Bridge] Error fetching playlist tracks: {e}", flush=True)
 
     if not tracks:
         try:
             import ytmusicapi
+
             ytm = ytmusicapi.YTMusic()
             raw_tracks = []
             try:
@@ -908,17 +968,25 @@ def fetch_yt_playlist_tracks(playlist_id):
                     continue
                 artists = t.get("artists")
                 if isinstance(artists, list):
-                    arts = ", ".join(a.get("name", "") for a in artists if isinstance(a, dict) and a.get("name"))
+                    arts = ", ".join(
+                        a.get("name", "") for a in artists if isinstance(a, dict) and a.get("name")
+                    )
                 else:
                     arts = str(t.get("artist") or "")
                 thumbs = t.get("thumbnails") or t.get("thumbnail") or []
-                thumb = thumbs[-1].get("url", "") if isinstance(thumbs, list) and thumbs and isinstance(thumbs[-1], dict) else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-                tracks.append({
-                    "video_id": vid,
-                    "title": t.get("title") or "Track",
-                    "artist": arts or "Unknown Artist",
-                    "thumb": thumb,
-                })
+                thumb = (
+                    thumbs[-1].get("url", "")
+                    if isinstance(thumbs, list) and thumbs and isinstance(thumbs[-1], dict)
+                    else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                )
+                tracks.append(
+                    {
+                        "video_id": vid,
+                        "title": t.get("title") or "Track",
+                        "artist": arts or "Unknown Artist",
+                        "thumb": thumb,
+                    }
+                )
         except Exception as e:
             print(f"[HEARTH-Bridge] ytmusicapi fallback error: {e}", flush=True)
     return tracks
@@ -929,6 +997,7 @@ def search_yt_music(query):
         return []
     try:
         import ytmusicapi
+
         ytm = ytmusicapi.YTMusic()
         res = ytm.search(query, filter="songs", limit=12)
         out = []
@@ -938,15 +1007,21 @@ def search_yt_music(query):
                 continue
             arts = ", ".join(a.get("name", "") for a in (r.get("artists") or []) if a.get("name"))
             thumbs = r.get("thumbnails") or []
-            thumb = thumbs[-1].get("url", "") if thumbs else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-            out.append({
-                "video_id": vid,
-                "title": r.get("title", "Track"),
-                "artist": arts or "Unknown Artist",
-                "album": (r.get("album") or {}).get("name", ""),
-                "duration": r.get("duration", ""),
-                "thumb": thumb,
-            })
+            thumb = (
+                thumbs[-1].get("url", "")
+                if thumbs
+                else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+            )
+            out.append(
+                {
+                    "video_id": vid,
+                    "title": r.get("title", "Track"),
+                    "artist": arts or "Unknown Artist",
+                    "album": (r.get("album") or {}).get("name", ""),
+                    "duration": r.get("duration", ""),
+                    "thumb": thumb,
+                }
+            )
         return out
     except Exception as e:
         print(f"[HEARTH-Bridge] YTMusic search error: {e}", flush=True)
@@ -964,6 +1039,7 @@ def resolve_yt_audio_stream_with_headers(video_id):
             return cached[1], cached[2], cached_headers
     try:
         import yt_dlp
+
         ydl_opts = {
             "format": "bestaudio[ext=m4a]/bestaudio/best",
             "quiet": True,
@@ -976,7 +1052,9 @@ def resolve_yt_audio_stream_with_headers(video_id):
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
             url = info.get("url")
             ext = info.get("ext") or "mp4"
-            ctype = "audio/mp4" if ext == "m4a" else ("audio/webm" if ext == "webm" else "audio/mpeg")
+            ctype = (
+                "audio/mp4" if ext == "m4a" else ("audio/webm" if ext == "webm" else "audio/mpeg")
+            )
             headers = dict(info.get("http_headers") or {})
             if url:
                 with STREAM_URL_LOCK:
@@ -1054,7 +1132,9 @@ def get_music_dashboard_state():
         "video_id": cur_track.get("video_id") or playing_vid,
         "state": state_str,
         "title": attrs.get("media_title") or cur_track.get("title") or "Ready to Play",
-        "artist": attrs.get("media_artist") or cur_track.get("artist") or "Select a playlist or search YouTube Music",
+        "artist": attrs.get("media_artist")
+        or cur_track.get("artist")
+        or "Select a playlist or search YouTube Music",
         "thumb": attrs.get("entity_picture") or cur_track.get("thumb") or "",
         "volume": vol_pct,
         "playlist_title": pl_title,
@@ -1074,6 +1154,7 @@ def get_music_dashboard_state():
 
 def start_music_playback(body):
     import random
+
     speaker = body.get("speaker")
     video_id = body.get("video_id")
     playlist_id = body.get("playlist_id")
@@ -1105,21 +1186,30 @@ def start_music_playback(body):
         tracks = [first_track]
         try:
             import ytmusicapi
+
             ytm = ytmusicapi.YTMusic()
             watch = ytm.get_watch_playlist(videoId=video_id, limit=20)
-            for wt in (watch.get("tracks") or []):
+            for wt in watch.get("tracks") or []:
                 wvid = wt.get("videoId")
                 if not wvid or wvid == video_id:
                     continue
-                warts = ", ".join(a.get("name", "") for a in (wt.get("artists") or []) if a.get("name"))
+                warts = ", ".join(
+                    a.get("name", "") for a in (wt.get("artists") or []) if a.get("name")
+                )
                 wthumbs = wt.get("thumbnail") or wt.get("thumbnails") or []
-                wthumb = wthumbs[-1].get("url", "") if isinstance(wthumbs, list) and wthumbs and isinstance(wthumbs[-1], dict) else f"https://i.ytimg.com/vi/{wvid}/hqdefault.jpg"
-                tracks.append({
-                    "video_id": wvid,
-                    "title": wt.get("title") or "Track",
-                    "artist": warts or "YouTube Music",
-                    "thumb": wthumb,
-                })
+                wthumb = (
+                    wthumbs[-1].get("url", "")
+                    if isinstance(wthumbs, list) and wthumbs and isinstance(wthumbs[-1], dict)
+                    else f"https://i.ytimg.com/vi/{wvid}/hqdefault.jpg"
+                )
+                tracks.append(
+                    {
+                        "video_id": wvid,
+                        "title": wt.get("title") or "Track",
+                        "artist": warts or "YouTube Music",
+                        "thumb": wthumb,
+                    }
+                )
         except Exception as e:
             print(f"[HEARTH-Bridge] watch playlist warning: {e}", flush=True)
 
@@ -1130,30 +1220,46 @@ def start_music_playback(body):
             if results:
                 first_item = results[0]
                 first_vid = first_item.get("video_id")
-                tracks = [{
-                    "video_id": first_vid,
-                    "title": first_item.get("title") or "Track",
-                    "artist": first_item.get("artist") or "YouTube Music",
-                    "thumb": first_item.get("thumb") or f"https://i.ytimg.com/vi/{first_vid}/hqdefault.jpg",
-                }]
+                tracks = [
+                    {
+                        "video_id": first_vid,
+                        "title": first_item.get("title") or "Track",
+                        "artist": first_item.get("artist") or "YouTube Music",
+                        "thumb": first_item.get("thumb")
+                        or f"https://i.ytimg.com/vi/{first_vid}/hqdefault.jpg",
+                    }
+                ]
                 if first_vid:
                     try:
                         import ytmusicapi
+
                         ytm = ytmusicapi.YTMusic()
                         watch = ytm.get_watch_playlist(videoId=first_vid, limit=20)
-                        for wt in (watch.get("tracks") or []):
+                        for wt in watch.get("tracks") or []:
                             wvid = wt.get("videoId")
                             if not wvid or wvid == first_vid:
                                 continue
-                            warts = ", ".join(a.get("name", "") for a in (wt.get("artists") or []) if a.get("name"))
+                            warts = ", ".join(
+                                a.get("name", "")
+                                for a in (wt.get("artists") or [])
+                                if a.get("name")
+                            )
                             wthumbs = wt.get("thumbnail") or wt.get("thumbnails") or []
-                            wthumb = wthumbs[-1].get("url", "") if isinstance(wthumbs, list) and wthumbs and isinstance(wthumbs[-1], dict) else f"https://i.ytimg.com/vi/{wvid}/hqdefault.jpg"
-                            tracks.append({
-                                "video_id": wvid,
-                                "title": wt.get("title") or "Track",
-                                "artist": warts or "YouTube Music",
-                                "thumb": wthumb,
-                            })
+                            wthumb = (
+                                wthumbs[-1].get("url", "")
+                                if isinstance(wthumbs, list)
+                                and wthumbs
+                                and isinstance(wthumbs[-1], dict)
+                                else f"https://i.ytimg.com/vi/{wvid}/hqdefault.jpg"
+                            )
+                            tracks.append(
+                                {
+                                    "video_id": wvid,
+                                    "title": wt.get("title") or "Track",
+                                    "artist": warts or "YouTube Music",
+                                    "thumb": wthumb,
+                                }
+                            )
                     except Exception as e:
                         print(f"[HEARTH-Bridge] search watch playlist warning: {e}", flush=True)
 
@@ -1230,7 +1336,9 @@ def control_music_playback(body):
     if action == "select_speaker":
         return True, get_music_dashboard_state()
     elif action == "play_pause" and active_spk:
-        _ha_request("POST", "/api/services/media_player/media_play_pause", {"entity_id": active_spk})
+        _ha_request(
+            "POST", "/api/services/media_player/media_play_pause", {"entity_id": active_spk}
+        )
     elif action == "stop" and active_spk:
         with MUSIC_STATE_LOCK:
             MUSIC_STATE["playing_video_id"] = ""
@@ -1241,7 +1349,11 @@ def control_music_playback(body):
         except (ValueError, TypeError):
             val = 35.0
         vol = max(0.0, min(1.0, val / 100.0))
-        _ha_request("POST", "/api/services/media_player/volume_set", {"entity_id": active_spk, "volume_level": vol})
+        _ha_request(
+            "POST",
+            "/api/services/media_player/volume_set",
+            {"entity_id": active_spk, "volume_level": vol},
+        )
     elif action == "next" and queue and active_spk:
         next_idx = (q_idx + 1) % len(queue)
         with MUSIC_STATE_LOCK:
@@ -1356,9 +1468,11 @@ def launch_plex_on_living_room_tv(body):
                 return
             rem_st = _ha_request("GET", f"/api/states/{tv_remote}") or {}
             mp_st = _ha_request("GET", f"/api/states/{tv_media_player}") or {}
-            is_cold = (
-                rem_st.get("state") != "on"
-                or mp_st.get("state") in ("off", "standby", "unavailable", None)
+            is_cold = rem_st.get("state") != "on" or mp_st.get("state") in (
+                "off",
+                "standby",
+                "unavailable",
+                None,
             )
             if is_cold:
                 _ha_request("POST", "/api/services/remote/turn_on", {"entity_id": tv_remote})
@@ -1371,11 +1485,12 @@ def launch_plex_on_living_room_tv(body):
                     time.sleep(0.5)
 
             cast_st = _ha_request("GET", f"/api/states/{tv_cast_player}") or {}
-            if (
-                cast_st.get("state") in ("playing", "paused", "idle")
-                and (cast_st.get("attributes") or {}).get("app_id") not in (None, "AndroidNativeApp")
-            ):
-                _ha_request("POST", "/api/services/media_player/turn_off", {"entity_id": tv_cast_player})
+            if cast_st.get("state") in ("playing", "paused", "idle") and (
+                cast_st.get("attributes") or {}
+            ).get("app_id") not in (None, "AndroidNativeApp"):
+                _ha_request(
+                    "POST", "/api/services/media_player/turn_off", {"entity_id": tv_cast_player}
+                )
                 # Readiness polling: poll until cast state is no longer playing/paused up to 2s
                 deadline = time.time() + 2.0
                 while time.time() < deadline:
@@ -1398,7 +1513,10 @@ def launch_plex_on_living_room_tv(body):
             while time.time() < deadline:
                 st = _ha_request("GET", f"/api/states/{tv_media_player}", timeout=2) or {}
                 attrs = st.get("attributes") or {}
-                if st.get("state") == "playing" or attrs.get("app_id") in ("com.plexapp.android", "Plex"):
+                if st.get("state") == "playing" or attrs.get("app_id") in (
+                    "com.plexapp.android",
+                    "Plex",
+                ):
                     break
                 time.sleep(0.5)
 
@@ -1486,7 +1604,11 @@ def gcal_item_to_vevent(ev):
         lines.append(f"DTSTART;VALUE=DATE:{s_date}")
         lines.append(f"DTEND;VALUE=DATE:{e_date}")
     elif "dateTime" in start:
-        s_dt = datetime.datetime.fromisoformat(start["dateTime"]).astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+        s_dt = (
+            datetime.datetime.fromisoformat(start["dateTime"])
+            .astimezone(UTC)
+            .strftime("%Y%m%dT%H%M%SZ")
+        )
         e_raw = end.get("dateTime") or start["dateTime"]
         e_dt = datetime.datetime.fromisoformat(e_raw).astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
         lines.append(f"DTSTART:{s_dt}")
@@ -1564,7 +1686,7 @@ def build_feed(feed_name):
                 if v:
                     vevents.append(v)
     elif feed_name.startswith("member_"):
-        member = feed_name[len("member_"):]
+        member = feed_name[len("member_") :]
         cals_to_poll = []
         if member in extra_member_cals:
             cals_to_poll.append(extra_member_cals[member])
@@ -1621,7 +1743,9 @@ def _derive_screens_from_config():
             if k in cfg["hearth"] and isinstance(cfg["hearth"][k], list):
                 return cfg["hearth"][k]
 
-    core_url = str(_cfg("MIRRORMERE_CORE_URL", _cfg("CORE_URL", "http://127.0.0.1:8080"))).rstrip("/")
+    core_url = str(_cfg("MIRRORMERE_CORE_URL", _cfg("CORE_URL", "http://127.0.0.1:8080"))).rstrip(
+        "/"
+    )
     try:
         req = urllib.request.Request(f"{core_url}/api/screens")
         with urllib.request.urlopen(req, timeout=2) as r:
@@ -1658,11 +1782,13 @@ def _derive_screens_from_config():
                 screen_idx += 1
                 current_screen = []
                 current_cells = 0
-            current_screen.append({
-                "widget_id": wid,
-                "origin": w.get("origin", [current_cells % 6, (current_cells // 6) % 2]),
-                "dimensions": dims,
-            })
+            current_screen.append(
+                {
+                    "widget_id": wid,
+                    "origin": w.get("origin", [current_cells % 6, (current_cells // 6) % 2]),
+                    "dimensions": dims,
+                }
+            )
             current_cells += cells
         if current_screen:
             screens.append({"screen_index": screen_idx, "widgets": current_screen})
@@ -1670,11 +1796,14 @@ def _derive_screens_from_config():
             return screens
 
     return [
-        {"screen_index": 0, "widgets": [
-            {"widget_id": "family-calendar", "origin": [0, 0], "dimensions": [4, 2]},
-            {"widget_id": "home-weather", "origin": [4, 0], "dimensions": [2, 1]},
-            {"widget_id": "household-tasks", "origin": [4, 1], "dimensions": [2, 1]},
-        ]}
+        {
+            "screen_index": 0,
+            "widgets": [
+                {"widget_id": "family-calendar", "origin": [0, 0], "dimensions": [4, 2]},
+                {"widget_id": "home-weather", "origin": [4, 0], "dimensions": [2, 1]},
+                {"widget_id": "household-tasks", "origin": [4, 1], "dimensions": [2, 1]},
+            ],
+        }
     ]
 
 
@@ -1715,26 +1844,23 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(403)
                 self.end_headers()
                 return
-            feed = path[len("/ical/"):-4]
+            feed = path[len("/ical/") : -4]
             payload = build_feed(feed)
             self.send_response(200)
             self.send_header("Content-Type", "text/calendar; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             if not is_head:
-                try:
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                     self.wfile.write(payload)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
             return
 
-        if path.startswith("/hearth-api/"):
-            if not self._is_internal_caller():
-                self._send_json_error(403, "Forbidden: internal callers only")
-                return
+        if path.startswith("/hearth-api/") and not self._is_internal_caller():
+            self._send_json_error(403, "Forbidden: internal callers only")
+            return
 
         if path.startswith("/hearth-api/mealie/image/"):
-            recipe_id = path[len("/hearth-api/mealie/image/"):].strip("/")
+            recipe_id = path[len("/hearth-api/mealie/image/") :].strip("/")
             data, ctype = fetch_mealie_image(recipe_id)
             if data:
                 self.send_response(200)
@@ -1743,10 +1869,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 if not is_head:
-                    try:
+                    with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                         self.wfile.write(data)
-                    except (BrokenPipeError, ConnectionResetError):
-                        pass
                 return
             self.send_response(404)
             self.end_headers()
@@ -1761,10 +1885,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             if not is_head:
-                try:
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                     self.wfile.write(payload)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
             return
 
         if path == "/hearth-api/plex/upcoming":
@@ -1776,10 +1898,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             if not is_head:
-                try:
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                     self.wfile.write(payload)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
             return
 
         if path == "/hearth-api/screens/layout":
@@ -1817,7 +1937,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/hearth-api/music/stream/"):
-            vid = path[len("/hearth-api/music/stream/"):].split(".")[0]
+            vid = path[len("/hearth-api/music/stream/") :].split(".")[0]
             if not vid or not YT_VIDEO_ID_RE.match(vid):
                 self._send_json_error(400, "Invalid video_id")
                 return
@@ -1866,10 +1986,8 @@ class Handler(BaseHTTPRequestHandler):
                         self.send_header(h, val)
                 self.end_headers()
                 if not is_head:
-                    try:
+                    with contextlib.suppress(Exception):
                         self.wfile.write(e.read())
-                    except Exception:
-                        pass
             except Exception as e:
                 print(f"[HEARTH-Bridge] Stream proxy error: {e}", flush=True)
             return
@@ -1884,10 +2002,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 if not is_head:
-                    try:
+                    with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                         self.wfile.write(data)
-                    except (BrokenPipeError, ConnectionResetError):
-                        pass
                 return
             self.send_response(404)
             self.end_headers()
@@ -1913,10 +2029,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        if path.startswith("/hearth-api/"):
-            if not self._is_internal_caller():
-                self._send_json_error(403, "Forbidden: internal callers only")
-                return
+        if path.startswith("/hearth-api/") and not self._is_internal_caller():
+            self._send_json_error(403, "Forbidden: internal callers only")
+            return
 
         # Parse and validate Content-Length
         try:

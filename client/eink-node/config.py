@@ -2,8 +2,8 @@
 config.py - Configuration loader and schemas for Mirrormere E-Ink display node
 """
 
-from dataclasses import dataclass, field
 import os
+from dataclasses import dataclass, field
 
 try:
     import yaml
@@ -90,7 +90,7 @@ def _simple_yaml_parse(filepath: str) -> dict:
     sub_section: str | None = None
 
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             for line in f:
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#"):
@@ -111,9 +111,8 @@ def _simple_yaml_parse(filepath: str) -> dict:
                     elif indent in (2, 4):
                         if not val:
                             sub_section = key
-                            if current_section:
-                                if sub_section not in data[current_section]:
-                                    data[current_section][sub_section] = {}
+                            if current_section and sub_section not in data[current_section]:
+                                data[current_section][sub_section] = {}
                         else:
                             parsed_val = _parse_yaml_value(val)
                             if sub_section and current_section:
@@ -145,7 +144,7 @@ def load_config(path: str | None = None) -> EinkConfig:
     if target_path and os.path.isfile(target_path):
         if yaml is not None:
             try:
-                with open(target_path, "r", encoding="utf-8") as f:
+                with open(target_path, encoding="utf-8") as f:
                     loaded = yaml.safe_load(f)
                     if isinstance(loaded, dict):
                         cfg_data = loaded

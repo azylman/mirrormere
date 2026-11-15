@@ -4,7 +4,7 @@ import socket
 import struct
 import unittest
 
-from client.ear.waveform_levels import WaveformLevelServer, WAVEFORM_POINTS
+from client.ear.waveform_levels import WAVEFORM_POINTS, WaveformLevelServer
 
 RATE = 24000
 FRAME_LEN = 792  # 33 ms at 24 kHz
@@ -87,7 +87,9 @@ class WaveformLevelServerTests(unittest.TestCase):
         self.assertEqual(len(srv._carry), 0)
         self.assertIsNone(srv._next_play)
         frame = inbox.get_nowait()
-        self.assertEqual(frame, ("event: frame\ndata: " + json.dumps([0] * WAVEFORM_POINTS) + "\n\n").encode())
+        self.assertEqual(
+            frame, ("event: frame\ndata: " + json.dumps([0] * WAVEFORM_POINTS) + "\n\n").encode()
+        )
 
     def test_clear_resets_next_play_so_next_chunk_starts_at_latency(self):
         clock = FakeClock(10.0)
@@ -141,7 +143,9 @@ class WaveformLevelServerTests(unittest.TestCase):
 
     def test_latency_defaults_to_300_and_comes_from_constructor(self):
         self.assertAlmostEqual(WaveformLevelServer(port=0, now=FakeClock()).latency_ms, 300.0)
-        self.assertAlmostEqual(WaveformLevelServer(port=0, latency_ms=120, now=FakeClock()).latency_ms, 120.0)
+        self.assertAlmostEqual(
+            WaveformLevelServer(port=0, latency_ms=120, now=FakeClock()).latency_ms, 120.0
+        )
 
     def test_stream_serves_cors_frames_and_404(self):
         srv = WaveformLevelServer(port=0, latency_ms=50)
@@ -174,7 +178,7 @@ class WaveformLevelServerTests(unittest.TestCase):
         while len(frames) < 2:
             line = reader.readline().decode()
             if line.startswith("data: "):
-                frames.append(json.loads(line[len("data: "):]))
+                frames.append(json.loads(line[len("data: ") :]))
         self.assertEqual(len(frames), 2)
         for values in frames:
             self.assertEqual(len(values), WAVEFORM_POINTS)

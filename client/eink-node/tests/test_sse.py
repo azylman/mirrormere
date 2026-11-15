@@ -2,12 +2,10 @@
 test_sse.py - Hermetic unit tests for SSE stream listener and event filtering
 """
 
-import io
 import threading
 import unittest
-from typing import Any
 
-from sse import SSEListener, DIRTY_EVENTS, IGNORED_EVENTS, parse_sse_block
+from sse import DIRTY_EVENTS, SSEListener, parse_sse_block
 
 
 class MockResponse:
@@ -27,8 +25,7 @@ class MockResponse:
         self.closed = True
 
     def __iter__(self):
-        for line in self.lines:
-            yield line
+        yield from self.lines
 
 
 class TestSSEListener(unittest.TestCase):
@@ -40,7 +37,7 @@ class TestSSEListener(unittest.TestCase):
             ": ping 1727216200",
             "event: widget.update",
             "id: evt_01",
-            "data: {\"widget_id\":\"weather\"}",
+            'data: {"widget_id":"weather"}',
         ]
         has_content, event_type, event_id, data = parse_sse_block(lines)
         self.assertTrue(has_content)
@@ -91,12 +88,14 @@ class TestSSEListener(unittest.TestCase):
 
         stream_lines = []
         for idx, ev in enumerate(expected_events):
-            stream_lines.extend([
-                f"event: {ev}\n",
-                f"id: evt_{idx}\n",
-                f"data: {{\"event\":\"{ev}\"}}\n",
-                "\n",
-            ])
+            stream_lines.extend(
+                [
+                    f"event: {ev}\n",
+                    f"id: evt_{idx}\n",
+                    f'data: {{"event":"{ev}"}}\n',
+                    "\n",
+                ]
+            )
 
         mock_resp = MockResponse(stream_lines)
 
@@ -117,7 +116,7 @@ class TestSSEListener(unittest.TestCase):
         self.assertEqual(len(dirty_calls), len(expected_events))
         received_types = [call[0] for call in dirty_calls]
         self.assertEqual(received_types, expected_events)
-        self.assertEqual(listener.last_event_id, f"evt_{len(expected_events)-1}")
+        self.assertEqual(listener.last_event_id, f"evt_{len(expected_events) - 1}")
 
     def test_ignored_events_do_not_trigger_on_dirty(self):
         """
@@ -132,15 +131,15 @@ class TestSSEListener(unittest.TestCase):
             "\n",
             "event: system.status\n",
             "id: evt_status\n",
-            "data: {\"online\":true}\n",
+            'data: {"online":true}\n',
             "\n",
             "event: voice.state\n",
             "id: evt_voice\n",
-            "data: {\"state\":\"listening\"}\n",
+            'data: {"state":"listening"}\n',
             "\n",
             "event: audio.state\n",
             "id: evt_audio\n",
-            "data: {\"volume\":80}\n",
+            'data: {"volume":80}\n',
             "\n",
         ]
 
@@ -174,12 +173,14 @@ class TestSSEListener(unittest.TestCase):
         def mock_opener(req, timeout=None):
             captured_requests.append(req)
             if len(captured_requests) == 1:
-                return MockResponse([
-                    "event: widget.update\n",
-                    "id: evt_42\n",
-                    "data: {}\n",
-                    "\n",
-                ])
+                return MockResponse(
+                    [
+                        "event: widget.update\n",
+                        "id: evt_42\n",
+                        "data: {}\n",
+                        "\n",
+                    ]
+                )
             return MockResponse([])
 
         backoffs = []
@@ -188,7 +189,10 @@ class TestSSEListener(unittest.TestCase):
         listener = SSEListener(
             events_url="http://localhost:8080/api/events",
             opener=mock_opener,
-            sleep_fn=lambda sec: (backoffs.append(sec), stop_event.set() if len(captured_requests) >= 2 else None),
+            sleep_fn=lambda sec: (
+                backoffs.append(sec),
+                stop_event.set() if len(captured_requests) >= 2 else None,
+            ),
         )
 
         t = threading.Thread(target=listener.run, args=(stop_event,))
@@ -215,12 +219,14 @@ class TestSSEListener(unittest.TestCase):
             if call_count[0] <= 7:
                 raise ConnectionError("connection refused")
             # 8th call succeeds
-            return MockResponse([
-                "event: header.update\n",
-                "id: evt_ok\n",
-                "data: {}\n",
-                "\n",
-            ])
+            return MockResponse(
+                [
+                    "event: header.update\n",
+                    "id: evt_ok\n",
+                    "data: {}\n",
+                    "\n",
+                ]
+            )
 
         listener = SSEListener(
             events_url="http://localhost:8080/api/events",

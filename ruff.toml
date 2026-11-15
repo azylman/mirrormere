@@ -1,0 +1,15 @@
+# Ruff lint + format config for mirrormere's first-party Python: client/*,
+# sidecars/voice-fingerprinter and deploy/ical-bridge. The ruff version is
+# pinned in requirements-lint.txt; scripts/verify.sh and CI both enforce it.
+
+# Oldest runtime among the Python images (client/remote runs python:3.11-slim).
+target-version = "py311"
+line-length = 100
+# Python sources only; ruff would otherwise also format code blocks in Markdown.
+include = ["*.py", "*.pyi"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# `ruff format` owns line length. What it cannot split is long string literals,
+# docstrings and comments, which are neither bugs nor auto-fixable.
+ignore = ["E501"]

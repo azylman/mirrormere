@@ -5,6 +5,7 @@ speechbrain modules — no network access, no model download, no real
 torch/speechbrain import. Audio fixtures are synthesized in-process with
 the stdlib `wave` module; nothing is ever played.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -21,8 +22,9 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
-def _make_wav_bytes(seconds: float, sample_rate: int = 16000, channels: int = 1,
-                     freq: float = 220.0) -> bytes:
+def _make_wav_bytes(
+    seconds: float, sample_rate: int = 16000, channels: int = 1, freq: float = 220.0
+) -> bytes:
     """A synthesized sine-wave WAV — never audio played or recorded."""
     n_frames = int(seconds * sample_rate)
     buf = io.BytesIO()
@@ -146,6 +148,7 @@ def test_load_config_file(tmp_path):
     cfg_file = tmp_path / "voice-fingerprinter.yaml"
     cfg_file.write_text("port: 9099\nbind: 127.0.0.1\ndevice: cpu\nthreads: 2\n")
     import app
+
     loaded = app.load_config_file(str(cfg_file))
     assert str(loaded["port"]) == "9099"
     assert loaded["bind"] == "127.0.0.1"
@@ -155,6 +158,6 @@ def test_load_config_file_port_zero(tmp_path):
     cfg_file = tmp_path / "voice-fingerprinter.yaml"
     cfg_file.write_text("port: 0\nbind: 127.0.0.1\n")
     import app
+
     loaded = app.load_config_file(str(cfg_file))
     assert str(loaded["port"]) == "0"
-

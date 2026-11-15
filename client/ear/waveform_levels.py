@@ -10,6 +10,7 @@ Stdlib only. Nothing here touches the playback path: a failed bind disables the
 server and every method becomes a no-op.
 """
 
+import contextlib
 import json
 import logging
 import queue
@@ -18,8 +19,8 @@ import threading
 import time
 from array import array
 from collections import deque
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable, Optional
 
 log = logging.getLogger(__name__)
 
@@ -102,16 +103,16 @@ class WaveformLevelServer:
 
         self._cond = threading.Condition()
         self._queue: deque = deque()  # (play_time, values), in play order
-        self._next_play: Optional[float] = None
+        self._next_play: float | None = None
         self._carry = array("h")
-        self._carry_rate: Optional[int] = None
+        self._carry_rate: int | None = None
         self._clients: list = []
         self._enabled = True
         self._closing = False
 
-        self._httpd: Optional[_Server] = None
-        self._serve_thread: Optional[threading.Thread] = None
-        self._sched_thread: Optional[threading.Thread] = None
+        self._httpd: _Server | None = None
+        self._serve_thread: threading.Thread | None = None
+        self._sched_thread: threading.Thread | None = None
 
     @property
     def enabled(self) -> bool:
@@ -124,15 +125,21 @@ class WaveformLevelServer:
         try:
             httpd = _Server((self.host, self.port), _Handler)
         except (OSError, OverflowError, ValueError) as exc:
-            log.warning("waveform levels disabled: cannot bind %s:%s (%s)", self.host, self.port, exc)
+            log.warning(
+                "waveform levels disabled: cannot bind %s:%s (%s)", self.host, self.port, exc
+            )
             self._enabled = False
             return
         httpd.waveform = self  # type: ignore[attr-defined]
         self._httpd = httpd
         self.port = httpd.server_address[1]
         self._closing = False
-        self._serve_thread = threading.Thread(target=httpd.serve_forever, name="waveform-levels-http", daemon=True)
-        self._sched_thread = threading.Thread(target=self._scheduler_loop, name="waveform-levels-sched", daemon=True)
+        self._serve_thread = threading.Thread(
+            target=httpd.serve_forever, name="waveform-levels-http", daemon=True
+        )
+        self._sched_thread = threading.Thread(
+            target=self._scheduler_loop, name="waveform-levels-sched", daemon=True
+        )
         self._serve_thread.start()
         self._sched_thread.start()
 
@@ -143,10 +150,8 @@ class WaveformLevelServer:
             self._closing = True
             self._queue.clear()
             for inbox in self._clients:
-                try:
+                with contextlib.suppress(queue.Full):
                     inbox.put_nowait(None)
-                except queue.Full:
-                    pass
             self._cond.notify_all()
         httpd = self._httpd
         self._httpd = None
@@ -207,7 +212,7 @@ class WaveformLevelServer:
             buf = self._carry + samples if self._carry else samples
             full = (len(buf) // frame_len) * frame_len
             for start in range(0, full, frame_len):
-                values = _frame_values(buf[start:start + frame_len])
+                values = _frame_values(buf[start : start + frame_len])
                 play_at = self._now() + self.latency_ms / 1000.0
                 if self._next_play is not None and self._next_play > play_at:
                     play_at = self._next_play
@@ -233,10 +238,9 @@ class WaveformLevelServer:
     def _broadcast_locked(self, values) -> None:
         frame = _encode_frame(values)
         for inbox in self._clients:
-            try:
+            # A stalled client misses a frame; it catches up on the next one.
+            with contextlib.suppress(queue.Full):
                 inbox.put_nowait(frame)
-            except queue.Full:
-                pass  # a stalled client misses a frame; it catches up on the next one
 
     def _subscribe(self) -> "queue.Queue":
         inbox: queue.Queue = queue.Queue(maxsize=CLIENT_QUEUE_MAX)

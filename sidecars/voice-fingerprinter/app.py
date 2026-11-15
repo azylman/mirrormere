@@ -55,11 +55,11 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
+
 try:
     import yaml
 except ImportError:
@@ -72,22 +72,24 @@ def load_config_file(path: str | None = None) -> dict:
         candidates.append(path)
     if os.environ.get("CONFIG_PATH"):
         candidates.append(os.environ["CONFIG_PATH"])
-    candidates.extend([
-        "/config/voice-fingerprinter.yaml",
-        "/config/voice-fingerprinter.yml",
-        "/app/config.yaml",
-    ])
+    candidates.extend(
+        [
+            "/config/voice-fingerprinter.yaml",
+            "/config/voice-fingerprinter.yml",
+            "/app/config.yaml",
+        ]
+    )
     for c in candidates:
         if os.path.exists(c):
             if yaml is not None:
-                with open(c, "r", encoding="utf-8") as f:
+                with open(c, encoding="utf-8") as f:
                     data = yaml.safe_load(f)
                     if isinstance(data, dict):
                         return data
             else:
                 try:
                     res = {}
-                    with open(c, "r", encoding="utf-8") as f:
+                    with open(c, encoding="utf-8") as f:
                         for line in f:
                             line = line.strip()
                             if not line or line.startswith("#") or ":" not in line:
@@ -101,13 +103,27 @@ def load_config_file(path: str | None = None) -> dict:
 
 
 _file_cfg = load_config_file()
-PORT = int(os.environ["MDE_PORT"]) if "MDE_PORT" in os.environ else (int(_file_cfg["port"]) if "port" in _file_cfg and _file_cfg["port"] is not None else 9096)
-BIND = os.environ.get("MDE_BIND") if "MDE_BIND" in os.environ else (_file_cfg.get("bind") or "0.0.0.0")
+PORT = (
+    int(os.environ["MDE_PORT"])
+    if "MDE_PORT" in os.environ
+    else (int(_file_cfg["port"]) if "port" in _file_cfg and _file_cfg["port"] is not None else 9096)
+)
+BIND = (
+    os.environ.get("MDE_BIND") if "MDE_BIND" in os.environ else (_file_cfg.get("bind") or "0.0.0.0")
+)
 
-MODEL_SOURCE = os.environ.get("MDE_MODEL_SOURCE") or _file_cfg.get("model_source") or "speechbrain/spkrec-ecapa-voxceleb"
-MODEL_ID = MODEL_SOURCE  # the model string voice_hub.speaker_id.model in config.yaml must match exactly
+MODEL_SOURCE = (
+    os.environ.get("MDE_MODEL_SOURCE")
+    or _file_cfg.get("model_source")
+    or "speechbrain/spkrec-ecapa-voxceleb"
+)
+MODEL_ID = (
+    MODEL_SOURCE  # the model string voice_hub.speaker_id.model in config.yaml must match exactly
+)
 DEVICE = os.environ.get("MDE_DEVICE") or _file_cfg.get("device") or "cpu"
-SAVEDIR = Path(os.environ.get("MDE_SAVEDIR") or _file_cfg.get("savedir") or "/models/speechbrain-ecapa")
+SAVEDIR = Path(
+    os.environ.get("MDE_SAVEDIR") or _file_cfg.get("savedir") or "/models/speechbrain-ecapa"
+)
 THREADS = int(os.environ.get("MDE_THREADS") or _file_cfg.get("threads") or str(os.cpu_count() or 1))
 TARGET_SAMPLE_RATE = 16000
 MIN_DURATION_SEC = 0.5
@@ -115,10 +131,10 @@ WARMUP_SEC = 1.0  # 1s of near-silence, just enough to exercise the full path
 
 _model = None
 _model_lock = threading.Lock()
-_load_error: Optional[str] = None
-_load_ms: Optional[float] = None
-_warmup_ms: Optional[float] = None
-_active_device: Optional[str] = None  # the device _load_model() actually used
+_load_error: str | None = None
+_load_ms: float | None = None
+_warmup_ms: float | None = None
+_active_device: str | None = None  # the device _load_model() actually used
 
 
 def _load_model() -> None:
@@ -150,8 +166,11 @@ def _load_model() -> None:
             run_opts={"device": device},
         )
         _load_ms = (time.time() - t0) * 1000
-        print(f"[voice-fingerprinter] loaded {MODEL_SOURCE} on {device} in {_load_ms:.0f}ms "
-              f"(threads={THREADS})", flush=True)
+        print(
+            f"[voice-fingerprinter] loaded {MODEL_SOURCE} on {device} in {_load_ms:.0f}ms "
+            f"(threads={THREADS})",
+            flush=True,
+        )
 
         t0 = time.time()
         warmup_samples = torch.zeros((1, int(TARGET_SAMPLE_RATE * WARMUP_SEC)))

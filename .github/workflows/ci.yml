@@ -181,6 +181,26 @@ jobs:
           npm ci --no-audit --no-fund
           npm run lint
 
+      - name: Install Ruff (pinned by requirements-lint.txt)
+        uses: astral-sh/ruff-action@v4.1.0
+        with:
+          version-file: requirements-lint.txt
+          args: --version
+
+      - name: Lint & Format-Check Python (ruff)
+        run: |
+          set -e
+          # ruff-action falls back to the latest release if it cannot parse the
+          # pin, so fail closed unless the installed ruff matches it exactly.
+          pinned=$(sed -n 's/^ruff==//p' requirements-lint.txt)
+          installed=$(ruff --version | awk '{print $2}')
+          if [ -z "$pinned" ] || [ "$installed" != "$pinned" ]; then
+            echo "🚨 ruff $installed does not match the requirements-lint.txt pin (${pinned:-missing})" >&2
+            exit 1
+          fi
+          ruff check --output-format=github
+          ruff format --check
+
       - name: Run Go Unit Tests & Coverage Gate
         if: needs.changes.outputs.go_core == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
         run: |

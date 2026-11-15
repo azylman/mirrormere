@@ -11,6 +11,7 @@ logic — decode, downmix, resample, error handling — faithfully.
 numpy is a real dependency here (small, no model weights) since app.py's
 decode path is written against a real ndarray API.
 """
+
 from __future__ import annotations
 
 import sys
