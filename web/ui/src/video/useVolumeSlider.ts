@@ -7,7 +7,7 @@ export interface UseVolumeSliderOptions {
   muted: boolean;
   throttleInterval?: number;
   commitCooldown?: number;
-  fetch?: typeof fetch;
+  fetch?: typeof fetch | undefined;
   onUserActivity?: () => void;
   audioState?: AudioSlice;
 }

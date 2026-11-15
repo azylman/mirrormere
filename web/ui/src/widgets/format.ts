@@ -17,7 +17,7 @@ function parseTaskDue(rawDue: unknown, nowUTC: number, nowMs: number): boolean {
   if (typeof rawDue !== 'string' || rawDue.trim() === '') return false;
   const dueStr = rawDue.trim();
   if (dueStr.length === 10 && /^\d{4}-\d{2}-\d{2}$/.test(dueStr)) {
-    const [y, m, d] = dueStr.split('-').map(Number);
+    const [y = NaN, m = NaN, d = NaN] = dueStr.split('-').map(Number);
     const parsedUTC = Date.UTC(y, m - 1, d);
     return nowUTC > parsedUTC;
   }

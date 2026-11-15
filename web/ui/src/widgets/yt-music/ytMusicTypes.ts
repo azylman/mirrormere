@@ -1,10 +1,10 @@
 import { useEffect, useId, useState, useSyncExternalStore } from 'react';
 
 export interface Speaker { entity_id: string; name: string }
-export interface AccountProfile { id: string; name: string; handle?: string; type: 'email' | 'brand' }
+export interface AccountProfile { id: string; name: string; handle?: string | undefined; type: 'email' | 'brand' }
 export interface SuggestedItem {
   id: string; title: string; subtitle?: string; kind: 'artist' | 'album';
-  thumb?: string; video_id?: string; playlist_id?: string;
+  thumb?: string | undefined; video_id?: string | undefined; playlist_id?: string;
 }
 export interface NowPlaying {
   title?: string; artist?: string; thumb?: string; state?: string;
@@ -14,12 +14,12 @@ export interface Playlist { playlist_id: string; title: string; thumb?: string; 
 export interface QueueItem { title: string; artist: string; thumb?: string; id?: string; video_id?: string }
 export interface SearchResultItem { video_id: string; title: string; artist: string; thumb?: string; duration?: string }
 export interface MusicState {
-  active_speaker?: string; speakers?: Speaker[]; now_playing?: NowPlaying;
+  active_speaker?: string | undefined; speakers?: Speaker[]; now_playing?: NowPlaying | undefined;
   playlists?: Playlist[]; queue?: QueueItem[]; accounts?: AccountProfile[];
-  active_account?: string; suggestions?: SuggestedItem[];
+  active_account?: string | undefined; suggestions?: SuggestedItem[];
 }
 export interface SharedYtMusicState {
-  now_playing?: NowPlaying; active_speaker: string; active_account?: string; apiBase: string;
+  now_playing?: NowPlaying | undefined; active_speaker: string; active_account?: string | undefined; apiBase: string;
 }
 
 export type YtMusicTab = 'discovery' | 'playlists' | 'queue' | 'search';
@@ -144,7 +144,7 @@ export function isYtMusicLiveIslandActive(np?: NowPlaying | null): boolean {
 
 declare global {
   interface Window {
-    onEmberAccountsUpdated?: (payload?: unknown) => void;
+    onEmberAccountsUpdated?: ((payload?: unknown) => void) | undefined;
   }
 }
 

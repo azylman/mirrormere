@@ -13,6 +13,7 @@ import {
   resolvePreviewOrigin,
   togglePinWidget,
 } from './editorMath';
+import { itemAt } from '../test-utils/lookup';
 
 const makeWidget = (overrides: Partial<LayoutEditorWidget> = {}): LayoutEditorWidget => ({
   widget_id: 'w1',
@@ -197,7 +198,7 @@ describe('editorMath', () => {
     it('resets screen to 0 when only pinned widgets exist', () => {
       const widgets = [makeWidget({ widget_id: 'pin', pinned: true, screen: 4 })];
       const result = compactScreens(widgets);
-      expect(result[0].screen).toBe(0);
+      expect(itemAt(result, 0).screen).toBe(0);
     });
   });
 
@@ -226,7 +227,7 @@ describe('editorMath', () => {
     it('moves into free space directly', () => {
       const widgets = [makeWidget({ widget_id: 'w1', screen: 0, origin: [0, 0], dimensions: [2, 1] })];
       const res = moveOrSwapWidget(widgets, 'w1', 0, [2, 0], 6, 2);
-      expect(res[0].origin).toEqual([2, 0]);
+      expect(itemAt(res, 0).origin).toEqual([2, 0]);
     });
 
     it('moves pinned widget into free space on targetScreen > 0 and preserves screen: 0', () => {
@@ -462,16 +463,16 @@ describe('editorMath', () => {
     it('resizes in place if current origin fits new dimensions', () => {
       const widgets = [makeWidget({ widget_id: 'w1', origin: [0, 0], dimensions: [2, 1] })];
       const res = resizeWidget(widgets, 'w1', [3, 2], 6, 2);
-      expect(res[0].dimensions).toEqual([3, 2]);
-      expect(res[0].origin).toEqual([0, 0]);
+      expect(itemAt(res, 0).dimensions).toEqual([3, 2]);
+      expect(itemAt(res, 0).origin).toEqual([0, 0]);
     });
 
     it('clamps origin towards left/top when expanding past grid boundary', () => {
       // At col 5, expanding to width 2 overflows 5+2=7 > 6. Clamped col should be 4.
       const widgets = [makeWidget({ widget_id: 'w1', origin: [5, 0], dimensions: [1, 1] })];
       const res = resizeWidget(widgets, 'w1', [2, 1], 6, 2);
-      expect(res[0].dimensions).toEqual([2, 1]);
-      expect(res[0].origin).toEqual([4, 0]);
+      expect(itemAt(res, 0).dimensions).toEqual([2, 1]);
+      expect(itemAt(res, 0).origin).toEqual([4, 0]);
     });
 
     it('searches for open slot if clamped origin is blocked', () => {

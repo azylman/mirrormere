@@ -112,8 +112,8 @@ function resolveLocalDateAndHour(
     }
   }
   const baseDate = timestamp.slice(0, 10);
-  const hourMatch = /T(\d{2}):/.exec(timestamp);
-  const hour = hourMatch ? parseInt(hourMatch[1], 10) : 0;
+  const hourDigits = /T(\d{2}):/.exec(timestamp)?.[1];
+  const hour = hourDigits ? parseInt(hourDigits, 10) : 0;
   return { baseDate, hour };
 }
 
@@ -202,13 +202,13 @@ export interface BirthdayMatch {
 function normalizeMonthDay(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
-  const fullMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed);
-  if (fullMatch) {
-    return `${fullMatch[2].padStart(2, '0')}-${fullMatch[3].padStart(2, '0')}`;
+  const [, , fullMonth, fullDay] = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed) ?? [];
+  if (fullMonth && fullDay) {
+    return `${fullMonth.padStart(2, '0')}-${fullDay.padStart(2, '0')}`;
   }
-  const mdMatch = /^(\d{1,2})[-/](\d{1,2})$/.exec(trimmed);
-  if (mdMatch) {
-    return `${mdMatch[1].padStart(2, '0')}-${mdMatch[2].padStart(2, '0')}`;
+  const [, month, day] = /^(\d{1,2})[-/](\d{1,2})$/.exec(trimmed) ?? [];
+  if (month && day) {
+    return `${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
   }
   return undefined;
 }

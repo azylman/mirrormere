@@ -16,7 +16,7 @@ interface SlotWeatherInfo { temp: number; precipProb: number; icon: string; }
 interface SchoolDaySlotItem {
   slot: DaypartSlot; displayLabel: string; isTomorrow: boolean; temp: number;
   state: string; outfitLabel: string; forecastSummary: string; spriteUrl: string;
-  birthdayBanner?: string;
+  birthdayBanner?: string | undefined;
 }
 const DAYPART_SLOTS: DaypartSlot[] = ['morning', 'afternoon', 'evening'];
 
@@ -115,9 +115,9 @@ function findBestHourlySlot(slot: DaypartSlot, hourly: unknown[], targetDateStr?
   for (const item of pool) {
     if (!item || typeof item !== 'object') continue;
     const h = item as Record<string, unknown>;
-    const match = String(h.time ?? h.Time ?? '').match(/(?:T|\s|^)(\d{1,2}):/);
-    if (match) {
-      const diff = Math.abs(parseInt(match[1], 10) - targetHour);
+    const hourDigits = String(h.time ?? h.Time ?? '').match(/(?:T|\s|^)(\d{1,2}):/)?.[1];
+    if (hourDigits) {
+      const diff = Math.abs(parseInt(hourDigits, 10) - targetHour);
       if (diff < bestDiff) {
         bestDiff = diff;
         bestItem = h;
@@ -241,7 +241,7 @@ function renderCurrentHeader(props: WeatherCurrentHeaderProps) {
 }
 
 function renderSchoolDayStrip(slots: SchoolDaySlotItem[], shadowOpacity?: number) {
-  const isTomorrow = slots.length > 0 && slots[0].isTomorrow;
+  const isTomorrow = slots[0]?.isTomorrow ?? false;
   const stripStyle =
     shadowOpacity !== undefined
       ? ({ '--weather-scrim-opacity': String(shadowOpacity) } as CSSProperties)
@@ -275,7 +275,7 @@ function renderSchoolDayStrip(slots: SchoolDaySlotItem[], shadowOpacity?: number
   );
 }
 
-interface WeatherHourlySectionProps { hourly?: unknown[]; widgetId: string; }
+interface WeatherHourlySectionProps { hourly?: unknown[] | undefined; widgetId: string; }
 
 function renderHourlySection({ hourly, widgetId }: WeatherHourlySectionProps) {
   const hasHourly = Array.isArray(hourly) && hourly.length > 0;

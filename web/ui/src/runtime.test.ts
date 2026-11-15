@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startRuntime, type Runtime } from './runtime';
 import { FakeEventSource } from './sse/fake-event-source';
 import { useDisplayStore } from './store';
+import { entryAt, itemAt } from './test-utils/lookup';
 
 const initial = useDisplayStore.getState();
 
@@ -27,12 +28,12 @@ describe('startRuntime', () => {
 
     expect(again).toBe(runtime);
     expect(FakeEventSource.instances).toHaveLength(1);
-    expect(FakeEventSource.instances[0].url).toBe('api/events');
+    expect(itemAt(FakeEventSource.instances, 0).url).toBe('api/events');
   });
 
   it('marks the connection as connected on open and fills the store from the hydration batch', () => {
     runtime = startRuntime({ createEventSource: (url) => new FakeEventSource(url) });
-    const source = FakeEventSource.instances[0];
+    const source = itemAt(FakeEventSource.instances, 0);
 
     act(() => {
       source.open();
@@ -44,14 +45,14 @@ describe('startRuntime', () => {
     const state = useDisplayStore.getState();
     expect(state.system.connection).toBe('connected');
     expect(state.header.timezone).toBe('America/New_York');
-    expect(state.widgets.w1.data).toEqual({ a: 1 });
+    expect(entryAt(state.widgets, 'w1').data).toEqual({ a: 1 });
     expect(state.theme.theme).toBe('night');
   });
 
   it('reloads the page when the server boot_id changes', () => {
     const reload = vi.fn();
     runtime = startRuntime({ createEventSource: (url) => new FakeEventSource(url), reload });
-    const source = FakeEventSource.instances[0];
+    const source = itemAt(FakeEventSource.instances, 0);
     const status = (boot_id: string) =>
       source.message('system.status', { online: true, time: 't', config_status: 'ok', config_error: null, boot_id });
 
@@ -63,7 +64,7 @@ describe('startRuntime', () => {
 
   it('dispose closes the stream and stops store updates', () => {
     runtime = startRuntime({ createEventSource: (url) => new FakeEventSource(url) });
-    const source = FakeEventSource.instances[0];
+    const source = itemAt(FakeEventSource.instances, 0);
     const rt = runtime;
     rt.dispose();
     runtime = null;

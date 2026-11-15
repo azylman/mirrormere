@@ -24,7 +24,7 @@ export interface VideoSlotProps {
   customFetch?: typeof fetch;
   RTCPeerConnectionClass?: typeof RTCPeerConnection;
   allowProtocolFallback?: boolean;
-  style?: React.CSSProperties;
+  style?: React.CSSProperties | undefined;
 }
 
 /**

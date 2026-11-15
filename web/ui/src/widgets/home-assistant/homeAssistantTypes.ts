@@ -52,7 +52,7 @@ export function getDomain(entityId: string): string {
   if (!entityId) {
     return '';
   }
-  return entityId.split('.')[0].toLowerCase();
+  return (entityId.split('.')[0] ?? '').toLowerCase();
 }
 
 export function getEntityName(entity: EntityState | undefined, entityId: string, customName?: string): string {
@@ -65,8 +65,8 @@ export function getEntityName(entity: EntityState | undefined, entityId: string,
   if (entity?.attributes?.friendly_name && typeof entity.attributes.friendly_name === 'string') {
     return entity.attributes.friendly_name;
   }
-  const parts = entityId.split('.');
-  return parts.length > 1 ? parts[1].replace(/_/g, ' ') : entityId;
+  const objectId = entityId.split('.')[1];
+  return objectId !== undefined ? objectId.replace(/_/g, ' ') : entityId;
 }
 
 const DOMAIN_ICONS: Record<string, string | ((s?: string) => string)> = {

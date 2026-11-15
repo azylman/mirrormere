@@ -14,9 +14,11 @@ const modules = import.meta.glob<Record<string, ComponentType<WidgetComponentPro
  * A type missing from the map renders through LEGACY_WIDGET_FALLBACK.
  */
 export const WIDGET_COMPONENTS: Readonly<Record<string, ComponentType<WidgetComponentProps>>> = Object.fromEntries(
-  Object.entries(modules).map(([path, mod]) => {
+  Object.entries(modules).flatMap(([path, mod]) => {
+    // Glob keys are always './<type>/<Name>Widget.tsx'; the component is the export named after the file.
     const [, type, file] = path.split('/');
-    return [type, mod[file.slice(0, -4)]];
+    const component = file ? mod[file.slice(0, -4)] : undefined;
+    return type && component ? [[type, component] as const] : [];
   })
 );
 

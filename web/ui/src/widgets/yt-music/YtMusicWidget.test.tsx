@@ -14,6 +14,7 @@ import {
   resolveAccounts,
   setSharedYtMusicState,
 } from './ytMusicTypes';
+import { itemAt } from '../../test-utils/lookup';
 const initialStore = useDisplayStore.getState();
 const mockIdleState: MusicState = {
   active_speaker: 'media_player.living_room_speaker',
@@ -168,9 +169,9 @@ describe('YtMusicWidget', () => {
     // Speakers rendered in speaker-bar
     const spkButtons = container.querySelectorAll('.spk-pill');
     expect(spkButtons.length).toBe(3);
-    expect(spkButtons[0].textContent).toContain('This Device');
-    expect(spkButtons[1].textContent).toContain('Living Room');
-    expect(spkButtons[1].classList.contains('active')).toBe(true);
+    expect(itemAt(spkButtons, 0).textContent).toContain('This Device');
+    expect(itemAt(spkButtons, 1).textContent).toContain('Living Room');
+    expect(itemAt(spkButtons, 1).classList.contains('active')).toBe(true);
     // Speaker toggle button
     const spkToggle = container.querySelector('#speaker-toggle-btn');
     expect(spkToggle?.textContent).toContain('Play on This Device');
@@ -190,11 +191,11 @@ describe('YtMusicWidget', () => {
     expect(sugSection).not.toBeNull();
     const plTiles = plSection?.querySelectorAll('.media-tile');
     expect(plTiles?.length).toBe(1);
-    expect(plTiles?.[0].textContent).toContain('Daily Drive');
+    expect(itemAt(plTiles, 0).textContent).toContain('Daily Drive');
     const sugTiles = sugSection?.querySelectorAll('.media-tile');
     expect(sugTiles?.length).toBe(3);
-    expect(sugTiles?.[0].textContent).toContain('My Supermix');
-    expect(sugTiles?.[1].textContent).toContain('The Weeknd');
+    expect(itemAt(sugTiles, 0).textContent).toContain('My Supermix');
+    expect(itemAt(sugTiles, 1).textContent).toContain('The Weeknd');
   });
 
   it('selects account and sends select_account control POST', async () => {
@@ -279,7 +280,7 @@ describe('YtMusicWidget', () => {
     const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
     await waitFor(() => { expect(container.querySelectorAll('.spk-pill').length).toBe(3); });
     // 1. Click specific speaker pill (Kitchen)
-    const kitchenSpk = container.querySelectorAll('.spk-pill')[2];
+    const kitchenSpk = itemAt(container.querySelectorAll('.spk-pill'), 2);
     fireEvent.click(kitchenSpk);
     await waitFor(() => {
       const controlCall = fetchMock.mock.calls.find((c) => {
@@ -503,7 +504,7 @@ describe('YtMusicWidget', () => {
       const call = fetchMock.mock.calls.find(
         (c) =>
           String(c[0]).includes('/music/play') &&
-          JSON.parse(String(c[1]?.body)).playlist_id === DEFAULT_SUGGESTIONS[0].playlist_id
+          JSON.parse(String(c[1]?.body)).playlist_id === itemAt(DEFAULT_SUGGESTIONS, 0).playlist_id
       );
       expect(call).toBeDefined();
     });
@@ -596,11 +597,11 @@ describe('YtMusicWidget', () => {
     await waitFor(() => {
       const queueTiles = container.querySelectorAll('.media-tile');
       expect(queueTiles.length).toBe(2);
-      expect(queueTiles[0].textContent).toContain('Starboy');
-      expect(queueTiles[1].textContent).toContain('Blinding Lights');
+      expect(itemAt(queueTiles, 0).textContent).toContain('Starboy');
+      expect(itemAt(queueTiles, 1).textContent).toContain('Blinding Lights');
     });
     // Click second item in queue
-    const secondTile = container.querySelectorAll('.media-tile')[1];
+    const secondTile = itemAt(container.querySelectorAll('.media-tile'), 1);
     fireEvent.click(secondTile);
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(
@@ -637,8 +638,8 @@ describe('YtMusicWidget', () => {
     await waitFor(() => {
       const tiles = container.querySelectorAll('.media-tile');
       expect(tiles.length).toBe(1);
-      expect(tiles[0].textContent).toContain('Save Your Tears');
-      expect(tiles[0].textContent).toContain('3:35');
+      expect(itemAt(tiles, 0).textContent).toContain('Save Your Tears');
+      expect(itemAt(tiles, 0).textContent).toContain('3:35');
     });
     // Click search result to play
     fireEvent.click(container.querySelector('.media-tile')!);
@@ -799,7 +800,7 @@ describe('YtMusicWidget', () => {
     // Click on up next queue row
     const queueRows = container.querySelectorAll('.np-queue-row');
     expect(queueRows.length).toBe(2);
-    fireEvent.click(queueRows[1]);
+    fireEvent.click(itemAt(queueRows, 1));
     await waitFor(() => {
       const call = fetchMock.mock.calls.find((c) => {
         if (!String(c[0]).includes('/music/control')) return false;
@@ -904,7 +905,7 @@ describe('YtMusicWidget', () => {
       expect(audio.getAttribute('src')).toBeTruthy();
     });
     // Remote speaker clears src
-    fireEvent.click(container.querySelectorAll('.spk-pill')[1]);
+    fireEvent.click(itemAt(container.querySelectorAll('.spk-pill'), 1));
     await waitFor(() => {
       expect(audio.getAttribute('src')).toBeNull();
       expect(audio.getAttribute('data-video-id')).toBeNull();
@@ -1231,8 +1232,8 @@ describe('YtMusicWidget', () => {
       // Only the primary instance activates local <audio>; the secondary off-pane instance stays paused without src
       const audios = container.querySelectorAll('audio');
       expect(audios).toHaveLength(2);
-      expect(audios[0].getAttribute('data-video-id')).toBe('v_starboy');
-      expect(audios[1].getAttribute('data-video-id')).toBeNull();
+      expect(itemAt(audios, 0).getAttribute('data-video-id')).toBe('v_starboy');
+      expect(itemAt(audios, 1).getAttribute('data-video-id')).toBeNull();
       // Mount a third off-pane instance after sharedYtMusicState is already populated -> initializes from shared state without clobbering
       const { unmount: unmountThird } = render(<PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 1 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
       expect(getSharedYtMusicState().now_playing?.title).toBe('Starboy');

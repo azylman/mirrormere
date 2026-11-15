@@ -30,6 +30,7 @@ import type {
   FamilySpanEvent,
   FamilyViewModel,
 } from './types';
+import { itemAt } from '../../test-utils/lookup';
 
 describe('dateUtils', () => {
   it('parses and formats ISO dates', () => {
@@ -144,10 +145,10 @@ describe('dateUtils', () => {
 
     const weeks = buildMonthViewFromDays(monthDays);
     expect(weeks.length).toBe(2);
-    expect(weeks[0].week_number).toBe(1);
-    expect(weeks[0].days.length).toBe(7);
-    expect(weeks[1].week_number).toBe(2);
-    expect(weeks[1].days.length).toBe(7);
+    expect(itemAt(weeks, 0).week_number).toBe(1);
+    expect(itemAt(weeks, 0).days.length).toBe(7);
+    expect(itemAt(weeks, 1).week_number).toBe(2);
+    expect(itemAt(weeks, 1).days.length).toBe(7);
   });
 
   describe('parseTimeMinutes', () => {
@@ -475,9 +476,9 @@ describe('dateUtils', () => {
       );
       const gaps = container.querySelectorAll('.cf-collapsed-gap');
       expect(gaps.length).toBe(1);
-      expect(gaps[0].getAttribute('data-gap-start')).toBe('10:00');
-      expect(gaps[0].getAttribute('data-gap-end')).toBe('13:00');
-      expect(gaps[0].querySelector('.cf-collapsed-gap-label')?.textContent).toBe('10am – 1pm');
+      expect(itemAt(gaps, 0).getAttribute('data-gap-start')).toBe('10:00');
+      expect(itemAt(gaps, 0).getAttribute('data-gap-end')).toBe('13:00');
+      expect(itemAt(gaps, 0).querySelector('.cf-collapsed-gap-label')?.textContent).toBe('10am – 1pm');
     });
   });
 });

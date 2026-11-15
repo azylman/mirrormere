@@ -12,6 +12,7 @@ import {
   getDomainIcon,
   getEntityName,
 } from './HomeAssistantWidget';
+import { itemAt } from '../../test-utils/lookup';
 
 const initialStore = useDisplayStore.getState();
 
@@ -121,8 +122,8 @@ describe('HomeAssistantWidget', () => {
     expect(container.querySelector('.ha-title')?.textContent).toBe('Downstairs Tablet');
     const sections = container.querySelectorAll('.ha-section');
     expect(sections.length).toBe(2);
-    expect(sections[0].querySelector('.ha-section-title')?.textContent).toBe('Living Room');
-    expect(sections[1].querySelector('.ha-section-title')?.textContent).toBe('Climate & Security');
+    expect(itemAt(sections, 0).querySelector('.ha-section-title')?.textContent).toBe('Living Room');
+    expect(itemAt(sections, 1).querySelector('.ha-section-title')?.textContent).toBe('Climate & Security');
 
     expect(container.querySelector('[data-entity-id="light.living_room"]')).not.toBeNull();
     expect(container.querySelector('[data-entity-id="scene.evening_relax"]')).not.toBeNull();
@@ -226,8 +227,8 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(lightBtn);
     });
     expect(fetchCalls.length).toBe(1);
-    expect(fetchCalls[0].url).toBe('/api/widgets/ha-all-domains/action');
-    expect(JSON.parse(fetchCalls[0].options.body as string)).toEqual({
+    expect(itemAt(fetchCalls, 0).url).toBe('/api/widgets/ha-all-domains/action');
+    expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
       domain: 'light',
       service: 'toggle',
       entity_id: 'light.living_room',
@@ -241,7 +242,7 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(switchBtn);
     });
     expect(fetchCalls.length).toBe(2);
-    expect(JSON.parse(fetchCalls[1].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 1).options.body as string)).toEqual({
       domain: 'switch',
       service: 'toggle',
       entity_id: 'switch.porch_light',
@@ -255,7 +256,7 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(fanBtn);
     });
     expect(fetchCalls.length).toBe(3);
-    expect(JSON.parse(fetchCalls[2].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 2).options.body as string)).toEqual({
       domain: 'fan',
       service: 'toggle',
       entity_id: 'fan.bedroom_fan',
@@ -269,7 +270,7 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(coverOpenBtn);
     });
     expect(fetchCalls.length).toBe(4);
-    expect(JSON.parse(fetchCalls[3].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 3).options.body as string)).toEqual({
       domain: 'cover',
       service: 'open_cover',
       entity_id: 'cover.blinds',
@@ -283,7 +284,7 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(lockBtn);
     });
     expect(fetchCalls.length).toBe(5);
-    expect(JSON.parse(fetchCalls[4].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 4).options.body as string)).toEqual({
       domain: 'lock',
       service: 'unlock',
       entity_id: 'lock.front_door',
@@ -297,7 +298,7 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(tempUpBtn);
     });
     expect(fetchCalls.length).toBe(6);
-    expect(JSON.parse(fetchCalls[5].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 5).options.body as string)).toEqual({
       domain: 'climate',
       service: 'set_temperature',
       entity_id: 'climate.main_ac',
@@ -311,7 +312,7 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(playPauseBtn);
     });
     expect(fetchCalls.length).toBe(7);
-    expect(JSON.parse(fetchCalls[6].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 6).options.body as string)).toEqual({
       domain: 'media_player',
       service: 'media_play_pause',
       entity_id: 'media_player.soundbar',
@@ -325,7 +326,7 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(sceneBtn);
     });
     expect(fetchCalls.length).toBe(8);
-    expect(JSON.parse(fetchCalls[7].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 7).options.body as string)).toEqual({
       domain: 'scene',
       service: 'turn_on',
       entity_id: 'scene.movie_night',
@@ -339,7 +340,7 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(scriptBtn);
     });
     expect(fetchCalls.length).toBe(9);
-    expect(JSON.parse(fetchCalls[8].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 8).options.body as string)).toEqual({
       domain: 'script',
       service: 'turn_on',
       entity_id: 'script.clean_all',
@@ -438,7 +439,7 @@ describe('HomeAssistantWidget', () => {
     });
 
     expect(fetchCalls.length).toBe(1);
-    expect(JSON.parse(fetchCalls[0].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
       domain: 'scene',
       service: 'turn_on',
       entity_id: 'scene.goodnight',
@@ -514,7 +515,7 @@ describe('HomeAssistantWidget', () => {
 
     // 1. Without entity_id, without service_data
     await dispatchWidgetAction('w-1', { domain: 'homeassistant', service: 'restart' }, fetchMock);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ domain: 'homeassistant', service: 'restart' });
+    expect(JSON.parse(itemAt(fetchMock.mock.calls, 0)[1].body)).toEqual({ domain: 'homeassistant', service: 'restart' });
 
     // 2. Without entity_id, with service_data
     await dispatchWidgetAction(
@@ -522,7 +523,7 @@ describe('HomeAssistantWidget', () => {
       { domain: 'notify', service: 'notify', service_data: { message: 'hello' } },
       fetchMock,
     );
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+    expect(JSON.parse(itemAt(fetchMock.mock.calls, 1)[1].body)).toEqual({
       domain: 'notify',
       service: 'notify',
       service_data: { message: 'hello' },
@@ -720,9 +721,9 @@ describe('HomeAssistantWidget', () => {
 
     // 1. Scene default
     await act(async () => {
-      fireEvent.click(buttons[0]);
+      fireEvent.click(itemAt(buttons, 0));
     });
-    expect(JSON.parse(fetchCalls[0].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
       domain: 'scene',
       service: 'turn_on',
       entity_id: 'scene.night_mode',
@@ -731,9 +732,9 @@ describe('HomeAssistantWidget', () => {
 
     // 2. Script default
     await act(async () => {
-      fireEvent.click(buttons[1]);
+      fireEvent.click(itemAt(buttons, 1));
     });
-    expect(JSON.parse(fetchCalls[1].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 1).options.body as string)).toEqual({
       domain: 'script',
       service: 'turn_on',
       entity_id: 'script.run_vac',
@@ -742,9 +743,9 @@ describe('HomeAssistantWidget', () => {
 
     // 3. Light default
     await act(async () => {
-      fireEvent.click(buttons[2]);
+      fireEvent.click(itemAt(buttons, 2));
     });
-    expect(JSON.parse(fetchCalls[2].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 2).options.body as string)).toEqual({
       domain: 'light',
       service: 'toggle',
       entity_id: 'light.lamp',
@@ -753,9 +754,9 @@ describe('HomeAssistantWidget', () => {
 
     // 4. Lock locked -> unlock
     await act(async () => {
-      fireEvent.click(buttons[3]);
+      fireEvent.click(itemAt(buttons, 3));
     });
-    expect(JSON.parse(fetchCalls[3].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 3).options.body as string)).toEqual({
       domain: 'lock',
       service: 'unlock',
       entity_id: 'lock.door_locked',
@@ -764,9 +765,9 @@ describe('HomeAssistantWidget', () => {
 
     // 5. Lock unlocked -> lock
     await act(async () => {
-      fireEvent.click(buttons[4]);
+      fireEvent.click(itemAt(buttons, 4));
     });
-    expect(JSON.parse(fetchCalls[4].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 4).options.body as string)).toEqual({
       domain: 'lock',
       service: 'lock',
       entity_id: 'lock.door_unlocked',
@@ -775,9 +776,9 @@ describe('HomeAssistantWidget', () => {
 
     // 6. Generic input_boolean -> toggle
     await act(async () => {
-      fireEvent.click(buttons[5]);
+      fireEvent.click(itemAt(buttons, 5));
     });
-    expect(JSON.parse(fetchCalls[5].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 5).options.body as string)).toEqual({
       domain: 'input_boolean',
       service: 'toggle',
       entity_id: 'input_boolean.guest_mode',
@@ -786,9 +787,9 @@ describe('HomeAssistantWidget', () => {
 
     // 7. Custom call_service with data
     await act(async () => {
-      fireEvent.click(buttons[6]);
+      fireEvent.click(itemAt(buttons, 6));
     });
-    expect(JSON.parse(fetchCalls[6].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 6).options.body as string)).toEqual({
       domain: 'light',
       service: 'toggle',
       entity_id: 'light.custom_call',
@@ -831,7 +832,7 @@ describe('HomeAssistantWidget', () => {
     await act(async () => {
       fireEvent.click(decreaseBtn);
     });
-    expect(JSON.parse(fetchCalls[0].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
       domain: 'climate',
       service: 'set_temperature',
       entity_id: 'climate.hallway',
@@ -843,7 +844,7 @@ describe('HomeAssistantWidget', () => {
     await act(async () => {
       fireEvent.click(increaseBtn);
     });
-    expect(JSON.parse(fetchCalls[1].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 1).options.body as string)).toEqual({
       domain: 'climate',
       service: 'set_temperature',
       entity_id: 'climate.hallway',
@@ -856,7 +857,7 @@ describe('HomeAssistantWidget', () => {
     await act(async () => {
       fireEvent.click(coolBtn);
     });
-    expect(JSON.parse(fetchCalls[2].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 2).options.body as string)).toEqual({
       domain: 'climate',
       service: 'set_hvac_mode',
       entity_id: 'climate.hallway',
@@ -898,16 +899,16 @@ describe('HomeAssistantWidget', () => {
 
     // 1. Camera tap triggers refreshCamera and updates query timestamp
     await act(async () => {
-      fireEvent.click(picCards[0]);
+      fireEvent.click(itemAt(picCards, 0));
     });
-    const yardImg = picCards[0].querySelector('img') as HTMLImageElement;
+    const yardImg = itemAt(picCards, 0).querySelector('img') as HTMLImageElement;
     expect(yardImg.src).toContain('?ts=');
 
     // 2. Non-camera picture card tap triggers toggle
     await act(async () => {
-      fireEvent.click(picCards[1]);
+      fireEvent.click(itemAt(picCards, 1));
     });
-    expect(JSON.parse(fetchCalls[0].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
       domain: 'switch',
       service: 'toggle',
       entity_id: 'switch.garden_fountain',
@@ -915,7 +916,7 @@ describe('HomeAssistantWidget', () => {
     });
 
     // 3. Camera with no image renders fallback container
-    expect(picCards[2].querySelector('.ha-picture-fallback')).not.toBeNull();
+    expect(itemAt(picCards, 2).querySelector('.ha-picture-fallback')).not.toBeNull();
   });
 
   it('covers DomainTouchControls quick brightness, speeds, cover stop/close, lock toggle, climate temp-down, media buttons, binary sensors, and unknown domains', async () => {
@@ -965,11 +966,11 @@ describe('HomeAssistantWidget', () => {
     // 1. Light quick brightness buttons (50% button is active since brightness=128)
     const lampRow = container.querySelector('[data-entity-id="light.active_lamp"]');
     const brightnessBtns = lampRow?.querySelectorAll('.ha-btn-sub') as NodeListOf<HTMLButtonElement>;
-    expect(brightnessBtns[1].classList.contains('active')).toBe(true);
+    expect(itemAt(brightnessBtns, 1).classList.contains('active')).toBe(true);
     await act(async () => {
-      fireEvent.click(brightnessBtns[0]); // 25%
+      fireEvent.click(itemAt(brightnessBtns, 0)); // 25%
     });
-    expect(JSON.parse(fetchCalls[0].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
       domain: 'light',
       service: 'turn_on',
       entity_id: 'light.active_lamp',
@@ -979,20 +980,20 @@ describe('HomeAssistantWidget', () => {
     // 2. Fan quick speed buttons (Med button is active)
     const fanRow = container.querySelector('[data-entity-id="fan.active_fan"]');
     const speedBtns = fanRow?.querySelectorAll('.ha-btn-sub') as NodeListOf<HTMLButtonElement>;
-    expect(speedBtns[1].classList.contains('active')).toBe(true);
+    expect(itemAt(speedBtns, 1).classList.contains('active')).toBe(true);
     await act(async () => {
-      fireEvent.click(speedBtns[0]); // Low (33)
+      fireEvent.click(itemAt(speedBtns, 0)); // Low (33)
     });
-    expect(JSON.parse(fetchCalls[1].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 1).options.body as string)).toEqual({
       domain: 'fan',
       service: 'set_percentage',
       entity_id: 'fan.active_fan',
       service_data: { entity_id: 'fan.active_fan', percentage: 33 },
     });
     await act(async () => {
-      fireEvent.click(speedBtns[2]); // High (100)
+      fireEvent.click(itemAt(speedBtns, 2)); // High (100)
     });
-    expect(JSON.parse(fetchCalls[2].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 2).options.body as string)).toEqual({
       domain: 'fan',
       service: 'set_percentage',
       entity_id: 'fan.active_fan',
@@ -1006,7 +1007,7 @@ describe('HomeAssistantWidget', () => {
     await act(async () => {
       fireEvent.click(stopBtn);
     });
-    expect(JSON.parse(fetchCalls[3].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 3).options.body as string)).toEqual({
       domain: 'cover',
       service: 'stop_cover',
       entity_id: 'cover.curtain',
@@ -1015,7 +1016,7 @@ describe('HomeAssistantWidget', () => {
     await act(async () => {
       fireEvent.click(closeBtn);
     });
-    expect(JSON.parse(fetchCalls[4].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 4).options.body as string)).toEqual({
       domain: 'cover',
       service: 'close_cover',
       entity_id: 'cover.curtain',
@@ -1029,7 +1030,7 @@ describe('HomeAssistantWidget', () => {
     await act(async () => {
       fireEvent.click(lockBtn);
     });
-    expect(JSON.parse(fetchCalls[5].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 5).options.body as string)).toEqual({
       domain: 'lock',
       service: 'lock',
       entity_id: 'lock.unlocked_lock',
@@ -1042,7 +1043,7 @@ describe('HomeAssistantWidget', () => {
     await act(async () => {
       fireEvent.click(tempDownBtn);
     });
-    expect(JSON.parse(fetchCalls[6].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 6).options.body as string)).toEqual({
       domain: 'climate',
       service: 'set_temperature',
       entity_id: 'climate.bedroom_heat',
@@ -1061,10 +1062,10 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(volDownBtn);
       fireEvent.click(volUpBtn);
     });
-    expect(JSON.parse(fetchCalls[7].options.body as string).service).toBe('media_previous_track');
-    expect(JSON.parse(fetchCalls[8].options.body as string).service).toBe('media_next_track');
-    expect(JSON.parse(fetchCalls[9].options.body as string).service).toBe('volume_down');
-    expect(JSON.parse(fetchCalls[10].options.body as string).service).toBe('volume_up');
+    expect(JSON.parse(itemAt(fetchCalls, 7).options.body as string).service).toBe('media_previous_track');
+    expect(JSON.parse(itemAt(fetchCalls, 8).options.body as string).service).toBe('media_next_track');
+    expect(JSON.parse(itemAt(fetchCalls, 9).options.body as string).service).toBe('volume_down');
+    expect(JSON.parse(itemAt(fetchCalls, 10).options.body as string).service).toBe('volume_up');
 
     // 7. Binary sensor device classes
     expect(container.querySelector('[data-entity-id="binary_sensor.door_contact"]')?.textContent).toContain('Closed');
@@ -1149,8 +1150,8 @@ describe('HomeAssistantWidget', () => {
     // Check unknown card fallbacks
     const unknownCards = container.querySelectorAll('.ha-card-unknown');
     expect(unknownCards.length).toBe(2);
-    expect(unknownCards[0].textContent).toBe('Unnamed Type Card');
-    expect(unknownCards[1].textContent).toBe('Card');
+    expect(itemAt(unknownCards, 0).textContent).toBe('Unnamed Type Card');
+    expect(itemAt(unknownCards, 1).textContent).toBe('Card');
 
     // 1. ButtonCard tap with svcEnt and empty domain prefix (falls back to domain)
     const btn = container.querySelector('.ha-card-button') as HTMLButtonElement;
@@ -1164,7 +1165,7 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(btn);
     });
     expect(fetchCalls.length).toBe(1);
-    expect(JSON.parse(fetchCalls[0].options.body as string)).toEqual({
+    expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
       domain: 'light',
       service: 'toggle',
       entity_id: 'light.opt_btn',
@@ -1404,8 +1405,8 @@ describe('HomeAssistantWidget', () => {
     const { container: optMediaCont } = render(<HomeAssistantWidget id="ha-opt-media-btns" type="home-assistant" />);
     const btns = optMediaCont.querySelectorAll('.ha-card-button');
     await act(async () => {
-      fireEvent.click(btns[0]);
-      fireEvent.click(btns[1]);
+      fireEvent.click(itemAt(btns, 0));
+      fireEvent.click(itemAt(btns, 1));
     });
 
     // 9. Cover buttons: stop and close
@@ -1456,9 +1457,9 @@ describe('HomeAssistantWidget', () => {
     const { container: unkCont } = render(<HomeAssistantWidget id="ha-unknowns" type="home-assistant" />);
     const unks = unkCont.querySelectorAll('.ha-card-unknown');
     expect(unks.length).toBe(3);
-    expect(unks[0].textContent).toBe('Foo Title');
-    expect(unks[1].textContent).toBe('Bar Name');
-    expect(unks[2].textContent).toBe('custom-baz');
+    expect(itemAt(unks, 0).textContent).toBe('Foo Title');
+    expect(itemAt(unks, 1).textContent).toBe('Bar Name');
+    expect(itemAt(unks, 2).textContent).toBe('custom-baz');
   });
 
   it('covers applyOptimisticUpdate, formatStateLabel, and getBinaryLabel comprehensive unit paths', () => {
@@ -1590,9 +1591,9 @@ describe('HomeAssistantWidget', () => {
     expect(rendCont.querySelector('.ha-card-wrapper')).not.toBeNull();
     expect(rendCont.querySelectorAll('.ha-divider').length).toBeGreaterThan(0);
     const unknowns = rendCont.querySelectorAll('.ha-card-unknown');
-    expect(unknowns[0].textContent).toBe('Just Name');
-    expect(unknowns[1].textContent).toBe('plain-type');
-    expect(unknowns[2].textContent).toBe('Card');
+    expect(itemAt(unknowns, 0).textContent).toBe('Just Name');
+    expect(itemAt(unknowns, 1).textContent).toBe('plain-type');
+    expect(itemAt(unknowns, 2).textContent).toBe('Card');
 
     // 3. PictureEntityCard tap branches and fallback image
     setHaWidget('ha-pic-branches', {
@@ -1613,10 +1614,10 @@ describe('HomeAssistantWidget', () => {
     const picCards = picBCont.querySelectorAll('.ha-card-picture');
     expect(picCards.length).toBe(3);
     await act(async () => {
-      fireEvent.click(picCards[0]);
-      fireEvent.click(picCards[1]);
+      fireEvent.click(itemAt(picCards, 0));
+      fireEvent.click(itemAt(picCards, 1));
     });
-    expect(picCards[2].querySelector('.ha-picture-fallback')).not.toBeNull();
+    expect(itemAt(picCards, 2).querySelector('.ha-picture-fallback')).not.toBeNull();
 
     // 4. ButtonCard tap action variations
     setHaWidget('ha-btn-branches', {
@@ -1636,10 +1637,10 @@ describe('HomeAssistantWidget', () => {
     const bCards = btnBCont.querySelectorAll('.ha-card-button');
     const callsBeforeButtons = fetchMock.mock.calls.length;
     await act(async () => {
-      fireEvent.click(bCards[0]);
-      fireEvent.click(bCards[1]);
-      fireEvent.click(bCards[2]);
-      fireEvent.click(bCards[3]);
+      fireEvent.click(itemAt(bCards, 0));
+      fireEvent.click(itemAt(bCards, 1));
+      fireEvent.click(itemAt(bCards, 2));
+      fireEvent.click(itemAt(bCards, 3));
     });
     expect(fetchMock.mock.calls.length - callsBeforeButtons).toBe(3);
 
@@ -1682,9 +1683,10 @@ describe('HomeAssistantWidget', () => {
     });
 
     const { container } = render(<HomeAssistantWidget id="ha-inflight-all" type="home-assistant" />);
-    const [btn, targetBtn, dataBtn] = Array.from(container.querySelectorAll('.ha-card-button')) as HTMLButtonElement[];
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('.ha-card-button'));
+    expect(buttons).toHaveLength(3);
 
-    for (const b of [btn, targetBtn, dataBtn]) {
+    for (const b of buttons) {
       await act(async () => { fireEvent.click(b); });
       expect(b.disabled).toBe(true);
       await act(async () => { fireEvent.click(b); });

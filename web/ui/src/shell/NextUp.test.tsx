@@ -22,6 +22,7 @@ import {
   useCalendarEvents,
 } from './NextUp';
 import type { RawCalendarEvent } from './NextUp';
+import { itemAt } from '../test-utils/lookup';
 
 describe('formatRelativeCountdown', () => {
   it('formats under 1 minute as <1m', () => {
@@ -320,12 +321,12 @@ describe('selectCalendarEvents store extraction and deduplication', () => {
 
     const extracted = selectCalendarEvents(widgets);
     expect(extracted).toHaveLength(2);
-    expect(extracted[0].id).toBe('multiday-conf-2026-10-30');
-    expect(extracted[0].start).toBe('2026-10-30');
-    expect(extracted[0].allDay).toBe(true);
-    expect(extracted[1].id).toBe('multiday-conf-2026-10-31');
-    expect(extracted[1].start).toBe('2026-10-31');
-    expect(extracted[1].allDay).toBe(true);
+    expect(itemAt(extracted, 0).id).toBe('multiday-conf-2026-10-30');
+    expect(itemAt(extracted, 0).start).toBe('2026-10-30');
+    expect(itemAt(extracted, 0).allDay).toBe(true);
+    expect(itemAt(extracted, 1).id).toBe('multiday-conf-2026-10-31');
+    expect(itemAt(extracted, 1).start).toBe('2026-10-31');
+    expect(itemAt(extracted, 1).allDay).toBe(true);
 
     // On 2026-10-31 at 10:00 UTC, the 2026-10-30 slice is expired, but the 2026-10-31 slice resolves as TODAY!
     const resolved = resolveNextUpEvent(extracted, new Date('2026-10-31T10:00:00Z'), 'UTC');
@@ -344,7 +345,7 @@ describe('selectCalendarEvents store extraction and deduplication', () => {
     };
     const extracted = selectCalendarEvents(widgets);
     expect(extracted).toHaveLength(1);
-    expect(extracted[0].title).toBe('Array Event');
+    expect(itemAt(extracted, 0).title).toBe('Array Event');
   });
 
   it('extracts day.timed events, vm.week.all_day_events, and vm.month.days', () => {

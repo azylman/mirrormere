@@ -102,7 +102,7 @@ export function resolveActiveTimezone(
 }
 
 export interface ClockProps {
-  timezone?: string;
+  timezone?: string | undefined;
   locale?: string;
 }
 

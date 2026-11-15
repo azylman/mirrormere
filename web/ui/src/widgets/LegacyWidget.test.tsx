@@ -4,6 +4,7 @@ import { PaneContext } from '../carousel/PaneContext';
 import { useDisplayStore, type WidgetEntry } from '../store';
 import { LegacyWidget } from './LegacyWidget';
 import { hoistTypeStylesheets, legacyRenderURL, mountHooks, prepareFragment, unmountAll } from './legacyFragment';
+import { itemAt } from '../test-utils/lookup';
 
 const ID = 'legacy-1';
 
@@ -76,7 +77,7 @@ describe('LegacyWidget', () => {
     setWidget('t1');
     const { container } = render(element(true));
     await waitForText(container, 'initial');
-    expect(fetchMock.mock.calls[0][0]).toBe(`api/widgets/${ID}/render?node=kiosk-1`);
+    expect(itemAt(fetchMock.mock.calls, 0)[0]).toBe(`api/widgets/${ID}/render?node=kiosk-1`);
   });
 
   it('replaces the card on a timestamp change and keeps one card', async () => {
@@ -153,16 +154,16 @@ describe('LegacyWidget', () => {
 
     setWidget('t2');
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    expect(calls[0].signal.aborted).toBe(true);
-    expect(calls[1].signal.aborted).toBe(false);
+    expect(itemAt(calls, 0).signal.aborted).toBe(true);
+    expect(itemAt(calls, 1).signal.aborted).toBe(false);
 
-    calls[1].resolve(new Response(fragment('second'), { status: 200 }));
+    itemAt(calls, 1).resolve(new Response(fragment('second'), { status: 200 }));
     await waitForText(container, 'second');
 
     setWidget('t3');
     await vi.waitFor(() => expect(calls).toHaveLength(3));
     unmount();
-    expect(calls[2].signal.aborted).toBe(true);
+    expect(itemAt(calls, 2).signal.aborted).toBe(true);
   });
 
   it('shows the unavailable card when the first render fails', async () => {
@@ -300,7 +301,7 @@ describe('legacy fragment helpers', () => {
     expect(card.querySelector('style')).not.toBeNull();
     expect(card.querySelector('script')).not.toBeNull();
     expect(card.querySelector('img')?.hasAttribute('onload')).toBe(false);
-    expect(hooks[0].targets).toEqual([{ name: 'MirrormereX', selector: '.x' }]);
+    expect(itemAt(hooks, 0).targets).toEqual([{ name: 'MirrormereX', selector: '.x' }]);
   });
 
   it('leaves a link outside the assets base in the card', () => {

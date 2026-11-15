@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import sampleData from '../../../../../widgets/chat-log/testdata/sample.json';
 import { useDisplayStore } from '../../store';
 import { ChatLogWidget } from './ChatLogWidget';
+import { itemAt } from '../../test-utils/lookup';
 
 const initialStore = useDisplayStore.getState();
 
@@ -53,34 +54,34 @@ describe('ChatLogWidget', () => {
     expect(messages.length).toBe(4);
 
     // Message 0: human
-    expect(messages[0].classList.contains('chat-log-human')).toBe(true);
-    expect(messages[0].querySelector('.chat-log-author')?.textContent).toBe('sam');
-    expect(messages[0].querySelector('.chat-log-ts')?.textContent).toBe(' 18:39');
-    expect(messages[0].querySelector('.chat-log-text')?.textContent).toBe(
+    expect(itemAt(messages, 0).classList.contains('chat-log-human')).toBe(true);
+    expect(itemAt(messages, 0).querySelector('.chat-log-author')?.textContent).toBe('sam');
+    expect(itemAt(messages, 0).querySelector('.chat-log-ts')?.textContent).toBe(' 18:39');
+    expect(itemAt(messages, 0).querySelector('.chat-log-text')?.textContent).toBe(
       'What is on the calendar tomorrow?'
     );
 
     // Message 1: agent
-    expect(messages[1].classList.contains('chat-log-agent')).toBe(true);
-    expect(messages[1].querySelector('.chat-log-author')?.textContent).toBe('assistant');
-    expect(messages[1].querySelector('.chat-log-ts')?.textContent).toBe(' 18:39');
-    expect(messages[1].querySelector('.chat-log-text')?.textContent).toBe(
+    expect(itemAt(messages, 1).classList.contains('chat-log-agent')).toBe(true);
+    expect(itemAt(messages, 1).querySelector('.chat-log-author')?.textContent).toBe('assistant');
+    expect(itemAt(messages, 1).querySelector('.chat-log-ts')?.textContent).toBe(' 18:39');
+    expect(itemAt(messages, 1).querySelector('.chat-log-text')?.textContent).toBe(
       'Dentist at 9:00 and soccer practice at 4:30.'
     );
 
     // Message 2: human
-    expect(messages[2].classList.contains('chat-log-human')).toBe(true);
-    expect(messages[2].querySelector('.chat-log-author')?.textContent).toBe('sam');
-    expect(messages[2].querySelector('.chat-log-ts')?.textContent).toBe(' 18:41');
-    expect(messages[2].querySelector('.chat-log-text')?.textContent).toBe(
+    expect(itemAt(messages, 2).classList.contains('chat-log-human')).toBe(true);
+    expect(itemAt(messages, 2).querySelector('.chat-log-author')?.textContent).toBe('sam');
+    expect(itemAt(messages, 2).querySelector('.chat-log-ts')?.textContent).toBe(' 18:41');
+    expect(itemAt(messages, 2).querySelector('.chat-log-text')?.textContent).toBe(
       'Add milk and eggs to the shopping list.'
     );
 
     // Message 3: agent
-    expect(messages[3].classList.contains('chat-log-agent')).toBe(true);
-    expect(messages[3].querySelector('.chat-log-author')?.textContent).toBe('assistant');
-    expect(messages[3].querySelector('.chat-log-ts')?.textContent).toBe(' 18:42');
-    expect(messages[3].querySelector('.chat-log-text')?.textContent).toBe(
+    expect(itemAt(messages, 3).classList.contains('chat-log-agent')).toBe(true);
+    expect(itemAt(messages, 3).querySelector('.chat-log-author')?.textContent).toBe('assistant');
+    expect(itemAt(messages, 3).querySelector('.chat-log-ts')?.textContent).toBe(' 18:42');
+    expect(itemAt(messages, 3).querySelector('.chat-log-text')?.textContent).toBe(
       'Done. Milk and eggs are on the shopping list.'
     );
   });
@@ -269,13 +270,13 @@ describe('ChatLogWidget', () => {
     expect(messages.length).toBe(2);
 
     // First valid message: role defaults to agent, no ts
-    expect(messages[0].classList.contains('chat-log-agent')).toBe(true);
-    expect(messages[0].querySelector('.chat-log-author')?.textContent).toBe('agent');
-    expect(messages[0].querySelector('.chat-log-ts')).toBeNull();
+    expect(itemAt(messages, 0).classList.contains('chat-log-agent')).toBe(true);
+    expect(itemAt(messages, 0).querySelector('.chat-log-author')?.textContent).toBe('agent');
+    expect(itemAt(messages, 0).querySelector('.chat-log-ts')).toBeNull();
 
     // Second valid message: author is whitespace so falls back to human
-    expect(messages[1].classList.contains('chat-log-human')).toBe(true);
-    expect(messages[1].querySelector('.chat-log-author')?.textContent).toBe('human');
+    expect(itemAt(messages, 1).classList.contains('chat-log-human')).toBe(true);
+    expect(itemAt(messages, 1).querySelector('.chat-log-author')?.textContent).toBe('human');
   });
 
   it('handles config.Title, data.updatedAt with raw fallback, and non-date message timestamps', () => {
@@ -316,8 +317,8 @@ describe('ChatLogWidget', () => {
 
     const messages = container.querySelectorAll('.chat-log-message');
     expect(messages.length).toBe(2);
-    expect(messages[0].querySelector('.chat-log-ts')?.textContent).toContain('raw-timestamp-string');
-    expect(messages[0].querySelector('.chat-log-author')?.textContent).toBe('agent');
-    expect(messages[1].querySelector('.chat-log-ts')?.textContent).toContain('15:00');
+    expect(itemAt(messages, 0).querySelector('.chat-log-ts')?.textContent).toContain('raw-timestamp-string');
+    expect(itemAt(messages, 0).querySelector('.chat-log-author')?.textContent).toBe('agent');
+    expect(itemAt(messages, 1).querySelector('.chat-log-ts')?.textContent).toContain('15:00');
   });
 });

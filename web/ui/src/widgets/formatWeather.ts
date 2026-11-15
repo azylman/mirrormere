@@ -163,12 +163,9 @@ function parseRawHourlyPoints(hourly: unknown[]): RawHourlyPoint[] {
 }
 
 function computeTemperatureSpan(pts: RawHourlyPoint[]): { minTemp: number; span: number } {
-  let minTemp = pts[0].temp;
-  let maxTemp = pts[0].temp;
-  for (let i = 1; i < pts.length; i++) {
-    if (pts[i].temp < minTemp) minTemp = pts[i].temp;
-    if (pts[i].temp > maxTemp) maxTemp = pts[i].temp;
-  }
+  const temps = pts.map((pt) => pt.temp);
+  let minTemp = Math.min(...temps);
+  const maxTemp = Math.max(...temps);
 
   let span = maxTemp - minTemp;
   if (span < 4.0) {
@@ -183,19 +180,21 @@ function buildGraphPaths(
   coords: { x: number; y: number }[],
   baseY: number
 ): { curvePath: string; areaPath: string } {
-  const n = coords.length;
-  if (n <= 1) return { curvePath: '', areaPath: '' };
+  const [first, ...rest] = coords;
+  if (!first || rest.length === 0) return { curvePath: '', areaPath: '' };
 
-  let curvePath = `M ${coords[0].x.toFixed(1)} ${coords[0].y.toFixed(1)}`;
-  let areaPath = `M ${coords[0].x.toFixed(1)} ${baseY.toFixed(1)} L ${coords[0].x.toFixed(1)} ${coords[0].y.toFixed(1)}`;
+  let curvePath = `M ${first.x.toFixed(1)} ${first.y.toFixed(1)}`;
+  let areaPath = `M ${first.x.toFixed(1)} ${baseY.toFixed(1)} L ${first.x.toFixed(1)} ${first.y.toFixed(1)}`;
 
-  for (let i = 0; i < n - 1; i++) {
-    const dx = (coords[i + 1].x - coords[i].x) / 2.0;
-    const seg = ` C ${(coords[i].x + dx).toFixed(1)} ${coords[i].y.toFixed(1)}, ${(coords[i + 1].x - dx).toFixed(1)} ${coords[i + 1].y.toFixed(1)}, ${coords[i + 1].x.toFixed(1)} ${coords[i + 1].y.toFixed(1)}`;
+  let prev = first;
+  for (const next of rest) {
+    const dx = (next.x - prev.x) / 2.0;
+    const seg = ` C ${(prev.x + dx).toFixed(1)} ${prev.y.toFixed(1)}, ${(next.x - dx).toFixed(1)} ${next.y.toFixed(1)}, ${next.x.toFixed(1)} ${next.y.toFixed(1)}`;
     curvePath += seg;
     areaPath += seg;
+    prev = next;
   }
-  areaPath += ` L ${coords[n - 1].x.toFixed(1)} ${baseY.toFixed(1)} Z`;
+  areaPath += ` L ${prev.x.toFixed(1)} ${baseY.toFixed(1)} Z`;
   return { curvePath, areaPath };
 }
 
@@ -299,22 +298,20 @@ export function computeHourlyGraphLayout(
   const edgeInset = isTall ? 18.0 : 12.0;
   const step = n > 1 ? (totalWidth - 2.0 * edgeInset) / (n - 1) : 0.0;
 
-  const coords: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i++) {
+  const placed = pts.map((pt, i) => {
     const x = n > 1 ? edgeInset + i * step : totalWidth / 2.0;
-    const ratio = (pts[i].temp - minTemp) / span;
+    const ratio = (pt.temp - minTemp) / span;
     const y = curveBottom - ratio * (curveBottom - curveTop);
-    coords.push({ x, y });
-  }
+    return { pt, coord: { x, y } };
+  });
 
-  const { curvePath, areaPath } = buildGraphPaths(coords, baseY);
-  const points: HourlyPointLayout[] = pts.map((pt, i) =>
-    buildPointLayout(pt, coords[i], isTall, i)
+  const { curvePath, areaPath } = buildGraphPaths(placed.map(({ coord }) => coord), baseY);
+  const points: HourlyPointLayout[] = placed.map(({ pt, coord }, i) =>
+    buildPointLayout(pt, coord, isTall, i)
   );
 
   let gridLinesPath = '';
-  for (let i = 0; i < n; i++) {
-    const pt = points[i];
+  for (const pt of points) {
     gridLinesPath += `M ${pt.x.toFixed(1)} ${pt.lineY1.toFixed(1)} L ${pt.x.toFixed(1)} ${baseY.toFixed(1)} `;
   }
 

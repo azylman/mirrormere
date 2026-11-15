@@ -180,8 +180,8 @@ function packWidgetsIntoScreen(
   preferCurrent: boolean,
   placed: Map<string, [number, number]>,
 ): boolean {
-  if (idx >= toPack.length) return true;
   const w = toPack[idx];
+  if (!w) return true;
   for (const origin of candidateOriginsForWidget(w, gridCols, gridRows, preferCurrent)) {
     const mask = computeWidgetBitmask(origin, w.dimensions, gridCols);
     if ((occupiedMask & mask) !== 0) continue;
@@ -273,8 +273,8 @@ function tryPlaceAtOrigin(
       (computeWidgetBitmask(w.origin, w.dimensions, gridCols) & targetMask) !== 0,
   );
 
-  if (overlapping.length === 1 && (source.pinned || source.screen === targetScreen)) {
-    const other = overlapping[0];
+  const other = overlapping.length === 1 ? overlapping[0] : undefined;
+  if (other && (source.pinned || source.screen === targetScreen)) {
     const fitsAtSource =
       source.origin[0] >= 0 &&
       source.origin[1] >= 0 &&

@@ -4,6 +4,7 @@ import { LiveViewWidget, parseLiveViewConfig } from './LiveViewWidget';
 import { useDisplayStore } from '../../store';
 import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
+import { itemAt } from '../../test-utils/lookup';
 
 function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
   return {
@@ -313,7 +314,7 @@ describe('LiveViewWidget component', () => {
     });
 
     expect(lastPeerConnection?.transceivers.length).toBe(1);
-    expect(lastPeerConnection?.transceivers[0].kind).toBe('video');
+    expect(itemAt(lastPeerConnection?.transceivers, 0).kind).toBe('video');
 
     await vi.waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith(

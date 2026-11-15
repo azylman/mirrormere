@@ -30,7 +30,7 @@ declare global {
     EmberBridge?: {
       syncGooglePhotosAlbum?: (albumUrl: string) => void;
       connectGooglePhotos?: (albumUrl: string) => void;
-    };
+    } | undefined;
     onEmberPhotosSynced?: (payload: unknown) => void;
   }
 }
@@ -102,7 +102,7 @@ function PhotoMediaSlot({
   url, rawUrl, isVideo, isGif, canPlay, playingVideoUrl, streamSuffixIndex, videoClass, imgClass, style,
   onPlayVideo, onStopVideo, onVideoEnded, onVideoError,
 }: {
-  url: string; rawUrl?: string; isVideo?: boolean; isGif?: boolean; canPlay: boolean; playingVideoUrl: string | null; streamSuffixIndex: number;
+  url: string; rawUrl?: string | undefined; isVideo?: boolean | undefined; isGif?: boolean | undefined; canPlay: boolean; playingVideoUrl: string | null; streamSuffixIndex: number;
   videoClass: string; imgClass: string; style?: React.CSSProperties;
   onPlayVideo: (rawUrl?: string) => void; onStopVideo: () => void; onVideoEnded: () => void; onVideoError: () => void;
 }) {
@@ -128,9 +128,9 @@ function PhotoForeground({
   nextUrl, nextSecondaryUrl, isTransitioning, isStepping, playingVideoUrl, streamSuffixIndex,
   onPlayVideo, onStopVideo, onVideoEnded, onVideoError,
 }: {
-  currentUrl: string; currentSecondaryUrl?: string; currentRawUrl?: string; currentSecondaryRawUrl?: string;
+  currentUrl: string; currentSecondaryUrl?: string | undefined; currentRawUrl?: string | undefined; currentSecondaryRawUrl?: string | undefined;
   currentIsVideo?: boolean; currentSecondaryIsVideo?: boolean; currentIsGif?: boolean; currentSecondaryIsGif?: boolean;
-  nextUrl: string; nextSecondaryUrl?: string;
+  nextUrl: string; nextSecondaryUrl?: string | undefined;
   isTransitioning: boolean; isStepping: boolean; playingVideoUrl: string | null; streamSuffixIndex: number;
   onPlayVideo: (rawUrl?: string) => void; onStopVideo: () => void; onVideoEnded: () => void; onVideoError: () => void;
 }) {
@@ -164,7 +164,7 @@ function PhotoForeground({
   );
 }
 
-function PhotoMetadataOverlay({ photo, secondaryPhoto, showAlbumName }: { photo?: PhotoItem; secondaryPhoto?: PhotoItem; showAlbumName: boolean }) {
+function PhotoMetadataOverlay({ photo, secondaryPhoto, showAlbumName }: { photo?: PhotoItem | undefined; secondaryPhoto?: PhotoItem | undefined; showAlbumName: boolean }) {
   const meta = formatPhotoMetadataLabel(photo, showAlbumName, secondaryPhoto);
   return meta ? <div className="photo-metadata-overlay" aria-label={meta.text}>{meta.text}</div> : null;
 }
@@ -374,7 +374,7 @@ function shouldClearVideoPlayback({
 }: {
   playingVideoUrl: string | null; playingSlideKey: string | null; slideKey: string; isTransitioning: boolean;
   transitionState: SlideTransitionState | null; isCurrentPane: boolean; isDocumentVisible: boolean; isVideoMode: boolean;
-  current: { isVideo: boolean; isGif: boolean; rawUrl?: string; companionIsVideo: boolean; companionIsGif: boolean; companionRawUrl?: string };
+  current: { isVideo: boolean; isGif: boolean; rawUrl?: string | undefined; companionIsVideo: boolean; companionIsGif: boolean; companionRawUrl?: string | undefined };
 }): boolean {
   if (playingVideoUrl === null) return false;
   const matchesPrimary = Boolean((current.isVideo || current.isGif) && current.rawUrl && playingVideoUrl === current.rawUrl);

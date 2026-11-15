@@ -124,7 +124,7 @@ export function renderEventFlairWatermark(flair: EventFlair): ReactElement | nul
   );
 }
 
-function MealiePillContent({ location, title }: { location?: string; title?: string }) {
+function MealiePillContent({ location, title }: { location?: string | undefined; title?: string }) {
   return (
     <>
       <img src={location} alt="" style={{ width: '26px', height: '26px', borderRadius: '5px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
@@ -140,11 +140,11 @@ function MealiePillContent({ location, title }: { location?: string; title?: str
 
 export interface CalendarAllDayBandProps {
   activeView: ViewMode;
-  weekVM?: FamilyViewModel;
+  weekVM?: FamilyViewModel | undefined;
   daysToRender: FamilyDay[];
   visibleAllDayEvents: FamilySpanEvent[];
   currentDateISO: string;
-  marginLeft?: string;
+  marginLeft?: string | undefined;
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
   eventFlair?: boolean;
 }
@@ -248,8 +248,8 @@ export function CalendarAllDayBand({
 interface CalendarEdgeEventsBandProps {
   edge: 'early' | 'late';
   daysToRender: FamilyDay[];
-  inferredTimeFormat?: string;
-  marginLeft?: string;
+  inferredTimeFormat?: string | undefined;
+  marginLeft?: string | undefined;
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
 }
 
@@ -315,7 +315,7 @@ export function CalendarEdgeEventsBand({ edge, daysToRender, inferredTimeFormat,
   );
 }
 
-export function CalendarTimelineAxis({ weekVM }: { weekVM?: FamilyViewModel }) {
+export function CalendarTimelineAxis({ weekVM }: { weekVM?: FamilyViewModel | undefined }) {
   return (
     <div className="cf-timeline-axis" style={{ width: '38px', display: 'flex', flexDirection: 'column', flexShrink: 0, userSelect: 'none' }}>
       <div className="cf-timeline-spacer" style={{ height: '44px', flexShrink: 0 }} />
@@ -352,7 +352,7 @@ export function CalendarTimelineAxis({ weekVM }: { weekVM?: FamilyViewModel }) {
 export interface CalendarDayEventCardProps {
   ev: FamilyDayEvent;
   dayDate: string;
-  inferredTimeFormat?: string;
+  inferredTimeFormat?: string | undefined;
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
   eventFlair?: boolean;
 }
@@ -405,7 +405,7 @@ export function resolveMealieEventImage(ev: FamilyEvent): string | undefined {
 }
 
 interface CalendarDayMealBarProps {
-  meals?: FamilyEvent[];
+  meals?: FamilyEvent[] | undefined;
   dayDate: string;
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
 }
@@ -465,7 +465,7 @@ function CalendarDayMealBar({ meals, dayDate, onOpenModal }: CalendarDayMealBarP
 
 interface CalendarWeekMealRowProps {
   daysToRender: FamilyDay[];
-  marginLeft?: string;
+  marginLeft?: string | undefined;
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
 }
 

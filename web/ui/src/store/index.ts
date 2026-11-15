@@ -76,6 +76,7 @@ export function rotateChangesLayout(layout: readonly ScreenLayout[], data: Scree
   return current.some((w, i) => {
     const next = incoming[i];
     return (
+      !next ||
       w.widget_id !== next.widget_id ||
       w.origin[0] !== next.origin[0] ||
       w.origin[1] !== next.origin[1] ||

@@ -9,6 +9,7 @@ import {
   VideoStage,
 } from './VideoStage';
 import { postTouchEvent } from './api';
+import { itemAt } from '../test-utils/lookup';
 
 class MockRTCPeerConnection {
   public connectionState: RTCPeerConnectionState = 'new';
@@ -564,7 +565,7 @@ describe('VideoStage Declarative Suite', () => {
       const originalPC = window.RTCPeerConnection;
 
       class AlwaysFailPC extends MockRTCPeerConnection {
-        async createOffer(): Promise<RTCSessionDescriptionInit> {
+        override async createOffer(): Promise<RTCSessionDescriptionInit> {
           throw new Error('Offer creation failed');
         }
       }
@@ -806,9 +807,9 @@ describe('VideoStage Declarative Suite', () => {
       });
 
       expect(dispatched.length).toBe(2);
-      expect(dispatched[0].url).toBe('http://sidecar:8092/touch');
-      expect(dispatched[0].body).toEqual({ action: 'down', x: 0.5, y: 0.5 });
-      expect(dispatched[1].body).toEqual({ action: 'tap', x: 0.505, y: 0.505 });
+      expect(itemAt(dispatched, 0).url).toBe('http://sidecar:8092/touch');
+      expect(itemAt(dispatched, 0).body).toEqual({ action: 'down', x: 0.5, y: 0.5 });
+      expect(itemAt(dispatched, 1).body).toEqual({ action: 'tap', x: 0.505, y: 0.505 });
 
       // 12px slip (> 10px threshold) cancels tap and sends up (#869)
       dispatched.length = 0;
@@ -840,9 +841,9 @@ describe('VideoStage Declarative Suite', () => {
       });
 
       expect(dispatched.length).toBe(3);
-      expect(dispatched[0].body).toEqual({ action: 'down', x: 0.1, y: 0.1 });
-      expect(dispatched[1].body).toEqual({ action: 'move', x: 0.3, y: 0.3 });
-      expect(dispatched[2].body).toEqual({ action: 'up', x: 0.3, y: 0.3 });
+      expect(itemAt(dispatched, 0).body).toEqual({ action: 'down', x: 0.1, y: 0.1 });
+      expect(itemAt(dispatched, 1).body).toEqual({ action: 'move', x: 0.3, y: 0.3 });
+      expect(itemAt(dispatched, 2).body).toEqual({ action: 'up', x: 0.3, y: 0.3 });
 
       delete document.body.dataset.remoteUrl;
     });

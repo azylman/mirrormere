@@ -10,16 +10,16 @@ export interface FamilyMember {
 export interface FamilyEvent {
   id: string;
   title: string;
-  location?: string;
+  location?: string | undefined;
   image_url?: string;
-  description?: string;
-  start?: string;
-  end?: string;
+  description?: string | undefined;
+  start?: string | undefined;
+  end?: string | undefined;
   all_day?: boolean;
-  owners?: string[];
+  owners?: string[] | undefined;
   initials?: string[];
   colors?: string[];
-  color?: string;
+  color?: string | undefined;
   text_color?: string;
   patterns?: string[];
   pattern?: string;
@@ -66,13 +66,13 @@ export interface FamilyDay {
   is_today: boolean;
   is_weekend: boolean;
   special_label?: string;
-  all_day?: FamilyEvent[];
-  meals?: FamilyEvent[];
-  timed?: FamilyEvent[];
+  all_day?: FamilyEvent[] | undefined;
+  meals?: FamilyEvent[] | undefined;
+  timed?: FamilyEvent[] | undefined;
   overflow?: number;
-  events?: FamilyDayEvent[];
-  early_events?: FamilyDayEvent[];
-  late_events?: FamilyDayEvent[];
+  events?: FamilyDayEvent[] | undefined;
+  early_events?: FamilyDayEvent[] | undefined;
+  late_events?: FamilyDayEvent[] | undefined;
 }
 
 export interface FamilyViewModel {
@@ -81,8 +81,8 @@ export interface FamilyViewModel {
   range_label: string;
   today: string;
   time_format?: '12h' | '24h' | string;
-  hours_start?: string;
-  hours_end?: string;
+  hours_start?: string | undefined;
+  hours_end?: string | undefined;
   hour_markers?: string[];
   timeline_markers?: TimelineMarker[];
   collapsed_gaps?: CollapsedHoursGap[];
@@ -112,8 +112,8 @@ export interface FamilyMonthDay {
   is_today: boolean;
   is_weekend: boolean;
   special_label?: string;
-  dots?: FamilyMonthDot[];
-  event_title?: string;
+  dots?: FamilyMonthDot[] | undefined;
+  event_title?: string | undefined;
   events_count?: number;
   events?: FamilyEvent[];
 }
@@ -133,8 +133,8 @@ export interface FamilyMonthViewModel {
   today: string;
   weekday_headers: string[];
   members?: FamilyMember[];
-  weeks?: FamilyMonthWeek[];
-  days?: FamilyMonthDay[];
+  weeks?: FamilyMonthWeek[] | undefined;
+  days?: FamilyMonthDay[] | undefined;
   shared_color?: string;
   cached_range_start?: string;
   cached_range_end?: string;

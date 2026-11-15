@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LayoutEditorResponse } from '../sse/types';
 import { useDisplayStore } from '../store';
 import { LayoutEditor } from './LayoutEditor';
+import { itemAt } from '../test-utils/lookup';
 
 const initialStore = useDisplayStore.getState();
 
@@ -286,7 +287,7 @@ describe('LayoutEditor component', () => {
 
     // Switch to Screen 2
     act(() => {
-      fireEvent.click(pills[1]);
+      fireEvent.click(itemAt(pills, 1));
     });
 
     // On Screen 2 (screen 1): tasks-1 (3x2) and pinned-1 (2x1) = 8 cells
@@ -358,7 +359,7 @@ describe('LayoutEditor component', () => {
 
     // Click 2×2 chip on clock-1 (expands to 2x2 on row 0 and 1)
     act(() => {
-      fireEvent.click(clockChips[1]);
+      fireEvent.click(itemAt(clockChips, 1));
     });
     expect(clockCard.querySelector('.layout-editor-card-dim')?.textContent).toBe('2×2');
 
@@ -366,7 +367,7 @@ describe('LayoutEditor component', () => {
     const weatherCard = container.querySelector('[data-widget-id="weather-1"]') as HTMLElement;
     const weatherChips = weatherCard.querySelectorAll('.size-chip');
     act(() => {
-      fireEvent.click(weatherChips[1]);
+      fireEvent.click(itemAt(weatherChips, 1));
     });
     expect(weatherCard.querySelector('.layout-editor-card-dim')?.textContent).toBe('2×1');
   });
@@ -587,7 +588,7 @@ describe('LayoutEditor component', () => {
     // Switch to Screen 2 (screen index 1)
     const pills = container.querySelectorAll('.layout-editor-screen-pill');
     act(() => {
-      fireEvent.click(pills[1]);
+      fireEvent.click(itemAt(pills, 1));
     });
 
     // Unpinning pinned-1 while on Screen 2 keeps it on Screen 2

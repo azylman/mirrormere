@@ -56,7 +56,7 @@ export function prepareFragment(html: string): PreparedFragment {
   for (const img of Array.from(card.querySelectorAll('img[onload]'))) {
     const code = img.getAttribute('onload') ?? '';
     img.removeAttribute('onload');
-    const targets = Array.from(code.matchAll(ONLOAD_MOUNT), (m) => ({ name: m[1], selector: m[3] }));
+    const targets = Array.from(code.matchAll(ONLOAD_MOUNT), ([, name = '', , selector = '']) => ({ name, selector }));
     if (targets.length > 0) hooks.push({ img, targets });
   }
   return { card, hooks };

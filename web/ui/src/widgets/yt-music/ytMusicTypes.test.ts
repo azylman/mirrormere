@@ -14,6 +14,7 @@ import {
   type SearchResultItem,
   type YtMusicTab,
 } from './ytMusicTypes';
+import { itemAt } from '../../test-utils/lookup';
 
 describe('ytMusicTypes helpers', () => {
   it('supports Playlist, SearchResultItem, and YtMusicTab types', () => {
@@ -167,8 +168,8 @@ describe('ytMusicTypes helpers', () => {
       const result = resolveSuggestions(state);
       // 3 artists + up to 6 playlists = 7 total (since break happens when derived.length >= 6)
       expect(result.length).toBe(6);
-      expect(result[0].title).toBe('A1');
-      expect(result[3].subtitle).toBe('Playlist');
+      expect(itemAt(result, 0).title).toBe('A1');
+      expect(itemAt(result, 3).subtitle).toBe('Playlist');
     });
 
     it('returns default suggestions when state has no suggestions, queue, or playlists', () => {

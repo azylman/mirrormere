@@ -141,7 +141,7 @@ export interface LayoutEditorWidgetPlacement {
   screen: number;
   origin: [number, number];
   dimensions: [number, number];
-  pinned?: boolean;
+  pinned?: boolean | undefined;
 }
 
 export interface LayoutEditorUpdateRequest {

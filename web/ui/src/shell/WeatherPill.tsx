@@ -47,12 +47,14 @@ export function WeatherPill() {
 
   let descText = 'Sunny & Mild';
   if (weather) {
+    const tokenDesc = WEATHER_DESC_MAP[conditionToken];
+    const conditionDesc = weather.condition ? WEATHER_DESC_MAP[weather.condition] : undefined;
     if (customDesc) {
       descText = customDesc;
-    } else if (WEATHER_DESC_MAP[conditionToken]) {
-      descText = WEATHER_DESC_MAP[conditionToken];
-    } else if (weather.condition && WEATHER_DESC_MAP[weather.condition]) {
-      descText = WEATHER_DESC_MAP[weather.condition];
+    } else if (tokenDesc) {
+      descText = tokenDesc;
+    } else if (conditionDesc) {
+      descText = conditionDesc;
     } else if (weather.condition && weather.condition !== conditionToken) {
       descText = weather.condition;
     } else {

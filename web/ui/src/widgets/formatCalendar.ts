@@ -2,7 +2,7 @@ import { formatDate, relDate } from './formatDate';
 
 export interface CalendarFeedActiveCalendar {
   name: string;
-  color?: string;
+  color?: string | undefined;
   enabled?: boolean;
   [key: string]: unknown;
 }
@@ -45,17 +45,17 @@ export function calendarFeedActiveCalendars(config: unknown): CalendarFeedActive
 }
 
 export interface CalendarFeedEvent {
-  id?: string;
+  id?: string | undefined;
   title: string;
   start: string;
-  end?: string;
+  end?: string | undefined;
   all_day?: boolean;
   allDay?: boolean;
-  location?: string;
-  description?: string;
+  location?: string | undefined;
+  description?: string | undefined;
   calendar_name?: string;
-  calendarName?: string;
-  color?: string;
+  calendarName?: string | undefined;
+  color?: string | undefined;
   [key: string]: unknown;
 }
 
@@ -145,7 +145,10 @@ function groupFeedEvents(
   const groups: CalendarFeedDayGroup[] = [];
   for (const ev of events) {
     const dateStr = formatDate('2006-01-02', ev.start, tz);
-    if (groups.length === 0 || groups[groups.length - 1].date !== dateStr) {
+    const current = groups.at(-1);
+    if (current?.date === dateStr) {
+      current.events.push(ev);
+    } else {
       const rel = relDate(effectiveRefTime, ev.start, tz);
       groups.push({
         date: dateStr,
@@ -153,8 +156,6 @@ function groupFeedEvents(
         start: ev.start,
         events: [ev],
       });
-    } else {
-      groups[groups.length - 1].events.push(ev);
     }
   }
   return groups;
