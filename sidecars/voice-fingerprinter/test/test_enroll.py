@@ -5,6 +5,7 @@ these tests never hit a real (or even a local) HTTP server. Audio
 fixtures are synthesized with the stdlib `wave` module; nothing is ever
 played.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -22,8 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 enroll = importlib.import_module("enroll")
 
 
-def _make_wav_file(path: Path, seconds: float, sample_rate: int = 16000,
-                    loud: bool = True) -> None:
+def _make_wav_file(path: Path, seconds: float, sample_rate: int = 16000, loud: bool = True) -> None:
     n_frames = int(seconds * sample_rate)
     amplitude = 8000 if loud else 50
     with wave.open(str(path), "wb") as w:
@@ -113,7 +113,10 @@ def test_build_centroid_rejects_inconsistent_models(monkeypatch):
 
 def test_merge_speaker_new_file():
     merged = enroll.merge_speaker(None, "speaker-1", [0.1, 0.2], "model-x", force=False)
-    assert merged == {"model": "model-x", "speakers": [{"id": "speaker-1", "embedding": [0.1, 0.2]}]}
+    assert merged == {
+        "model": "model-x",
+        "speakers": [{"id": "speaker-1", "embedding": [0.1, 0.2]}],
+    }
 
 
 def test_merge_speaker_adds_to_existing():
@@ -138,7 +141,10 @@ def test_merge_speaker_refuses_model_mismatch_without_force():
 def test_merge_speaker_force_drops_other_speakers():
     existing = {"model": "model-old", "speakers": [{"id": "speaker-2", "embedding": [0.5]}]}
     merged = enroll.merge_speaker(existing, "speaker-1", [0.1, 0.2], "model-new", force=True)
-    assert merged == {"model": "model-new", "speakers": [{"id": "speaker-1", "embedding": [0.1, 0.2]}]}
+    assert merged == {
+        "model": "model-new",
+        "speakers": [{"id": "speaker-1", "embedding": [0.1, 0.2]}],
+    }
 
 
 def test_write_and_read_speakers_roundtrip(tmp_path):
@@ -171,7 +177,10 @@ def test_write_and_read_yaml_config_roundtrip_preserves_existing_settings(tmp_pa
     cfg_path.chmod(0o640)
     assert enroll.read_speakers(cfg_path) is None
 
-    data1 = {"model": "speechbrain/spkrec-ecapa-voxceleb", "speakers": [{"id": "speaker-1", "embedding": [0.25, 0.5]}]}
+    data1 = {
+        "model": "speechbrain/spkrec-ecapa-voxceleb",
+        "speakers": [{"id": "speaker-1", "embedding": [0.25, 0.5]}],
+    }
     enroll.write_speakers(cfg_path, data1)
     assert stat.S_IMODE(cfg_path.stat().st_mode) == 0o640
     assert enroll.read_speakers(cfg_path) == data1
@@ -213,10 +222,17 @@ def test_cmd_enroll_end_to_end_writes_yaml_and_json(tmp_path, monkeypatch, capsy
     _make_wav_file(wav_path, seconds=12.0)  # enough chunks to clear MIN_SURVIVING_CHUNKS
     yaml_output = tmp_path / "config.yaml"
 
-    rc = enroll.main([
-        "speaker-1", "--wav", str(wav_path), "--output", str(yaml_output),
-        "--embed-url", "http://fake/embed",
-    ])
+    rc = enroll.main(
+        [
+            "speaker-1",
+            "--wav",
+            str(wav_path),
+            "--output",
+            str(yaml_output),
+            "--embed-url",
+            "http://fake/embed",
+        ]
+    )
     assert rc == 0
 
     parsed = enroll.read_speakers(yaml_output)
@@ -225,10 +241,17 @@ def test_cmd_enroll_end_to_end_writes_yaml_and_json(tmp_path, monkeypatch, capsy
     assert parsed["speakers"][0]["id"] == "speaker-1"
 
     json_output = tmp_path / "speakers.json"
-    rc_json = enroll.main([
-        "speaker-1", "--wav", str(wav_path), "--output", str(json_output),
-        "--embed-url", "http://fake/embed",
-    ])
+    rc_json = enroll.main(
+        [
+            "speaker-1",
+            "--wav",
+            str(wav_path),
+            "--output",
+            str(json_output),
+            "--embed-url",
+            "http://fake/embed",
+        ]
+    )
     assert rc_json == 0
     written = json.loads(json_output.read_text())
     assert written["model"] == "speechbrain/spkrec-ecapa-voxceleb"
@@ -248,7 +271,9 @@ def test_cmd_enroll_dry_run_does_not_write(tmp_path, monkeypatch):
 
 def test_cmd_enroll_model_mismatch_refused_via_cli(tmp_path, monkeypatch, capsys):
     output = tmp_path / "config.yaml"
-    enroll.write_speakers(output, {"model": "old-model", "speakers": [{"id": "speaker-2", "embedding": [0.1]}]})
+    enroll.write_speakers(
+        output, {"model": "old-model", "speakers": [{"id": "speaker-2", "embedding": [0.1]}]}
+    )
 
     monkeypatch.setattr(enroll, "embed_wav", _fake_embed_wav_factory(model="new-model"))
     wav_path = tmp_path / "speaker-1.wav"
@@ -265,10 +290,16 @@ def test_cmd_enroll_model_mismatch_refused_via_cli(tmp_path, monkeypatch, capsys
 
 def test_cmd_list_and_remove(tmp_path, capsys):
     output = tmp_path / "config.yaml"
-    enroll.write_speakers(output, {
-        "model": "model-x",
-        "speakers": [{"id": "speaker-1", "embedding": [0.1, 0.2]}, {"id": "speaker-2", "embedding": [0.3]}],
-    })
+    enroll.write_speakers(
+        output,
+        {
+            "model": "model-x",
+            "speakers": [
+                {"id": "speaker-1", "embedding": [0.1, 0.2]},
+                {"id": "speaker-2", "embedding": [0.3]},
+            ],
+        },
+    )
 
     rc = enroll.main(["--list", "--output", str(output)])
     assert rc == 0
@@ -302,7 +333,7 @@ def test_read_and_write_yaml_4space_indentation(tmp_path):
 
     updated_text = cfg_path.read_text()
     assert "    speaker_id:" in updated_text
-    assert "        model: \"m1\"" in updated_text
+    assert '        model: "m1"' in updated_text
     assert "        speakers:" in updated_text
 
     re_read = enroll.read_speakers(cfg_path)
@@ -347,10 +378,13 @@ def test_read_yaml_malformed_voice_hub_or_speaker_id_raises(tmp_path):
 def test_build_yaml_scratch_omits_enabled_true(tmp_path):
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text("")
-    enroll.write_speakers(cfg_path, {
-        "model": "model-xyz",
-        "speakers": [{"id": "s1", "embedding": [0.1, 0.2]}],
-    })
+    enroll.write_speakers(
+        cfg_path,
+        {
+            "model": "model-xyz",
+            "speakers": [{"id": "s1", "embedding": [0.1, 0.2]}],
+        },
+    )
     text = cfg_path.read_text()
     assert "enabled: true" not in text
     assert "voice_hub:" in text
@@ -366,10 +400,13 @@ def test_build_yaml_inserts_speaker_id_at_direct_child_indent_when_nested_blocks
   fast_path:
     url: "http://fast"
 """)
-    enroll.write_speakers(cfg_path, {
-        "model": "model-xyz",
-        "speakers": [{"id": "s1", "embedding": [0.1, 0.2]}],
-    })
+    enroll.write_speakers(
+        cfg_path,
+        {
+            "model": "model-xyz",
+            "speakers": [{"id": "s1", "embedding": [0.1, 0.2]}],
+        },
+    )
     text = cfg_path.read_text()
     assert "\n  speaker_id:\n" in text
     assert "\n    embed_url:" in text
@@ -378,4 +415,3 @@ def test_build_yaml_inserts_speaker_id_at_direct_child_indent_when_nested_blocks
     assert data["model"] == "model-xyz"
     assert len(data["speakers"]) == 1
     assert data["speakers"][0]["id"] == "s1"
-

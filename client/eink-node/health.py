@@ -2,12 +2,13 @@
 health.py - Observability and healthcheck HTTP server on port 8099
 """
 
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import contextlib
 import json
 import logging
 import threading
-import time
-from typing import Callable, Any
+from collections.abc import Callable
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any
 
 logger = logging.getLogger("mirrormere.eink.health")
 
@@ -96,10 +97,8 @@ class HealthServer:
         """Shuts down the healthcheck server."""
         self._stop_event.set()
         if self._server:
-            try:
+            with contextlib.suppress(Exception):
                 self._server.server_close()
-            except Exception:
-                pass
         if self._thread:
             self._thread.join(timeout=1.0)
         logger.info("Healthcheck endpoint stopped")

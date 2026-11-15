@@ -474,6 +474,44 @@ run_js_lint() {
     fi
 }
 
+# 10. Python lint + format (root ruff.toml) over all first-party Python.
+# The ruff version is pinned in requirements-lint.txt and enforced here so local
+# runs and CI agree on formatter output. --staged checks only staged Python
+# files (whole scope when ruff.toml, the pin or this script is staged); --full
+# and CI always check the whole scope.
+RUFF_CONFIG='^(ruff\.toml|requirements-lint\.txt|scripts/verify\.sh)$'
+
+run_ruff() {
+    staged_py=""
+    if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E "$RUFF_CONFIG"; then
+        staged_py=$(echo "$STAGED_FILES" | grep -E '\.pyi?$' | while read -r pf; do
+            if [ -f "$REPO_ROOT/$pf" ]; then echo "$pf"; fi
+        done)
+        if [ -z "$staged_py" ]; then
+            return 0
+        fi
+    fi
+    if ! has_cmd ruff; then
+        echo "🚨 [Mirrormere Verify] Error: ruff not found in PATH; install the pinned version with: pip install -r requirements-lint.txt" >&2
+        exit 1
+    fi
+    ruff_pinned=$(sed -n 's/^ruff==//p' "$REPO_ROOT/requirements-lint.txt")
+    ruff_installed=$(ruff --version | awk '{print $2}')
+    if [ -z "$ruff_pinned" ] || [ "$ruff_installed" != "$ruff_pinned" ]; then
+        echo "🚨 [Mirrormere Verify] Error: ruff ${ruff_installed:-unknown} does not match the pin in requirements-lint.txt (${ruff_pinned:-missing}); run: pip install -r requirements-lint.txt" >&2
+        exit 1
+    fi
+    if [ -n "$staged_py" ]; then
+        echo "   [ruff] Linting and format-checking staged Python..."
+        # --force-exclude keeps ruff.toml/.gitignore exclusions for explicit paths.
+        # shellcheck disable=SC2086 # intentional word splitting of the staged file list
+        (cd "$REPO_ROOT" && ruff check --force-exclude $staged_py && ruff format --check --force-exclude $staged_py)
+    else
+        echo "   [ruff] Linting and format-checking all Python..."
+        (cd "$REPO_ROOT" && ruff check && ruff format --check)
+    fi
+}
+
 if [ "$MODE" = "staged" ]; then
     if has_cmd git; then
         git rm --cached -q PR_DESCRIPTION.md .pr_description.md 2>/dev/null || true
@@ -556,6 +594,7 @@ if [ "$MODE" = "staged" ]; then
     fi
 
     run_js_lint
+    run_ruff
 
     if echo "$STAGED_FILES" | grep -q -E '^sidecars/eink-renderer/' && has_cmd node; then
         echo "   [node test] Running eink-renderer sidecar test suite..."
@@ -619,6 +658,7 @@ run_golangci_lint
 run_deadcode
 run_coverage_gate
 run_js_lint
+run_ruff
 ui_changed=""
 if [ -n "$(git status --porcelain -- web/ui 2>/dev/null)" ]; then
     ui_changed=1

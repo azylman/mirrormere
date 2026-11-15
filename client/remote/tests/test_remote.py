@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import os
 import sys
 import unittest
@@ -7,16 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Ensure client/remote is on sys.path even when discover is run from repository root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import daemon
 from coords import clamp, normalize_coordinates, to_hid_digitizer
-
 from keycodes import (
     lookup_consumer_key,
     lookup_remote_key,
     resolve_key_dispatch,
-    CONSUMER_KEYCODES,
-    REMOTE_KEYCODES,
 )
-import daemon
+
 
 class TestCoords(unittest.TestCase):
     def test_clamp(self):
@@ -58,7 +57,9 @@ class TestCoords(unittest.TestCase):
         self.assertAlmostEqual(y, 0.5)
 
         # Offset range (e.g. digitizer with non-zero min: 100..1100)
-        x, y = normalize_coordinates(600.0, 600.0, min_x=100.0, max_x=1100.0, min_y=100.0, max_y=1100.0)
+        x, y = normalize_coordinates(
+            600.0, 600.0, min_x=100.0, max_x=1100.0, min_y=100.0, max_y=1100.0
+        )
         self.assertAlmostEqual(x, 0.5)
         self.assertAlmostEqual(y, 0.5)
 
@@ -187,13 +188,16 @@ class TestDaemonComponents(unittest.TestCase):
         mock_instance.async_connect = AsyncMock(side_effect=RuntimeError("test stop"))
         mock_remote_cls.return_value = mock_instance
 
-        with patch.object(helper, "has_credentials", return_value=True), \
-             patch.dict(sys.modules, {"androidtvremote2": mock_module, "androidtvremote2.androidtv_remote": mock_module}), \
-             patch("asyncio.sleep", side_effect=asyncio.CancelledError):
-            try:
-                asyncio.run(helper.start())
-            except asyncio.CancelledError:
-                pass
+        with (
+            patch.object(helper, "has_credentials", return_value=True),
+            patch.dict(
+                sys.modules,
+                {"androidtvremote2": mock_module, "androidtvremote2.androidtv_remote": mock_module},
+            ),
+            patch("asyncio.sleep", side_effect=asyncio.CancelledError),
+            contextlib.suppress(asyncio.CancelledError),
+        ):
+            asyncio.run(helper.start())
 
         mock_remote_cls.assert_called_once_with(
             client_name="Mirrormere Remote",
@@ -289,14 +293,14 @@ class TestDaemonComponents(unittest.TestCase):
         mock_evdev.InputDevice.return_value = mock_dev
 
         async def run():
-            with patch.dict("sys.modules", {"evdev": mock_evdev}), \
-                 patch.object(reader, "resolve_device", return_value="/dev/input/event0"), \
-                 patch("os.path.exists", return_value=True), \
-                 patch("asyncio.sleep", side_effect=asyncio.CancelledError):
-                try:
-                    await reader.run()
-                except asyncio.CancelledError:
-                    pass
+            with (
+                patch.dict("sys.modules", {"evdev": mock_evdev}),
+                patch.object(reader, "resolve_device", return_value="/dev/input/event0"),
+                patch("os.path.exists", return_value=True),
+                patch("asyncio.sleep", side_effect=asyncio.CancelledError),
+                contextlib.suppress(asyncio.CancelledError),
+            ):
+                await reader.run()
 
         asyncio.run(run())
         hid_mock.send_mouse.assert_not_called()
@@ -339,14 +343,14 @@ class TestDaemonComponents(unittest.TestCase):
         mock_evdev.InputDevice.return_value = mock_dev
 
         async def run():
-            with patch.dict("sys.modules", {"evdev": mock_evdev}), \
-                 patch.object(reader, "resolve_device", return_value="/dev/input/event0"), \
-                 patch("os.path.exists", return_value=True), \
-                 patch("asyncio.sleep", side_effect=asyncio.CancelledError):
-                try:
-                    await reader.run()
-                except asyncio.CancelledError:
-                    pass
+            with (
+                patch.dict("sys.modules", {"evdev": mock_evdev}),
+                patch.object(reader, "resolve_device", return_value="/dev/input/event0"),
+                patch("os.path.exists", return_value=True),
+                patch("asyncio.sleep", side_effect=asyncio.CancelledError),
+                contextlib.suppress(asyncio.CancelledError),
+            ):
+                await reader.run()
 
         asyncio.run(run())
         hid_mock.send_touch.assert_not_called()
@@ -367,6 +371,7 @@ class TestDaemonComponents(unittest.TestCase):
 
     def test_remote_daemon_custom_config(self):
         from config import RemoteConfig
+
         cfg = RemoteConfig(
             chromecast_host="10.0.0.50",
             advert_name="Test Remote",
@@ -380,10 +385,15 @@ class TestDaemonComponents(unittest.TestCase):
     def test_handle_bluetooth_remove(self):
         d = daemon.RemoteDaemon()
         req = MagicMock()
+
         async def mock_json():
             return {"mac": "AA:BB:CC:DD:EE:FF"}
+
         req.json = mock_json
-        with patch.object(daemon, "web") as mock_web, patch("asyncio.create_subprocess_exec") as mock_exec:
+        with (
+            patch.object(daemon, "web") as mock_web,
+            patch("asyncio.create_subprocess_exec") as mock_exec,
+        ):
             mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
             mock_proc = MagicMock()
             mock_proc.communicate = AsyncMock(return_value=(b"", b""))
@@ -396,8 +406,10 @@ class TestDaemonComponents(unittest.TestCase):
     def test_handle_bluetooth_remove_missing_mac(self):
         d = daemon.RemoteDaemon()
         req = MagicMock()
+
         async def mock_json():
             return {}
+
         req.json = mock_json
         with patch.object(daemon, "web") as mock_web:
             mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
@@ -426,6 +438,7 @@ class TestDaemonComponents(unittest.TestCase):
                 await asyncio.sleep(0.01)
                 self.assertEqual(mock_trust.call_count, 5)
                 mock_trust.assert_any_call("AA:BB:CC:DD:EE:FF")
+
         asyncio.run(run_test())
 
     def test_pairing_agent_auto_confirm_false(self):
@@ -451,25 +464,35 @@ class TestDaemonComponents(unittest.TestCase):
             agent = daemon.PairingAgent(helper, auto_confirm=True, on_trusted=trusted_macs.append)
             orig_sleep = asyncio.sleep
             mock_proc = MagicMock(returncode=0)
+
             async def slow_communicate():
                 await orig_sleep(0)
                 return (b"Changing AA:BB:CC:DD:EE:FF trust succeeded\n", b"")
+
             async def fast_sleep(_):
                 await orig_sleep(0)
+
             mock_proc.communicate = slow_communicate
-            with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec, \
-                 patch("asyncio.sleep", new=fast_sleep):
+            with (
+                patch(
+                    "asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)
+                ) as mock_exec,
+                patch("asyncio.sleep", new=fast_sleep),
+            ):
                 await asyncio.gather(
                     agent._trust_device("aa:bb:cc:dd:ee:ff"),
                     agent._trust_device("AA:BB:CC:DD:EE:FF"),
                 )
                 mock_exec.assert_awaited_once_with(
-                    "bluetoothctl", "trust", "AA:BB:CC:DD:EE:FF",
+                    "bluetoothctl",
+                    "trust",
+                    "AA:BB:CC:DD:EE:FF",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
                 self.assertEqual(trusted_macs, ["AA:BB:CC:DD:EE:FF"])
                 self.assertNotIn("AA:BB:CC:DD:EE:FF", agent._trusting_macs)
+
         asyncio.run(run_test())
 
     def test_configure_adapter_states(self):
@@ -496,10 +519,13 @@ class TestDaemonComponents(unittest.TestCase):
             mock_exec.assert_any_call("bluetoothctl", "pairable", "off")
 
     def test_managed_devices_tracking_and_persistence(self):
-        import tempfile, shutil
+        import shutil
+        import tempfile
+
         temp_dir = tempfile.mkdtemp()
         try:
             from config import RemoteConfig
+
             cfg = RemoteConfig(cert_dir=temp_dir, managed_devices=["11:22:33:44:55:66"])
             d = daemon.RemoteDaemon(config=cfg)
             self.assertIn("11:22:33:44:55:66", d.managed_macs)
@@ -511,8 +537,8 @@ class TestDaemonComponents(unittest.TestCase):
             # Verify persisted file
             dev_file = os.path.join(temp_dir, "managed_devices.txt")
             self.assertTrue(os.path.exists(dev_file))
-            with open(dev_file, "r") as f:
-                lines = [l.strip() for l in f]
+            with open(dev_file) as f:
+                lines = [line.strip() for line in f]
             self.assertIn("AA:BB:CC:DD:EE:FF", lines)
 
             # Test reload into new daemon instance
@@ -523,8 +549,8 @@ class TestDaemonComponents(unittest.TestCase):
             # Test remove managed device
             d2.remove_managed_device("AA:BB:CC:DD:EE:FF")
             self.assertNotIn("AA:BB:CC:DD:EE:FF", d2.managed_macs)
-            with open(dev_file, "r") as f:
-                lines_after = [l.strip() for l in f]
+            with open(dev_file) as f:
+                lines_after = [line.strip() for line in f]
             self.assertNotIn("AA:BB:CC:DD:EE:FF", lines_after)
         finally:
             shutil.rmtree(temp_dir)
@@ -535,7 +561,9 @@ class TestDaemonComponents(unittest.TestCase):
 
         # Case 1: managed_macs is populated -> only disconnect devices in managed_macs
         d.managed_macs = {"AA:BB:CC:DD:EE:FF"}
-        paired_stdout = b"Device AA:BB:CC:DD:EE:FF Chromecast\nDevice 00:11:22:33:44:55 Unrelated Headset\n"
+        paired_stdout = (
+            b"Device AA:BB:CC:DD:EE:FF Chromecast\nDevice 00:11:22:33:44:55 Unrelated Headset\n"
+        )
         d._run_bluetoothctl.side_effect = [
             (0, paired_stdout, b""),  # devices Paired
             (0, b"Connected: yes\nIcon: video-display\n", b""),  # info for AA:BB:...
@@ -552,7 +580,11 @@ class TestDaemonComponents(unittest.TestCase):
         paired_stdout2 = b"Device AA:BB:CC:00:00:01 Headphones\nDevice AA:BB:CC:00:00:02 Display\n"
         d._run_bluetoothctl.side_effect = [
             (0, paired_stdout2, b""),  # devices Paired
-            (0, b"Connected: yes\nIcon: audio-headphones\n", b""),  # info for Headphones (peripheral)
+            (
+                0,
+                b"Connected: yes\nIcon: audio-headphones\n",
+                b"",
+            ),  # info for Headphones (peripheral)
             (0, b"Connected: yes\nIcon: display\n", b""),  # info for Display
             (0, b"", b""),  # disconnect Display
         ]
@@ -596,6 +628,7 @@ class TestDaemonComponents(unittest.TestCase):
 class TestConfig(unittest.TestCase):
     def test_default_config(self):
         from config import load_config
+
         cfg = load_config("/nonexistent/path/to/config.yaml")
         self.assertEqual(cfg.chromecast_host, "chromecast.lan")
         self.assertEqual(cfg.cert_dir, "/data/certs")
@@ -606,8 +639,10 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.tap_duration, 0.015)
 
     def test_load_from_yaml(self):
-        from config import load_config
         import tempfile
+
+        from config import load_config
+
         content = """
 chromecast_host: 10.0.0.50
 cert_dir: /custom/certs
@@ -633,8 +668,10 @@ tap_duration: 0.02
             os.remove(temp_path)
 
     def test_load_from_scoped_yaml(self):
-        from config import load_config
         import tempfile
+
+        from config import load_config
+
         content = """
 remote:
   chromecast_addr: 10.0.0.50:8009
@@ -660,13 +697,17 @@ remote:
     def test_no_env_fallback(self):
         # In accordance with system invariants, environment variables must not override config values
         from config import load_config
-        with patch.dict(os.environ, {
-            "CHROMECAST_HOST": "malicious-host.lan",
-            "ADVERT_NAME": "Ignored Advert",
-            "HTTP_PORT": "9999",
-            "MIRRORMERE_REMOTE_MANAGED_DEVICES": "de:ad:be:ef:00:01, de:ad:be:ef:00:02",
-            "MIRRORMERE_REMOTE_POINTER_MODE": "mouse",
-        }):
+
+        with patch.dict(
+            os.environ,
+            {
+                "CHROMECAST_HOST": "malicious-host.lan",
+                "ADVERT_NAME": "Ignored Advert",
+                "HTTP_PORT": "9999",
+                "MIRRORMERE_REMOTE_MANAGED_DEVICES": "de:ad:be:ef:00:01, de:ad:be:ef:00:02",
+                "MIRRORMERE_REMOTE_POINTER_MODE": "mouse",
+            },
+        ):
             cfg = load_config("/nonexistent/file.yaml")
             self.assertEqual(cfg.chromecast_host, "chromecast.lan")
             self.assertEqual(cfg.advert_name, "Mirrormere Remote")
@@ -675,8 +716,10 @@ remote:
             self.assertEqual(cfg.pointer_mode, "touch")
 
     def test_managed_devices_and_pointer_mode_config(self):
-        from config import load_config
         import tempfile
+
+        from config import load_config
+
         content = """
 managed_devices:
   - "aa:bb:cc:dd:ee:01"
@@ -716,11 +759,11 @@ class TestHIDDescriptor(unittest.TestCase):
         self.assertIn(mouse_usage, daemon.REPORT_MAP)
 
         # REPORT_MAP must contain Touch Screen digitizer usage (0x05, 0x0d, 0x09, 0x04)
-        touch_usage = bytes([0x05, 0x0d, 0x09, 0x04])
+        touch_usage = bytes([0x05, 0x0D, 0x09, 0x04])
         self.assertIn(touch_usage, daemon.REPORT_MAP)
 
         # REPORT_MAP must contain Consumer Control usage (0x05, 0x0c, 0x09, 0x01)
-        consumer_usage = bytes([0x05, 0x0c, 0x09, 0x01])
+        consumer_usage = bytes([0x05, 0x0C, 0x09, 0x01])
         self.assertIn(consumer_usage, daemon.REPORT_MAP)
 
     def test_multi_report_ids(self):
@@ -729,7 +772,7 @@ class TestHIDDescriptor(unittest.TestCase):
         # Report 2 must be Digitizer Touch Screen (Report ID 2)
         self.assertIn(bytes([0x85, 0x02]), daemon.REPORT_MAP)
         # Report 2 Y axis Logical Maximum must be 18431 (0x47FF little-endian: 0xFF, 0x47)
-        self.assertIn(bytes([0x09, 0x31, 0x15, 0x00, 0x26, 0xff, 0x47]), daemon.REPORT_MAP)
+        self.assertIn(bytes([0x09, 0x31, 0x15, 0x00, 0x26, 0xFF, 0x47]), daemon.REPORT_MAP)
         # Report 3 must be Consumer Control (Report ID 3)
         self.assertIn(bytes([0x85, 0x03]), daemon.REPORT_MAP)
 
@@ -741,8 +784,10 @@ class TestTouchEndpoint(unittest.TestCase):
 
     def test_handle_touch_tap(self):
         req = MagicMock()
+
         async def mock_json():
             return {"action": "tap", "x": 0.25, "y": 0.75}
+
         req.json = mock_json
 
         with patch.object(daemon, "web") as mock_web:
@@ -765,12 +810,16 @@ class TestTouchEndpoint(unittest.TestCase):
         ]:
             self.daemon.hid.reset_mock()
             req = MagicMock()
+
             async def make_json(act=action):
                 return {"action": act, "x": 0.4, "y": 0.6}
+
             req.json = make_json
 
             with patch.object(daemon, "web") as mock_web:
-                mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+                mock_web.json_response = lambda data, status=200: MagicMock(
+                    status=status, data=data
+                )
                 resp = asyncio.run(self.daemon.handle_touch(req))
                 self.assertEqual(resp.status, 200)
                 self.assertEqual(resp.data["action"], action)
@@ -779,8 +828,10 @@ class TestTouchEndpoint(unittest.TestCase):
 
     def test_handle_tap_endpoint(self):
         req = MagicMock()
+
         async def mock_json():
             return {"x": 0.3, "y": 0.7}
+
         req.json = mock_json
 
         with patch.object(daemon, "web") as mock_web:
@@ -797,14 +848,18 @@ class TestTouchEndpoint(unittest.TestCase):
 
     def test_handle_tap_finally_releases_on_error(self):
         req = MagicMock()
+
         async def mock_json():
             return {"x": 0.5, "y": 0.5}
+
         req.json = mock_json
 
         # Simulate sleep raising an exception mid-tap
-        with patch("asyncio.sleep", side_effect=RuntimeError("simulated mid-tap error")):
-            with self.assertRaises(RuntimeError):
-                asyncio.run(self.daemon.handle_tap(req))
+        with (
+            patch("asyncio.sleep", side_effect=RuntimeError("simulated mid-tap error")),
+            self.assertRaises(RuntimeError),
+        ):
+            asyncio.run(self.daemon.handle_tap(req))
 
         # Under default pointer_mode=touch, only touch release called
         self.daemon.hid.send_mouse.assert_not_called()
@@ -814,8 +869,10 @@ class TestTouchEndpoint(unittest.TestCase):
         self.daemon.config.pointer_mode = "mouse"
         # Test tap in mouse mode
         req = MagicMock()
+
         async def mock_tap_json():
             return {"x": 0.3, "y": 0.7}
+
         req.json = mock_tap_json
 
         with patch.object(daemon, "web") as mock_web:
@@ -835,12 +892,16 @@ class TestTouchEndpoint(unittest.TestCase):
         ]:
             self.daemon.hid.reset_mock()
             req = MagicMock()
+
             async def make_json(act=action):
                 return {"action": act, "x": 0.4, "y": 0.6}
+
             req.json = make_json
 
             with patch.object(daemon, "web") as mock_web:
-                mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+                mock_web.json_response = lambda data, status=200: MagicMock(
+                    status=status, data=data
+                )
                 resp = asyncio.run(self.daemon.handle_touch(req))
                 self.assertEqual(resp.status, 200)
                 self.daemon.hid.send_touch.assert_not_called()
@@ -852,8 +913,10 @@ class TestTouchEndpoint(unittest.TestCase):
     def test_handle_touch_tap_duration(self):
         self.daemon.config.tap_duration = 0.012
         req = MagicMock()
+
         async def mock_json():
             return {"action": "tap", "x": 0.5, "y": 0.5}
+
         req.json = mock_json
 
         with patch.object(daemon, "web") as mock_web, patch("asyncio.sleep") as mock_sleep:
@@ -865,8 +928,10 @@ class TestTouchEndpoint(unittest.TestCase):
     def test_handle_tap_duration(self):
         self.daemon.config.tap_duration = 0.018
         req = MagicMock()
+
         async def mock_json():
             return {"x": 0.5, "y": 0.5}
+
         req.json = mock_json
 
         with patch.object(daemon, "web") as mock_web, patch("asyncio.sleep") as mock_sleep:
@@ -877,8 +942,10 @@ class TestTouchEndpoint(unittest.TestCase):
 
     def test_handle_touch_clamping(self):
         req = MagicMock()
+
         async def mock_json():
             return {"action": "tap", "x": -0.5, "y": 1.5}
+
         req.json = mock_json
 
         with patch.object(daemon, "web") as mock_web:
@@ -890,8 +957,10 @@ class TestTouchEndpoint(unittest.TestCase):
 
     def test_handle_touch_unknown_action(self):
         req = MagicMock()
+
         async def mock_json():
             return {"action": "wiggle", "x": 0.5, "y": 0.5}
+
         req.json = mock_json
 
         with patch.object(daemon, "web") as mock_web:
@@ -902,8 +971,10 @@ class TestTouchEndpoint(unittest.TestCase):
     def test_handle_touch_no_hid(self):
         self.daemon.hid = None
         req = MagicMock()
+
         async def mock_json():
             return {"action": "tap", "x": 0.5, "y": 0.5}
+
         req.json = mock_json
 
         with patch.object(daemon, "web") as mock_web:
@@ -923,18 +994,24 @@ class TestBluetoothKeepalive(unittest.TestCase):
         async def mock_create_subprocess_exec(*cmd, **kwargs):
             proc = MagicMock()
             if cmd == ("bluetoothctl", "devices", "Paired"):
+
                 async def mock_communicate():
                     return paired_stdout, b""
+
                 proc.communicate = mock_communicate
                 proc.returncode = 0
             elif len(cmd) == 3 and cmd[:2] == ("bluetoothctl", "info"):
+
                 async def mock_communicate():
                     return info_stdout, b""
+
                 proc.communicate = mock_communicate
                 proc.returncode = 0
             elif len(cmd) == 3 and cmd[:2] == ("bluetoothctl", "connect"):
+
                 async def mock_communicate():
                     return b"Connection successful\n", b""
+
                 proc.communicate = mock_communicate
                 proc.returncode = 0
             return proc
@@ -950,17 +1027,22 @@ class TestBluetoothKeepalive(unittest.TestCase):
         info_stdout = b"Device AA:BB:CC:DD:EE:FF (public)\n\tName: Chromecast\n\tConnected: yes\n\tPaired: yes\n"
 
         connect_called = False
+
         async def mock_create_subprocess_exec(*cmd, **kwargs):
             nonlocal connect_called
             proc = MagicMock()
             if cmd == ("bluetoothctl", "devices", "Paired"):
+
                 async def mock_communicate():
                     return paired_stdout, b""
+
                 proc.communicate = mock_communicate
                 proc.returncode = 0
             elif len(cmd) == 3 and cmd[:2] == ("bluetoothctl", "info"):
+
                 async def mock_communicate():
                     return info_stdout, b""
+
                 proc.communicate = mock_communicate
                 proc.returncode = 0
             elif len(cmd) == 3 and cmd[:2] == ("bluetoothctl", "connect"):
@@ -974,12 +1056,18 @@ class TestBluetoothKeepalive(unittest.TestCase):
 
     def test_handle_bluetooth_reconnect_endpoint(self):
         req = MagicMock()
+
         async def mock_json():
             return {"mac": "AA:BB:CC:DD:EE:FF"}
+
         req.json = mock_json
 
-        with patch.object(self.daemon, "_check_and_reconnect_bluetooth", new_callable=AsyncMock) as mock_recon, \
-             patch.object(daemon, "web") as mock_web:
+        with (
+            patch.object(
+                self.daemon, "_check_and_reconnect_bluetooth", new_callable=AsyncMock
+            ) as mock_recon,
+            patch.object(daemon, "web") as mock_web,
+        ):
             mock_recon.return_value = [{"mac": "AA:BB:CC:DD:EE:FF", "reconnected": True}]
             mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
             resp = asyncio.run(self.daemon.handle_bluetooth_reconnect(req))
@@ -1006,13 +1094,24 @@ class TestBluetoothKeepalive(unittest.TestCase):
 
     def test_cleanup_stale_connections(self):
         cmd_log = []
+
         async def mock_exec(*cmd, **kwargs):
             cmd_log.append(cmd)
             proc = MagicMock(returncode=0)
             if cmd == ("bluetoothctl", "devices", "Paired"):
-                proc.communicate = AsyncMock(return_value=(b"Device AA:BB:CC:DD:EE:FF TV\nDevice 11:22:33:44:55:66 Other\n", b""))
+                proc.communicate = AsyncMock(
+                    return_value=(
+                        b"Device AA:BB:CC:DD:EE:FF TV\nDevice 11:22:33:44:55:66 Other\n",
+                        b"",
+                    )
+                )
             elif cmd[:2] == ("bluetoothctl", "info"):
-                proc.communicate = AsyncMock(return_value=(b"Connected: yes\n" if "AA:BB" in cmd[2] else b"Connected: no\n", b""))
+                proc.communicate = AsyncMock(
+                    return_value=(
+                        b"Connected: yes\n" if "AA:BB" in cmd[2] else b"Connected: no\n",
+                        b"",
+                    )
+                )
             else:
                 proc.communicate = AsyncMock(return_value=(b"", b""))
             return proc
@@ -1024,13 +1123,16 @@ class TestBluetoothKeepalive(unittest.TestCase):
 
     def test_reconnect_force_flag_disconnects_first(self):
         cmd_log = []
+
         async def mock_exec(*cmd, **kwargs):
             cmd_log.append(cmd)
             proc = MagicMock(returncode=0)
             if cmd == ("bluetoothctl", "devices", "Paired"):
                 proc.communicate = AsyncMock(return_value=(b"Device AA:BB:CC:DD:EE:FF TV\n", b""))
             elif cmd[:2] == ("bluetoothctl", "info"):
-                proc.communicate = AsyncMock(return_value=(b"Connected: yes\nServicesResolved: yes\n", b""))
+                proc.communicate = AsyncMock(
+                    return_value=(b"Connected: yes\nServicesResolved: yes\n", b"")
+                )
             else:
                 proc.communicate = AsyncMock(return_value=(b"", b""))
             return proc
@@ -1044,12 +1146,18 @@ class TestBluetoothKeepalive(unittest.TestCase):
 
     def test_handle_bluetooth_reconnect_passes_force(self):
         req = MagicMock()
+
         async def mock_json():
             return {"mac": "AA:BB:CC:DD:EE:FF", "force": True}
+
         req.json = mock_json
 
-        with patch.object(self.daemon, "_check_and_reconnect_bluetooth", new_callable=AsyncMock) as mock_recon, \
-             patch.object(daemon, "web") as mock_web:
+        with (
+            patch.object(
+                self.daemon, "_check_and_reconnect_bluetooth", new_callable=AsyncMock
+            ) as mock_recon,
+            patch.object(daemon, "web") as mock_web,
+        ):
             mock_recon.return_value = [{"mac": "AA:BB:CC:DD:EE:FF", "reconnected": True}]
             mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
             resp = asyncio.run(self.daemon.handle_bluetooth_reconnect(req))
@@ -1060,6 +1168,7 @@ class TestBluetoothKeepalive(unittest.TestCase):
 class TestConfigKeepalive(unittest.TestCase):
     def test_defaults(self):
         from config import RemoteConfig
+
         cfg = RemoteConfig()
         self.assertFalse(cfg.enable_evdev)
         self.assertTrue(cfg.bluetooth_keepalive)
@@ -1068,8 +1177,10 @@ class TestConfigKeepalive(unittest.TestCase):
         self.assertEqual(cfg.advert_max_interval, 50)
 
     def test_advert_interval_defaults_and_overrides(self):
-        from config import RemoteConfig, load_config
         import tempfile
+
+        from config import load_config
+
         content = """
 advert_min_interval: 25
 advert_max_interval: 45
@@ -1085,8 +1196,10 @@ advert_max_interval: 45
             os.remove(temp_path)
 
     def test_load_keepalive_overrides(self):
-        from config import load_config
         import tempfile
+
+        from config import load_config
+
         content = """
 enable_evdev: true
 bluetooth_keepalive: false
@@ -1141,11 +1254,13 @@ class TestBleBulletproofing(unittest.TestCase):
 
     def test_remote_config_heartbeat(self):
         from config import RemoteConfig, load_config
+
         cfg = RemoteConfig()
         self.assertTrue(cfg.bluetooth_heartbeat)
         self.assertEqual(cfg.bluetooth_heartbeat_interval, 30.0)
 
         import tempfile
+
         yaml_content = """
 remote:
   bluetooth_heartbeat: false
@@ -1203,19 +1318,26 @@ remote:
         d.last_known_paired_devices = [{"mac": "AA:BB:CC:DD:EE:FF", "connected": True}]
 
         order = []
+
         async def fake_tap(val, x, y):
             req = MagicMock()
+
             async def mock_json():
                 return {"x": x, "y": y}
+
             req.json = mock_json
+
             def recorded_touch(*args):
                 order.append(val)
+
             d.hid.send_touch = recorded_touch
             await d.handle_tap(req)
 
         async def run_concurrent():
             with patch.object(daemon, "web") as mock_web:
-                mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+                mock_web.json_response = lambda data, status=200: MagicMock(
+                    status=status, data=data
+                )
                 await asyncio.gather(fake_tap("tap1", 0.5, 0.5), fake_tap("tap2", 0.3, 0.7))
 
         asyncio.run(run_concurrent())
@@ -1228,12 +1350,19 @@ remote:
 
         async def run_timeout():
             req = MagicMock()
+
             async def mock_json():
                 return {"action": "tap", "x": 0.5, "y": 0.5}
+
             req.json = mock_json
 
-            with patch.object(daemon, "web") as mock_web, patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
-                mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            with (
+                patch.object(daemon, "web") as mock_web,
+                patch("asyncio.wait_for", side_effect=asyncio.TimeoutError),
+            ):
+                mock_web.json_response = lambda data, status=200: MagicMock(
+                    status=status, data=data
+                )
                 d.touch_lock = MagicMock()
                 resp = await d.handle_touch(req)
                 self.assertEqual(resp.status, 503)
@@ -1248,11 +1377,18 @@ remote:
         d.last_known_paired_devices = [{"mac": "AA:BB:CC:DD:EE:FF", "connected": False}]
 
         req = MagicMock()
+
         async def mock_json():
             return {"mac": "AA:BB:CC:DD:EE:FF", "wake_wifi": True}
+
         req.json = mock_json
 
-        with patch.object(daemon, "web") as mock_web, patch.object(d, "_check_and_reconnect_bluetooth", new_callable=AsyncMock) as mock_reconnect:
+        with (
+            patch.object(daemon, "web") as mock_web,
+            patch.object(
+                d, "_check_and_reconnect_bluetooth", new_callable=AsyncMock
+            ) as mock_reconnect,
+        ):
             mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
             mock_reconnect.return_value = [{"mac": "AA:BB:CC:DD:EE:FF", "reconnected": True}]
             resp = asyncio.run(d.handle_bluetooth_reconnect(req))
@@ -1293,8 +1429,10 @@ class TestVoiceEndpoint(unittest.TestCase):
         req = MagicMock()
         req.headers = {"Content-Type": "audio/wav"}
         req.query = {}
+
         async def mock_read():
             return b""
+
         req.read = mock_read
 
         with patch.object(daemon, "web") as mock_web:
@@ -1308,8 +1446,10 @@ class TestVoiceEndpoint(unittest.TestCase):
         req = MagicMock()
         req.headers = {"Content-Type": "audio/l16"}
         req.query = {}
+
         async def mock_read():
             return raw_pcm
+
         req.read = mock_read
 
         with patch.object(daemon, "web") as mock_web:
@@ -1320,7 +1460,7 @@ class TestVoiceEndpoint(unittest.TestCase):
             # Auto-decimated 2:1 to 8000 Hz
             self.assertEqual(resp.data["bytes_sent"], 8000)
             self.assertEqual(resp.data["sample_rate"], 8000)
-            expected_decimated = b"".join([raw_pcm[i:i+2] for i in range(0, len(raw_pcm), 4)])
+            expected_decimated = b"".join([raw_pcm[i : i + 2] for i in range(0, len(raw_pcm), 4)])
             self.daemon.remote_helper.send_voice.assert_awaited_once_with(expected_decimated)
 
     def test_handle_voice_explicit_16000(self):
@@ -1328,8 +1468,10 @@ class TestVoiceEndpoint(unittest.TestCase):
         req = MagicMock()
         req.headers = {"Content-Type": "audio/l16"}
         req.query = {"resample": "16000"}
+
         async def mock_read():
             return raw_pcm
+
         req.read = mock_read
 
         with patch.object(daemon, "web") as mock_web:
@@ -1341,7 +1483,9 @@ class TestVoiceEndpoint(unittest.TestCase):
             self.daemon.remote_helper.send_voice.assert_awaited_once_with(raw_pcm)
 
     def test_handle_voice_wav_unwrapping(self):
-        import io, wave
+        import io
+        import wave
+
         raw_pcm = b"\x10\x00\x20\x00" * 2000
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
@@ -1354,8 +1498,10 @@ class TestVoiceEndpoint(unittest.TestCase):
         req = MagicMock()
         req.headers = {"Content-Type": "audio/wav"}
         req.query = {}
+
         async def mock_read():
             return wav_bytes
+
         req.read = mock_read
 
         with patch.object(daemon, "web") as mock_web:
@@ -1365,7 +1511,7 @@ class TestVoiceEndpoint(unittest.TestCase):
             # Default auto-decimated to 8000 Hz
             self.assertEqual(resp.data["bytes_sent"], 4000)
             self.assertEqual(resp.data["sample_rate"], 8000)
-            expected_decimated = b"".join([raw_pcm[i:i+2] for i in range(0, len(raw_pcm), 4)])
+            expected_decimated = b"".join([raw_pcm[i : i + 2] for i in range(0, len(raw_pcm), 4)])
             self.daemon.remote_helper.send_voice.assert_awaited_once_with(expected_decimated)
 
     def test_handle_voice_resample_8000(self):
@@ -1373,8 +1519,10 @@ class TestVoiceEndpoint(unittest.TestCase):
         req = MagicMock()
         req.headers = {"Content-Type": "audio/l16"}
         req.query = {"resample": "8000"}
+
         async def mock_read():
             return raw_pcm
+
         req.read = mock_read
 
         with patch.object(daemon, "web") as mock_web:
@@ -1383,7 +1531,7 @@ class TestVoiceEndpoint(unittest.TestCase):
             self.assertEqual(resp.status, 200)
             self.assertEqual(resp.data["sample_rate"], 8000)
             self.assertEqual(resp.data["bytes_sent"], 4000)
-            expected_decimated = b"".join([raw_pcm[i:i+2] for i in range(0, len(raw_pcm), 4)])
+            expected_decimated = b"".join([raw_pcm[i : i + 2] for i in range(0, len(raw_pcm), 4)])
             self.daemon.remote_helper.send_voice.assert_awaited_once_with(expected_decimated)
 
     def test_handle_voice_disconnected_503(self):
@@ -1391,8 +1539,10 @@ class TestVoiceEndpoint(unittest.TestCase):
         req = MagicMock()
         req.headers = {"Content-Type": "audio/l16"}
         req.query = {}
+
         async def mock_read():
             return b"some-pcm-audio"
+
         req.read = mock_read
 
         with patch.object(daemon, "web") as mock_web:
@@ -1406,8 +1556,10 @@ class TestVoiceEndpoint(unittest.TestCase):
         req = MagicMock()
         req.headers = {"Content-Type": "audio/l16"}
         req.query = {}
+
         async def mock_read():
             return b"some-pcm-audio"
+
         req.read = mock_read
 
         with patch.object(daemon, "web") as mock_web:
@@ -1418,4 +1570,3 @@ class TestVoiceEndpoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

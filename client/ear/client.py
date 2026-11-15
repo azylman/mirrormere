@@ -11,7 +11,7 @@ openWakeWord wake phrase.
 """
 
 import base64
-from collections import deque
+import contextlib
 import glob
 import io
 import json
@@ -19,18 +19,18 @@ import logging
 import math
 import os
 import shutil
-import socket
 import signal
+import socket
 import struct
 import subprocess
-import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
 import wave
-from typing import Any, Dict, List, Optional
+from collections import deque
+from typing import Any
 
 try:
     import numpy as np
@@ -39,17 +39,17 @@ except ImportError:
 
 try:
     from .config import VoiceConfig, load_config
-    from .vad import build_detector, SileroDetector, load_silero_vad_model
+    from .vad import SileroDetector, build_detector, load_silero_vad_model
 except (ImportError, ValueError):
     from config import VoiceConfig, load_config
-    from vad import build_detector, SileroDetector, load_silero_vad_model
+    from vad import SileroDetector, build_detector, load_silero_vad_model
 
 logger = logging.getLogger("mirrormere-voice")
 
 HEARTBEAT_FILE = os.environ.get("MIRRORMERE_HEARTBEAT_FILE", "/tmp/ear.heartbeat")
 
 
-def _touch_heartbeat(path: Optional[str] = None) -> None:
+def _touch_heartbeat(path: str | None = None) -> None:
     """Touches local heartbeat timestamp file for container healthcheck."""
     target_path = path or os.environ.get("MIRRORMERE_HEARTBEAT_FILE", HEARTBEAT_FILE)
     try:
@@ -63,9 +63,9 @@ def _touch_heartbeat(path: Optional[str] = None) -> None:
 def post_voice_state(
     mirrormere_url: str,
     state: str,
-    transcript: Optional[str] = None,
-    reply: Optional[str] = None,
-    tts_engine: Optional[str] = None,
+    transcript: str | None = None,
+    reply: str | None = None,
+    tts_engine: str | None = None,
     timeout: float = 1.0,
 ) -> bool:
     """Relays voice interaction lifecycle state to Mirrormere Core for HUD updates."""
@@ -104,7 +104,7 @@ def _heartbeat_url(hub_url: str) -> str:
     if "/api/voice/interact" in hub_url:
         return hub_url.replace("/api/voice/interact", "/api/voice/heartbeat")
     if hub_url.endswith("/interact"):
-        return hub_url[:-len("/interact")] + "/heartbeat"
+        return hub_url[: -len("/interact")] + "/heartbeat"
     return f"{hub_url.rstrip('/')}/api/voice/heartbeat"
 
 
@@ -143,8 +143,6 @@ def post_voice_heartbeat(
         return False
 
 
-
-
 class VoiceDaemon:
     """Manages audio capture, wake word detection, and utterance forwarding."""
 
@@ -152,19 +150,21 @@ class VoiceDaemon:
     # before it's worth POSTing to the classifier.
     AMBIENT_MIN_SPEECH_SECONDS = 0.4
 
-    def __init__(self, cfg: VoiceConfig, model: Optional[Any] = None, barge_detector: Optional[Any] = None) -> None:
+    def __init__(
+        self, cfg: VoiceConfig, model: Any | None = None, barge_detector: Any | None = None
+    ) -> None:
         self.cfg = cfg
         self.running = True
         self.state = "idle"
         self.cooldown_until = 0.0
-        self.utterance_buffer: List[bytes] = []
+        self.utterance_buffer: list[bytes] = []
         self.pre_roll: deque[bytes] = deque(maxlen=12)  # ~1.0s of 80ms frames @ 16kHz
-        self.silence_start: Optional[float] = None
-        self.record_start: Optional[float] = None
+        self.silence_start: float | None = None
+        self.record_start: float | None = None
         self.has_spoken = False
         self.current_wake_word: str = ""
         self.max_seen = {}
-        self.current_worker: Optional[threading.Thread] = None
+        self.current_worker: threading.Thread | None = None
 
         # Telemetry tracking attributes
         self.last_wake_eval_ms: float = 0.0
@@ -174,11 +174,11 @@ class VoiceDaemon:
         self.last_playback_sec: float = 0.0
 
         # Ambient (classifier-gated, no wake word) capture state.
-        self.ambient_buffer: List[bytes] = []
-        self.ambient_record_start: Optional[float] = None
-        self.ambient_silence_start: Optional[float] = None
-        self.ambient_first_voice_at: Optional[float] = None
-        self.ambient_last_voice_at: Optional[float] = None
+        self.ambient_buffer: list[bytes] = []
+        self.ambient_record_start: float | None = None
+        self.ambient_silence_start: float | None = None
+        self.ambient_first_voice_at: float | None = None
+        self.ambient_last_voice_at: float | None = None
         self.ambient_inflight = False
 
         # Busy tracking so ambient mode never sends the daemon's own reply
@@ -256,18 +256,20 @@ class VoiceDaemon:
         # interfere with end-of-speech detection.
         self.playing = False  # True while reply audio is audible
         self._player_lock = threading.Lock()
-        self._player_procs: List[subprocess.Popen] = []
-        self._active_resp: Optional[Any] = None
-        self._turn_abort: Optional[threading.Event] = None
+        self._player_procs: list[subprocess.Popen] = []
+        self._active_resp: Any | None = None
+        self._turn_abort: threading.Event | None = None
         self._barge_speech_ms = 0.0
         self._barge_gap_frames = 0
         self._barge_watching = False
-        self._barge_pending = False   # next utterance was seeded by a barge-in
-        self._turn_barge_in = False   # telemetry for the turn being dispatched
+        self._barge_pending = False  # next utterance was seeded by a barge-in
+        self._turn_barge_in = False  # telemetry for the turn being dispatched
         self.barge_in_count = 0
         self.barge_detector = None
         if cfg.barge_in:
-            self.barge_detector = barge_detector if barge_detector is not None else self._build_barge_detector()
+            self.barge_detector = (
+                barge_detector if barge_detector is not None else self._build_barge_detector()
+            )
 
     def _build_barge_detector(self):
         """Dedicated Silero detector for barge-in; None (feature disabled) if Silero cannot load."""
@@ -333,11 +335,18 @@ class VoiceDaemon:
 
         def _find_model(prefix):
             p = os.path.join(model_dir, f"{prefix}.int8.onnx")
-            if os.path.exists(p): return p
-            c = glob.glob(os.path.join(model_dir, f"{prefix}*.int8.onnx")) + glob.glob(os.path.join(model_dir, f"{prefix}*.onnx"))
+            if os.path.exists(p):
+                return p
+            c = glob.glob(os.path.join(model_dir, f"{prefix}*.int8.onnx")) + glob.glob(
+                os.path.join(model_dir, f"{prefix}*.onnx")
+            )
             return c[0] if c else os.path.join(model_dir, f"{prefix}.onnx")
 
-        encoder, decoder, joiner = _find_model("encoder"), _find_model("decoder"), _find_model("joiner")
+        encoder, decoder, joiner = (
+            _find_model("encoder"),
+            _find_model("decoder"),
+            _find_model("joiner"),
+        )
 
         for p in (tokens, encoder, decoder, joiner):
             if not os.path.exists(p) or not os.access(p, os.R_OK):
@@ -349,11 +358,17 @@ class VoiceDaemon:
         keywords_buf = None
 
         if self.cfg.keywords_file != "/config/keywords.txt":
-            if not os.path.exists(self.cfg.keywords_file) or not os.access(self.cfg.keywords_file, os.R_OK):
-                raise RuntimeError(f"Explicitly configured Sherpa keywords_file '{self.cfg.keywords_file}' not found or unreadable")
+            if not os.path.exists(self.cfg.keywords_file) or not os.access(
+                self.cfg.keywords_file, os.R_OK
+            ):
+                raise RuntimeError(
+                    f"Explicitly configured Sherpa keywords_file '{self.cfg.keywords_file}' not found or unreadable"
+                )
             keywords_file = self.cfg.keywords_file
         else:
-            if os.path.exists(self.cfg.keywords_file) and os.access(self.cfg.keywords_file, os.R_OK):
+            if os.path.exists(self.cfg.keywords_file) and os.access(
+                self.cfg.keywords_file, os.R_OK
+            ):
                 keywords_file = self.cfg.keywords_file
             elif self.cfg.keyword:
                 keywords_buf = self.cfg.keyword
@@ -362,7 +377,9 @@ class VoiceDaemon:
                 if os.path.exists(bundled_default) and os.access(bundled_default, os.R_OK):
                     keywords_file = bundled_default
                 else:
-                    raise RuntimeError(f"No wake keywords configured for Sherpa (no mounted {self.cfg.keywords_file}, no inline keyword, and bundled keywords.txt missing)")
+                    raise RuntimeError(
+                        f"No wake keywords configured for Sherpa (no mounted {self.cfg.keywords_file}, no inline keyword, and bundled keywords.txt missing)"
+                    )
 
         kwargs = {
             "tokens": tokens,
@@ -382,7 +399,9 @@ class VoiceDaemon:
         try:
             spotter = sherpa_onnx.KeywordSpotter(**kwargs)
             stream = spotter.create_stream()
-            logger.info("Sherpa-ONNX KeywordSpotter initialized successfully (threads=%d)", num_threads)
+            logger.info(
+                "Sherpa-ONNX KeywordSpotter initialized successfully (threads=%d)", num_threads
+            )
             return spotter, stream
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Sherpa KeywordSpotter: {e}") from e
@@ -421,7 +440,9 @@ class VoiceDaemon:
                     prep.raw_data_buffer.clear()
                 if hasattr(prep, "feature_buffer") and hasattr(prep.feature_buffer, "fill"):
                     prep.feature_buffer.fill(0)
-                if hasattr(prep, "melspectrogram_buffer") and hasattr(prep.melspectrogram_buffer, "fill"):
+                if hasattr(prep, "melspectrogram_buffer") and hasattr(
+                    prep.melspectrogram_buffer, "fill"
+                ):
                     prep.melspectrogram_buffer.fill(0)
             logger.debug("Flushed openWakeWord feature and prediction buffers.")
         except Exception as e:
@@ -445,7 +466,11 @@ class VoiceDaemon:
         return 20.0 * math.log10(rms / 32768.0) if rms > 0 else -100.0
 
     def wake_mode_uses_wake_word(self) -> bool:
-        return self.cfg.wake_mode_uses_wake_word() and self.model is not None and bool(self.active_models)
+        return (
+            self.cfg.wake_mode_uses_wake_word()
+            and self.model is not None
+            and bool(self.active_models)
+        )
 
     # Backward-compatible alias
     wake_mode_uses_openwakeword = wake_mode_uses_wake_word
@@ -453,7 +478,7 @@ class VoiceDaemon:
     def wake_mode_uses_ambient(self) -> bool:
         return self.cfg.wake_mode in ("ambient", "both")
 
-    def _check_wake_word(self, raw_bytes: bytes) -> Optional[str]:
+    def _check_wake_word(self, raw_bytes: bytes) -> str | None:
         """Runs wake word prediction pass on the configured engine."""
         if not self.active_models or self.model is None:
             return None
@@ -461,7 +486,7 @@ class VoiceDaemon:
             return self._check_sherpa_wake_word(raw_bytes)
         return self._check_oww_wake_word(raw_bytes)
 
-    def _check_sherpa_wake_word(self, raw_bytes: bytes) -> Optional[str]:
+    def _check_sherpa_wake_word(self, raw_bytes: bytes) -> str | None:
         if self.sherpa_stream is None or not raw_bytes:
             return None
         t0 = time.perf_counter()
@@ -470,6 +495,7 @@ class VoiceDaemon:
             float_samples = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         else:
             import array
+
             n_samples = len(raw_bytes) // 2
             samples = struct.unpack(f"<{n_samples}h", raw_bytes)
             float_samples = array.array("f", (s / 32768.0 for s in samples))
@@ -488,8 +514,9 @@ class VoiceDaemon:
                 self.model.decode(self.sherpa_stream)
             decode_steps += 1
 
-
-        result = self.model.get_result(self.sherpa_stream) if hasattr(self.model, "get_result") else None
+        result = (
+            self.model.get_result(self.sherpa_stream) if hasattr(self.model, "get_result") else None
+        )
         self.last_wake_eval_ms = (time.perf_counter() - t0) * 1000.0
 
         detected_keyword = None
@@ -502,8 +529,7 @@ class VoiceDaemon:
 
         return detected_keyword
 
-
-    def _check_oww_wake_word(self, raw_bytes: bytes) -> Optional[str]:
+    def _check_oww_wake_word(self, raw_bytes: bytes) -> str | None:
         """Runs one openWakeWord prediction pass and returns the triggered model name, if any."""
         t0 = time.perf_counter()
         chunk = np.frombuffer(raw_bytes, dtype=np.int16) if np is not None else raw_bytes
@@ -524,9 +550,8 @@ class VoiceDaemon:
 
         return triggered_model
 
-
     @staticmethod
-    def is_google_wake(keyword: Optional[str]) -> bool:
+    def is_google_wake(keyword: str | None) -> bool:
         """Determines if a detected wake word matches Google Assistant wake triggers."""
         if not keyword:
             return False
@@ -576,10 +601,8 @@ class VoiceDaemon:
                 sock.shutdown(socket.SHUT_RDWR)
         except Exception:
             pass
-        try:
+        with contextlib.suppress(Exception):
             resp.close()
-        except Exception:
-            pass
 
     def _do_barge_in(self, now: float, speech_ms: float) -> None:
         """Stops playback and abandons the reply, then starts a new turn seeded with the triggering speech."""
@@ -595,10 +618,8 @@ class VoiceDaemon:
             resp = self._active_resp
             self._active_resp = None
         for p in procs:
-            try:
+            with contextlib.suppress(Exception):
                 p.kill()
-            except Exception:
-                pass
         if resp is not None:
             self._abort_response(resp)
         if self.waveform is not None:
@@ -615,7 +636,7 @@ class VoiceDaemon:
         self.has_spoken = True
         self._barge_pending = True
 
-    def _start_listening(self, now: float, wake_word: Optional[str] = None) -> None:
+    def _start_listening(self, now: float, wake_word: str | None = None) -> None:
         """Transitions into wake-triggered recording, mirroring the wake-word flow."""
         self.state = "listening"
         self.current_wake_word = str(wake_word) if wake_word else ""
@@ -631,9 +652,7 @@ class VoiceDaemon:
         """True when it's safe to start/send an ambient segment: not mid-reply, not in the post-reply cooldown."""
         if self.busy:
             return False
-        if now < self.reply_ended_at + self.cfg.cooldown_seconds:
-            return False
-        return True
+        return now >= self.reply_ended_at + self.cfg.cooldown_seconds
 
     def _wake_ready(self, now: float) -> bool:
         """True when it's safe to evaluate wake words: not mid-reply, not in post-reply or utterance cooldown."""
@@ -641,9 +660,7 @@ class VoiceDaemon:
             return False
         if now < self.reply_ended_at + self.cfg.cooldown_seconds:
             return False
-        if now < self.cooldown_until:
-            return False
-        return True
+        return now >= self.cooldown_until
 
     def _reset_ambient_state(self) -> None:
         self.ambient_buffer = []
@@ -662,16 +679,15 @@ class VoiceDaemon:
         self.ambient_last_voice_at = now
         self.speech_detector.reset()
 
-    def process_frame(self, raw_bytes: bytes) -> Optional[str]:
+    def process_frame(self, raw_bytes: bytes) -> str | None:
         """Processes a single audio frame (1280 samples = 80ms @ 16kHz)."""
         now = time.time()
 
         if self.state == "idle":
             self.pre_roll.append(raw_bytes)
 
-            if self.barge_detector is not None:
-                if self._check_barge_in(raw_bytes, now):
-                    return "barge_in"
+            if self.barge_detector is not None and self._check_barge_in(raw_bytes, now):
+                return "barge_in"
 
             if self.wake_mode_uses_wake_word() and self._wake_ready(now):
                 wake_word = self._check_wake_word(raw_bytes)
@@ -679,15 +695,22 @@ class VoiceDaemon:
                     self._start_listening(now, wake_word=wake_word)
                     return "wake_detected"
 
-            if self.wake_mode_uses_ambient() and self._ambient_ready(now):
-                if self.speech_detector.is_speech(raw_bytes):
-                    self._start_ambient_segment(now)
-                    return "ambient_segment_started"
+            if (
+                self.wake_mode_uses_ambient()
+                and self._ambient_ready(now)
+                and self.speech_detector.is_speech(raw_bytes)
+            ):
+                self._start_ambient_segment(now)
+                return "ambient_segment_started"
 
             return None
 
         elif self.state == "ambient_listening":
-            wake_word = self._check_wake_word(raw_bytes) if (self.wake_mode_uses_wake_word() and self._wake_ready(now)) else None
+            wake_word = (
+                self._check_wake_word(raw_bytes)
+                if (self.wake_mode_uses_wake_word() and self._wake_ready(now))
+                else None
+            )
             if wake_word:
                 # Wake word fired mid-segment ("both" mode): hand off to the
                 # normal wake-triggered flow and discard the ambient buffer
@@ -709,13 +732,18 @@ class VoiceDaemon:
                 if self.ambient_silence_start is None:
                     self.ambient_silence_start = now
 
-            silence_duration = (now - self.ambient_silence_start) if self.ambient_silence_start else 0.0
+            silence_duration = (
+                (now - self.ambient_silence_start) if self.ambient_silence_start else 0.0
+            )
             silence_limit = self.cfg.silence_ms / 1000.0
 
             if silence_duration >= silence_limit or elapsed >= self.cfg.max_record_seconds:
                 frames = self.ambient_buffer
                 voiced_span = 0.0
-                if self.ambient_first_voice_at is not None and self.ambient_last_voice_at is not None:
+                if (
+                    self.ambient_first_voice_at is not None
+                    and self.ambient_last_voice_at is not None
+                ):
                     voiced_span = self.ambient_last_voice_at - self.ambient_first_voice_at
 
                 self._reset_ambient_state()
@@ -742,7 +770,9 @@ class VoiceDaemon:
 
             # False wake abort: If wake fired but zero speech occurred within 3.0s, abort back to idle
             if not self.has_spoken and elapsed >= 3.0:
-                logger.info("False wake trigger (no speech detected after 3.0s). Aborting to idle...")
+                logger.info(
+                    "False wake trigger (no speech detected after 3.0s). Aborting to idle..."
+                )
                 self.reset_wake_engine()
                 self.cooldown_until = now + 1.0
                 self.state = "idle"
@@ -755,8 +785,12 @@ class VoiceDaemon:
             silence_duration = (now - self.silence_start) if self.silence_start else 0.0
             silence_limit = self.cfg.silence_ms / 1000.0
 
-            if (self.has_spoken and silence_duration >= silence_limit) or elapsed >= self.cfg.max_record_seconds:
-                pre_roll_sec = (len(self.pre_roll) * self.cfg.chunk_samples) / float(self.cfg.sample_rate)
+            if (
+                self.has_spoken and silence_duration >= silence_limit
+            ) or elapsed >= self.cfg.max_record_seconds:
+                pre_roll_sec = (len(self.pre_roll) * self.cfg.chunk_samples) / float(
+                    self.cfg.sample_rate
+                )
                 elapsed = (now - (self.record_start or now)) + pre_roll_sec
                 silence_duration = (now - self.silence_start) if self.silence_start else 0.0
                 self.last_speech_duration_ms = max(0.0, elapsed - silence_duration) * 1000.0
@@ -794,7 +828,7 @@ class VoiceDaemon:
 
         return None
 
-    def save_utterance(self, buffer: List[bytes]) -> bool:
+    def save_utterance(self, buffer: list[bytes]) -> bool:
         """Saves accumulated PCM audio frames into a 16 kHz mono WAV file."""
         try:
             os.makedirs(os.path.dirname(os.path.abspath(self.cfg.save_path)), exist_ok=True)
@@ -810,7 +844,7 @@ class VoiceDaemon:
             logger.error("Failed to save utterance WAV: %s", e)
             return False
 
-    def _frames_to_wav_bytes(self, frames: List[bytes]) -> bytes:
+    def _frames_to_wav_bytes(self, frames: list[bytes]) -> bytes:
         """Encodes accumulated PCM audio frames into an in-memory 16 kHz mono WAV."""
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
@@ -820,22 +854,22 @@ class VoiceDaemon:
             wf.writeframes(b"".join(frames))
         return buf.getvalue()
 
-    def _classify_ambient(self, wav_bytes: bytes) -> Optional[Dict[str, Any]]:
+    def _classify_ambient(self, wav_bytes: bytes) -> dict[str, Any] | None:
         """POSTs a captured segment to ambient_url and returns the decoded JSON response, or None on failure."""
         if not self.cfg.ambient_url:
             return None
 
         boundary = f"----AmbientBoundary{uuid.uuid4().hex}"
         body = bytearray()
-        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f"--{boundary}\r\n".encode())
         body.extend(b'Content-Disposition: form-data; name="node_id"\r\n\r\n')
-        body.extend(f"{self.cfg.node_id}\r\n".encode("utf-8"))
-        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f"{self.cfg.node_id}\r\n".encode())
+        body.extend(f"--{boundary}\r\n".encode())
         body.extend(b'Content-Disposition: form-data; name="audio"; filename="segment.wav"\r\n')
         body.extend(b"Content-Type: audio/wav\r\n\r\n")
         body.extend(wav_bytes)
         body.extend(b"\r\n")
-        body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+        body.extend(f"--{boundary}--\r\n".encode())
 
         req = urllib.request.Request(
             self.cfg.ambient_url,
@@ -851,14 +885,16 @@ class VoiceDaemon:
                 raw = resp.read()
             data = json.loads(raw.decode("utf-8"))
             if not isinstance(data, dict):
-                logger.debug("Ambient classifier returned non-object JSON from %s", self.cfg.ambient_url)
+                logger.debug(
+                    "Ambient classifier returned non-object JSON from %s", self.cfg.ambient_url
+                )
                 return None
             return data
         except Exception as e:
             logger.debug("Ambient classification request to %s failed: %s", self.cfg.ambient_url, e)
             return None
 
-    def _dispatch_ambient_classification(self, frames: List[bytes]) -> None:
+    def _dispatch_ambient_classification(self, frames: list[bytes]) -> None:
         """Sends a captured segment to the ambient classifier on a background worker thread.
 
         At most one classification request is in flight at a time; segments
@@ -871,7 +907,7 @@ class VoiceDaemon:
         t = threading.Thread(target=self._ambient_worker, args=(list(frames),), daemon=True)
         t.start()
 
-    def _ambient_worker(self, frames: List[bytes]) -> None:
+    def _ambient_worker(self, frames: list[bytes]) -> None:
         """Classifies a segment and, on engage, runs the same hub interaction a wake word would."""
         try:
             self.last_wake_eval_ms = 0.0
@@ -925,7 +961,9 @@ class VoiceDaemon:
         finally:
             self.ambient_inflight = False
 
-    def _start_pcm_stream(self, sample_rate: int = 24000, channels: int = 1) -> Optional[subprocess.Popen]:
+    def _start_pcm_stream(
+        self, sample_rate: int = 24000, channels: int = 1
+    ) -> subprocess.Popen | None:
         """Spawns a persistent player subprocess for streaming raw PCM audio."""
         player = shutil.which("pw-play") or shutil.which("aplay") or shutil.which("mpv")
         if not player:
@@ -941,11 +979,26 @@ class VoiceDaemon:
             buffer_us = 800000
         if "pw-play" in player:
             cmd = [
-                player, "--format=s16", f"--rate={sample_rate}", f"--channels={channels}",
-                f"--latency={max(1, buffer_us // 1000)}ms", "-",
+                player,
+                "--format=s16",
+                f"--rate={sample_rate}",
+                f"--channels={channels}",
+                f"--latency={max(1, buffer_us // 1000)}ms",
+                "-",
             ]
         elif "aplay" in player:
-            cmd = [player, "-f", "S16_LE", "-r", str(sample_rate), "-c", str(channels), "-B", str(buffer_us), "-"]
+            cmd = [
+                player,
+                "-f",
+                "S16_LE",
+                "-r",
+                str(sample_rate),
+                "-c",
+                str(channels),
+                "-B",
+                str(buffer_us),
+                "-",
+            ]
         else:
             cmd = [
                 player,
@@ -968,7 +1021,9 @@ class VoiceDaemon:
         try:
             player = shutil.which("pw-play") or shutil.which("aplay") or shutil.which("mpv")
             if player:
-                p = subprocess.Popen([player, "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                p = subprocess.Popen(
+                    [player, "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
+                )
                 with self._player_lock:
                     self._player_procs.append(p)
                     self.playing = True
@@ -1061,10 +1116,8 @@ class VoiceDaemon:
             if pcm_proc:
                 try:
                     if pcm_proc.stdin:
-                        try:
+                        with contextlib.suppress(Exception):
                             pcm_proc.stdin.close()
-                        except Exception:
-                            pass
                     pcm_proc.wait(timeout=5.0)
                 except subprocess.TimeoutExpired:
                     logger.warning("PCM player timed out waiting for drain; killing process")
@@ -1094,9 +1147,9 @@ class VoiceDaemon:
             body = bytearray()
 
             def add_field(name: str, val: str) -> None:
-                body.extend(f"--{boundary}\r\n".encode("utf-8"))
-                body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
-                body.extend(f"{val}\r\n".encode("utf-8"))
+                body.extend(f"--{boundary}\r\n".encode())
+                body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+                body.extend(f"{val}\r\n".encode())
 
             add_field("node_id", self.cfg.node_id)
             add_field("wake_eval_ms", f"{self.last_wake_eval_ms:.1f}")
@@ -1106,12 +1159,14 @@ class VoiceDaemon:
                 add_field("barge_in", "true")
                 self._turn_barge_in = False
 
-            body.extend(f"--{boundary}\r\n".encode("utf-8"))
-            body.extend(b'Content-Disposition: form-data; name="audio"; filename="utterance.wav"\r\n')
+            body.extend(f"--{boundary}\r\n".encode())
+            body.extend(
+                b'Content-Disposition: form-data; name="audio"; filename="utterance.wav"\r\n'
+            )
             body.extend(b"Content-Type: audio/wav\r\n\r\n")
             body.extend(wav_data)
             body.extend(b"\r\n")
-            body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+            body.extend(f"--{boundary}--\r\n".encode())
 
             req = urllib.request.Request(
                 self.cfg.hub_url,
@@ -1147,7 +1202,9 @@ class VoiceDaemon:
                             logger.info("Received transcript: '%s'", transcript)
                         elif current_event == "thinking":
                             elapsed = payload.get("elapsed_seconds")
-                            logger.debug("Received thinking keep-alive from Hub (elapsed: %ss)", elapsed)
+                            logger.debug(
+                                "Received thinking keep-alive from Hub (elapsed: %ss)", elapsed
+                            )
                         elif current_event == "status":
                             status_text = payload.get("status", "")
                             logger.info("Agent tool status: %s", status_text)
@@ -1186,7 +1243,9 @@ class VoiceDaemon:
                                             if self.waveform is not None and channels == 1:
                                                 self.waveform.push_pcm(audio_bytes, sample_rate)
                                         except Exception as e:
-                                            logger.warning("Failed to write audio to PCM stream: %s", e)
+                                            logger.warning(
+                                                "Failed to write audio to PCM stream: %s", e
+                                            )
                                 if is_final:
                                     close_pcm_proc()
                             else:
@@ -1197,7 +1256,7 @@ class VoiceDaemon:
                                         turn_playback_start = time.perf_counter()
                                     t0 = time.perf_counter()
                                     self.play_audio(audio_bytes)
-                                    turn_playback_total += (time.perf_counter() - t0)
+                                    turn_playback_total += time.perf_counter() - t0
                                     self.last_playback_sec = turn_playback_total
                         elif current_event == "done":
                             logger.info("Hub interaction complete.")
@@ -1232,7 +1291,7 @@ class VoiceDaemon:
                 if self.state == "idle":
                     post_voice_state(self.cfg.mirrormere_url, "idle", timeout=2.0)
 
-    def _send_heartbeat(self, hub_url: str, payload: Dict[str, Any]) -> None:
+    def _send_heartbeat(self, hub_url: str, payload: dict[str, Any]) -> None:
         """Dispatches heartbeat payload to Voice Hub asynchronously."""
         try:
             post_voice_heartbeat(
@@ -1293,10 +1352,10 @@ class VoiceDaemon:
                             exit_code = proc.poll()
                             stderr_out = ""
                             if proc.stderr:
-                                try:
-                                    stderr_out = proc.stderr.read().decode("utf-8", errors="replace")
-                                except Exception:
-                                    pass
+                                with contextlib.suppress(Exception):
+                                    stderr_out = proc.stderr.read().decode(
+                                        "utf-8", errors="replace"
+                                    )
                             logger.warning(
                                 "arecord exited with code %s (stderr: '%s'). Retrying in %.1fs...",
                                 exit_code,
@@ -1308,11 +1367,16 @@ class VoiceDaemon:
 
                         cmd = [
                             "arecord",
-                            "-D", self.cfg.audio_device,
-                            "-f", "S16_LE",
-                            "-r", str(self.cfg.sample_rate),
-                            "-c", "1",
-                            "-t", "raw",
+                            "-D",
+                            self.cfg.audio_device,
+                            "-f",
+                            "S16_LE",
+                            "-r",
+                            str(self.cfg.sample_rate),
+                            "-c",
+                            "1",
+                            "-t",
+                            "raw",
                         ]
                         proc = subprocess.Popen(
                             cmd,
@@ -1335,8 +1399,14 @@ class VoiceDaemon:
                     db = self.compute_db(raw)
                     scores_str = ", ".join(f"{k}={v:.3f}" for k, v in self.max_seen.items())
                     vad_mean_ms, vad_count = self.speech_detector.drain_inference_stats()
-                    vad_str = f" | VAD infer: {vad_mean_ms:.2f}ms avg (n={vad_count})" if vad_count else ""
-                    logger.info("[Heartbeat] RMS: %.1f dBFS | Max scores: %s%s", db, scores_str, vad_str)
+                    vad_str = (
+                        f" | VAD infer: {vad_mean_ms:.2f}ms avg (n={vad_count})"
+                        if vad_count
+                        else ""
+                    )
+                    logger.info(
+                        "[Heartbeat] RMS: %.1f dBFS | Max scores: %s%s", db, scores_str, vad_str
+                    )
                     self.max_seen = {m: 0.0 for m in self.active_models}
                     last_heartbeat = time.time()
                     _touch_heartbeat()
@@ -1362,10 +1432,8 @@ class VoiceDaemon:
                     proc.terminate()
                     proc.wait(timeout=2.0)
                 except Exception:
-                    try:
+                    with contextlib.suppress(Exception):
                         proc.kill()
-                    except Exception:
-                        pass
             post_voice_state(self.cfg.mirrormere_url, "idle")
             logger.info("Voice daemon shutdown complete.")
 

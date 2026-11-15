@@ -3,8 +3,6 @@
 Pure Python module with zero external dependencies for fast, hermetic unit testing.
 """
 
-from typing import Optional
-
 
 def clamp(val: float, min_val: float, max_val: float) -> float:
     """Clamp value between min_val and max_val."""
@@ -42,7 +40,7 @@ def to_hid_digitizer(
     y_ratio: float,
     max_logical_x: int = 32767,
     max_logical_y: int = 18431,
-    max_logical: Optional[int] = None,
+    max_logical: int | None = None,
 ) -> tuple[int, int]:
     """Convert normalized ratios into 16-bit unsigned HID digitizer coordinates.
 

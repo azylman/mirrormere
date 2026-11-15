@@ -5,9 +5,10 @@ test_client.py - Integrated unit tests for EinkClient orchestration
 import time
 import unittest
 
-from client import EinkClient
 from config import EinkConfig
 from fetcher import FetchResult
+
+from client import EinkClient
 
 
 class MockSSEStream:

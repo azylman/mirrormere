@@ -4,18 +4,19 @@ from unittest.mock import MagicMock, patch
 
 try:
     import numpy  # noqa: F401
+
     HAS_NUMPY = True
 except ImportError:
     HAS_NUMPY = False
 
-from client.ear.vad import (
-    EnergyDetector,
-    SileroDetector,
-    SherpaSileroDetector,
-    build_detector,
-    SILERO_WINDOW_SAMPLES,
-)
 from client.ear.client import VoiceDaemon
+from client.ear.vad import (
+    SILERO_WINDOW_SAMPLES,
+    EnergyDetector,
+    SherpaSileroDetector,
+    SileroDetector,
+    build_detector,
+)
 
 
 def _frame(amplitude: int, n_samples: int = 1280) -> bytes:
@@ -183,7 +184,9 @@ class TestBuildDetector(unittest.TestCase):
     @patch("client.ear.vad.load_silero_vad_model")
     def test_silero_mode_builds_silero_detector(self, mock_load):
         mock_load.return_value = MockSileroVAD()
-        det = build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db, wake_engine="openwakeword")
+        det = build_detector(
+            "silero", 0.5, -31.0, VoiceDaemon.compute_db, wake_engine="openwakeword"
+        )
         self.assertIsInstance(det, SileroDetector)
 
     @patch("client.ear.vad.load_silero_vad_model", side_effect=RuntimeError("onnx load failed"))
@@ -195,10 +198,14 @@ class TestBuildDetector(unittest.TestCase):
     @patch("client.ear.vad.load_sherpa_silero_vad")
     def test_sherpa_silero_mode_builds_sherpa_detector(self, mock_load):
         mock_load.return_value = MockSherpaVAD()
-        det = build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db, wake_engine="sherpa-onnx")
+        det = build_detector(
+            "silero", 0.5, -31.0, VoiceDaemon.compute_db, wake_engine="sherpa-onnx"
+        )
         self.assertIsInstance(det, SherpaSileroDetector)
 
-    @patch("client.ear.vad.load_sherpa_silero_vad", side_effect=RuntimeError("missing silero_vad.onnx"))
+    @patch(
+        "client.ear.vad.load_sherpa_silero_vad", side_effect=RuntimeError("missing silero_vad.onnx")
+    )
     def test_sherpa_silero_load_failure_raises_runtime_error(self, mock_load):
         with self.assertRaises(RuntimeError) as ctx:
             build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db, wake_engine="sherpa-onnx")
@@ -206,8 +213,9 @@ class TestBuildDetector(unittest.TestCase):
 
     def test_load_sherpa_silero_vad_invokes_correct_classes(self):
         import os
-        import tempfile
         import shutil
+        import tempfile
+
         tmp_dir = tempfile.mkdtemp()
         try:
             model_path = os.path.join(tmp_dir, "silero_vad.onnx")
@@ -223,14 +231,16 @@ class TestBuildDetector(unittest.TestCase):
 
             with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
                 from client.ear.vad import load_sherpa_silero_vad
+
                 det = load_sherpa_silero_vad(tmp_dir, 0.5)
                 self.assertEqual(det, mock_detector)
                 mock_sherpa.VadModelConfig.assert_called_once()
                 self.assertEqual(mock_sherpa.VadModelConfig.call_args[1]["sample_rate"], 16000)
-                mock_sherpa.VoiceActivityDetector.assert_called_once_with(mock_vad_config, buffer_size_in_seconds=5)
+                mock_sherpa.VoiceActivityDetector.assert_called_once_with(
+                    mock_vad_config, buffer_size_in_seconds=5
+                )
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
-
 
 
 class TestVoiceDaemonAmbientNoSpeechNotSent(unittest.TestCase):
@@ -238,11 +248,11 @@ class TestVoiceDaemonAmbientNoSpeechNotSent(unittest.TestCase):
 
     @patch("client.ear.client.urllib.request.urlopen")
     def test_ambient_segment_with_no_silero_speech_is_dropped(self, mock_urlopen):
-        import tempfile
         import os
-        import time
-        from client.ear.config import VoiceConfig
+        import tempfile
         from unittest.mock import MagicMock as MM
+
+        from client.ear.config import VoiceConfig
 
         mock_resp = MM()
         mock_resp.status = 200

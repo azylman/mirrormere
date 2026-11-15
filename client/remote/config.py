@@ -1,8 +1,8 @@
 """Configuration loader and schema for Mirrormere Remote sidecar."""
 
+import contextlib
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 try:
     import yaml
@@ -26,7 +26,7 @@ class RemoteConfig:
     tap_duration: float = 0.015
     bluetooth_heartbeat: bool = True
     bluetooth_heartbeat_interval: float = 30.0
-    managed_devices: List[str] = field(default_factory=list)
+    managed_devices: list[str] = field(default_factory=list)
     pointer_mode: str = "touch"
 
     def __post_init__(self):
@@ -95,7 +95,7 @@ def _parse_simple_yaml(text: str) -> dict:
     return data
 
 
-def load_config(path: Optional[str] = None) -> RemoteConfig:
+def load_config(path: str | None = None) -> RemoteConfig:
     """Loads configuration strictly from a scoped YAML file.
 
     In accordance with system invariants, NO environment variable fallback
@@ -112,7 +112,7 @@ def load_config(path: Optional[str] = None) -> RemoteConfig:
 
     if target_path and os.path.exists(target_path):
         try:
-            with open(target_path, "r", encoding="utf-8") as f:
+            with open(target_path, encoding="utf-8") as f:
                 content = f.read()
                 if yaml is not None:
                     raw = yaml.safe_load(content) or {}
@@ -154,25 +154,19 @@ def load_config(path: Optional[str] = None) -> RemoteConfig:
                     else:
                         cfg.bluetooth_keepalive = str(v).lower() in ("true", "1", "yes")
                 if "bluetooth_keepalive_interval" in data:
-                    try:
-                        cfg.bluetooth_keepalive_interval = float(data["bluetooth_keepalive_interval"])
-                    except ValueError:
-                        pass
+                    with contextlib.suppress(ValueError):
+                        cfg.bluetooth_keepalive_interval = float(
+                            data["bluetooth_keepalive_interval"]
+                        )
                 if "advert_min_interval" in data:
-                    try:
+                    with contextlib.suppress(ValueError):
                         cfg.advert_min_interval = int(data["advert_min_interval"])
-                    except ValueError:
-                        pass
                 if "advert_max_interval" in data:
-                    try:
+                    with contextlib.suppress(ValueError):
                         cfg.advert_max_interval = int(data["advert_max_interval"])
-                    except ValueError:
-                        pass
                 if "tap_duration" in data:
-                    try:
+                    with contextlib.suppress(ValueError):
                         cfg.tap_duration = float(data["tap_duration"])
-                    except ValueError:
-                        pass
                 if "bluetooth_heartbeat" in data:
                     v = data["bluetooth_heartbeat"]
                     if isinstance(v, bool):
@@ -180,16 +174,20 @@ def load_config(path: Optional[str] = None) -> RemoteConfig:
                     else:
                         cfg.bluetooth_heartbeat = str(v).lower() in ("true", "1", "yes")
                 if "bluetooth_heartbeat_interval" in data:
-                    try:
-                        cfg.bluetooth_heartbeat_interval = float(data["bluetooth_heartbeat_interval"])
-                    except ValueError:
-                        pass
+                    with contextlib.suppress(ValueError):
+                        cfg.bluetooth_heartbeat_interval = float(
+                            data["bluetooth_heartbeat_interval"]
+                        )
                 if "managed_devices" in data:
                     v = data["managed_devices"]
                     if isinstance(v, list):
                         cfg.managed_devices = [str(m).strip().upper() for m in v if str(m).strip()]
                     elif isinstance(v, str):
-                        cfg.managed_devices = [m.strip().strip("'\"").upper() for m in v.strip("[]").split(",") if m.strip()]
+                        cfg.managed_devices = [
+                            m.strip().strip("'\"").upper()
+                            for m in v.strip("[]").split(",")
+                            if m.strip()
+                        ]
                 if "pointer_mode" in data:
                     cfg.pointer_mode = str(data["pointer_mode"]).strip().lower()
         except Exception as e:

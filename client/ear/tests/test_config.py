@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+
 from client.ear.config import VoiceConfig, _parse_simple_yaml, _validate, load_config
 
 
@@ -227,17 +228,15 @@ voice:
             os.path.dirname(__file__), "..", "..", "..", "deploy", "examples", "compose.client.yaml"
         )
         self.assertTrue(os.path.exists(compose_path), f"compose file missing: {compose_path}")
-        with open(compose_path, "r", encoding="utf-8") as f:
+        with open(compose_path, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("/opt/mirrormere/voice/models:/opt/mirrormere/voice/models:ro", content)
         self.assertNotIn("ear-models", content)
 
     def test_ear_requirements_include_sherpa_token_tools(self):
-        req_path = os.path.join(
-            os.path.dirname(__file__), "..", "requirements.txt"
-        )
+        req_path = os.path.join(os.path.dirname(__file__), "..", "requirements.txt")
         self.assertTrue(os.path.exists(req_path), f"requirements file missing: {req_path}")
-        with open(req_path, "r", encoding="utf-8") as f:
+        with open(req_path, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("click", content)
         self.assertIn("sentencepiece", content)
@@ -378,11 +377,12 @@ class TestBargeInConfigValidation(unittest.TestCase):
         self.assertIs(parsed["ear"]["other"], False)
 
     def test_parse_simple_yaml_numbers_unchanged(self):
-        parsed = _parse_simple_yaml("ear:\n  barge_in_min_speech_ms: 450\n  barge_in_vad_threshold: 0.8\n")
+        parsed = _parse_simple_yaml(
+            "ear:\n  barge_in_min_speech_ms: 450\n  barge_in_vad_threshold: 0.8\n"
+        )
         self.assertEqual(parsed["ear"]["barge_in_min_speech_ms"], 450)
         self.assertEqual(parsed["ear"]["barge_in_vad_threshold"], 0.8)
 
 
 if __name__ == "__main__":
     unittest.main()
-

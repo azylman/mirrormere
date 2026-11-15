@@ -3,6 +3,7 @@ epd7in5_V2.py - Waveshare 7.5inch e-Paper V2 driver reference module
 """
 
 import logging
+
 from . import epdconfig
 
 logger = logging.getLogger("mirrormere.eink.driver.epd7in5_V2")
@@ -67,7 +68,11 @@ class EPD:
         """Pushes a partial window (Xstart, Ystart)-(Xend, Yend) to the panel."""
         logger.debug(
             "EPD partial display write (%d bytes, window %d,%d-%d,%d)",
-            len(Image) if Image else 0, Xstart, Ystart, Xend, Yend,
+            len(Image) if Image else 0,
+            Xstart,
+            Ystart,
+            Xend,
+            Yend,
         )
 
     def Clear(self):

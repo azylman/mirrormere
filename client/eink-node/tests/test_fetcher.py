@@ -6,7 +6,7 @@ import io
 import unittest
 import urllib.error
 
-from fetcher import ETagFetcher, FetchResult
+from fetcher import ETagFetcher
 
 
 class MockHTTPResponse:
@@ -41,7 +41,9 @@ class TestETagFetcher(unittest.TestCase):
                 headers={"ETag": '"etag-abc-123"'},
             )
 
-        fetcher = ETagFetcher(image_url="http://localhost:8081/eink.png", timeout=5.0, opener=mock_opener)
+        fetcher = ETagFetcher(
+            image_url="http://localhost:8081/eink.png", timeout=5.0, opener=mock_opener
+        )
         res = fetcher.fetch()
 
         self.assertEqual(res.status_code, 200)
@@ -71,7 +73,9 @@ class TestETagFetcher(unittest.TestCase):
                 fp=io.BytesIO(b""),
             )
 
-        fetcher = ETagFetcher(image_url="http://localhost:8081/eink.png", timeout=5.0, opener=mock_opener)
+        fetcher = ETagFetcher(
+            image_url="http://localhost:8081/eink.png", timeout=5.0, opener=mock_opener
+        )
         res = fetcher.fetch(last_etag='"cached-etag-456"')
 
         self.assertEqual(res.status_code, 304)
@@ -87,6 +91,7 @@ class TestETagFetcher(unittest.TestCase):
         """
         Validates graceful handling of upstream HTTP 503 error without crashing.
         """
+
         def mock_opener(req, timeout=None):
             raise urllib.error.HTTPError(
                 url=req.full_url,
@@ -108,6 +113,7 @@ class TestETagFetcher(unittest.TestCase):
         """
         Validates handling of socket timeout or connection failure.
         """
+
         def mock_opener(req, timeout=None):
             raise TimeoutError("connection timed out")
 

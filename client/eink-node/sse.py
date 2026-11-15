@@ -5,8 +5,8 @@ sse.py - Server-Sent Events (SSE) listener and trigger router for Mirrormere E-I
 import logging
 import threading
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 logger = logging.getLogger("mirrormere.eink.sse")
 
@@ -155,7 +155,9 @@ class SSEListener:
                         # Empty line signals the dispatch of an accumulated message block
                         if not stripped:
                             if line_buffer:
-                                has_content, event_type, event_id, event_data = parse_sse_block(line_buffer)
+                                has_content, event_type, event_id, event_data = parse_sse_block(
+                                    line_buffer
+                                )
                                 line_buffer = []
 
                                 if not has_content:
@@ -165,7 +167,9 @@ class SSEListener:
                                     self.last_event_id = event_id
 
                                 if event_type in DIRTY_EVENTS:
-                                    logger.debug("Received dirty event: %s (id: %s)", event_type, event_id)
+                                    logger.debug(
+                                        "Received dirty event: %s (id: %s)", event_type, event_id
+                                    )
                                     if self.on_dirty:
                                         try:
                                             self.on_dirty(event_type, event_id, event_data)

@@ -8,11 +8,11 @@ import time
 
 try:
     from .config import EinkConfig
-    from .image import stamp_offline_dot, save_last_image, load_last_image
+    from .image import load_last_image, save_last_image, stamp_offline_dot
     from .panel import PanelManager
 except ImportError:
     from config import EinkConfig
-    from image import stamp_offline_dot, save_last_image, load_last_image
+    from image import load_last_image, save_last_image, stamp_offline_dot
     from panel import PanelManager
 
 logger = logging.getLogger("mirrormere.eink.offline")
@@ -63,7 +63,9 @@ class OfflineGuard:
             was_offline = self.is_offline or self.offline_dot_stamped
 
             if was_offline:
-                logger.info("Node recovered from offline state; scheduling full refresh to remove dot")
+                logger.info(
+                    "Node recovered from offline state; scheduling full refresh to remove dot"
+                )
                 self.is_offline = False
                 self.offline_dot_stamped = False
                 return True

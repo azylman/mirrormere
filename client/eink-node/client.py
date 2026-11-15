@@ -11,23 +11,23 @@ import time
 from typing import Any
 
 try:
-    from .config import EinkConfig, load_config
-    from .coalesce import CoalescingEngine, RefreshResult
-    from .fetcher import ETagFetcher
-    from .sse import SSEListener
-    from .panel import BasePanel, FakePanel, WaveshareEPDPanel, PanelManager
-    from .offline import OfflineGuard
     from .buttons import ButtonHandler
+    from .coalesce import CoalescingEngine
+    from .config import EinkConfig, load_config
+    from .fetcher import ETagFetcher
     from .health import HealthServer
+    from .offline import OfflineGuard
+    from .panel import BasePanel, FakePanel, PanelManager, WaveshareEPDPanel
+    from .sse import SSEListener
 except ImportError:
-    from config import EinkConfig, load_config
-    from coalesce import CoalescingEngine, RefreshResult
-    from fetcher import ETagFetcher
-    from sse import SSEListener
-    from panel import BasePanel, FakePanel, WaveshareEPDPanel, PanelManager
-    from offline import OfflineGuard
     from buttons import ButtonHandler
+    from coalesce import CoalescingEngine
+    from config import EinkConfig, load_config
+    from fetcher import ETagFetcher
     from health import HealthServer
+    from offline import OfflineGuard
+    from panel import BasePanel, FakePanel, PanelManager, WaveshareEPDPanel
+    from sse import SSEListener
 
 logger = logging.getLogger("mirrormere.eink.client")
 
@@ -178,7 +178,9 @@ class EinkClient:
         return {
             "status": "ok",
             "connection_state": conn_state,
-            "last_write_time": self.panel_manager.last_write_time if self.panel_manager.last_write_time >= 0 else None,
+            "last_write_time": self.panel_manager.last_write_time
+            if self.panel_manager.last_write_time >= 0
+            else None,
             "last_write_type": self.panel_manager.last_write_type,
             "last_etag": self.engine.last_etag,
             "partials_since_full_refresh": self.panel_manager.consecutive_partials,
@@ -247,6 +249,7 @@ class EinkClient:
 
     def run(self) -> None:
         """Starts the client and runs until interrupted by SIGINT / SIGTERM."""
+
         def handle_signal(sig, frame):
             logger.info("Caught signal %d; shutting down", sig)
             self.stop()
