@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e
+set -eu
 
 CHROMIUM_BIN="${CHROMIUM_BIN:-/usr/bin/chromium}"
 if [ ! -x "$CHROMIUM_BIN" ] && [ -x "/usr/bin/chromium-browser" ]; then
@@ -7,7 +7,7 @@ if [ ! -x "$CHROMIUM_BIN" ] && [ -x "/usr/bin/chromium-browser" ]; then
 fi
 
 START_LOCAL_CHROMIUM=true
-if [ -n "$CDP_URL" ]; then
+if [ -n "${CDP_URL:-}" ]; then
     case "$CDP_URL" in
         *127.0.0.1*|*localhost*)
             START_LOCAL_CHROMIUM=true
@@ -32,7 +32,6 @@ if [ "$START_LOCAL_CHROMIUM" = true ]; then
         --hide-scrollbars \
         --window-size=800,480 \
         --user-data-dir=/tmp/chromium-eink &
-    CHROME_PID=$!
 
     echo "[eink-renderer] waiting for chromium CDP on 127.0.0.1:9222..."
     count=0

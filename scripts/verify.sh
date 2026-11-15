@@ -59,7 +59,7 @@ check_utf8_bom() {
                 [ -f "$sf" ] && echo "$sf"
             done)
             [ -z "$existing_staged" ] && return 0
-            # shellcheck disable=SC2086
+            # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
             BOM_FILES=$(git grep -I -l "^$BOM_HEX" -- $existing_staged 2>/dev/null || true)
         else
             BOM_FILES=$(git grep -I -l "^$BOM_HEX" 2>/dev/null || true)
@@ -85,17 +85,17 @@ check_gofmt() {
             if [ -z "$existing_go" ]; then
                 return 0
             fi
-            # shellcheck disable=SC2086
+            # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
             unformatted=$(gofmt -l $existing_go 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
             if [ -n "$unformatted" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then
                 echo "   [gofmt] Auto-formatting staged Go files..."
-                # shellcheck disable=SC2086
+                # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
                 gofmt -w $unformatted
                 if [ "${STAGED_FROM_INDEX:-0}" -eq 1 ] && has_cmd git; then
-                    # shellcheck disable=SC2086
+                    # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
                     git add $unformatted
                 fi
-                # shellcheck disable=SC2086
+                # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
                 unformatted=$(gofmt -l $existing_go 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
             fi
         else
@@ -224,7 +224,7 @@ run_code_health() {
                     fi
                 done
                 if [ -n "$staged_clean" ]; then
-                    # shellcheck disable=SC2086
+                    # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
                     "$CODE_HEALTH_BIN" -fix -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json" $staged_clean >/dev/null 2>&1 || true
                     for f in $staged_clean; do
                         if [ -f "$f" ] && ! git diff --quiet -- "$f" 2>/dev/null; then
@@ -241,7 +241,7 @@ run_code_health() {
                     find "$d" -maxdepth 1 -name '*.go' -type f
                 fi
             done | sort -u)
-            # shellcheck disable=SC2086
+            # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
             "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json" $code_health_targets
         else
             "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json"
@@ -271,7 +271,7 @@ run_golangci_lint() {
                 [ -d "$d" ] && echo "./$d"
             done | sort -u)
             if [ -n "$lint_pkgs" ]; then
-                # shellcheck disable=SC2086
+                # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
                 "$lint_bin" run --allow-parallel-runners $lint_pkgs
             fi
         else
@@ -328,7 +328,7 @@ run_deadcode() {
     tmp_prod=$(mktemp)
     tmp_test=$(mktemp)
 
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
     "$DEADCODE_BIN" $main_pkgs > "$tmp_prod" 2>&1 &
     pid_prod=$!
 
@@ -430,7 +430,7 @@ run_ui_checks() {
             [ -f "$REPO_ROOT/web/ui/$uf" ] && echo "$uf"
         done)
         if [ -n "$staged_ui_lint" ]; then
-            # shellcheck disable=SC2086
+            # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
             (cd "$REPO_ROOT/web/ui" && npx --no-install eslint --max-warnings=0 $staged_ui_lint)
         fi
     else
@@ -466,7 +466,7 @@ run_js_lint() {
     fi
     if [ -n "$staged_js_lint" ]; then
         echo "   [js lint] Linting staged vanilla JS with ESLint..."
-        # shellcheck disable=SC2086
+        # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
         (cd "$REPO_ROOT" && npx --no-install eslint --max-warnings=0 --no-warn-ignored $staged_js_lint)
     else
         echo "   [js lint] Linting all vanilla JS with ESLint..."
@@ -509,6 +509,44 @@ run_ruff() {
     else
         echo "   [ruff] Linting and format-checking all Python..."
         (cd "$REPO_ROOT" && ruff check && ruff format --check)
+    fi
+}
+
+# 11. Shell lint: shellcheck at style severity over every tracked *.sh file.
+# The shellcheck version is pinned in requirements-lint.txt (shellcheck-py wraps
+# the upstream binary; its first three version fields are the shellcheck
+# release). --staged checks only staged shell scripts (whole scope when
+# .shellcheckrc, the pin or this script is staged); --full and CI always check
+# the whole scope.
+SHELLCHECK_CONFIG='^(\.shellcheckrc|requirements-lint\.txt|scripts/verify\.sh)$'
+
+run_shellcheck() {
+    staged_sh=""
+    if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E "$SHELLCHECK_CONFIG"; then
+        staged_sh=$(echo "$STAGED_FILES" | grep -E '\.sh$' | while read -r sf; do
+            if [ -f "$REPO_ROOT/$sf" ]; then echo "$sf"; fi
+        done)
+        if [ -z "$staged_sh" ]; then
+            return 0
+        fi
+    fi
+    if ! has_cmd shellcheck; then
+        echo "🚨 [Mirrormere Verify] Error: shellcheck not found in PATH; install the pinned version with: pip install -r requirements-lint.txt" >&2
+        exit 1
+    fi
+    shellcheck_pinned=$(sed -n 's/^shellcheck-py==\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' "$REPO_ROOT/requirements-lint.txt")
+    shellcheck_installed=$(shellcheck --version | sed -n 's/^version: //p')
+    if [ -z "$shellcheck_pinned" ] || [ "$shellcheck_installed" != "$shellcheck_pinned" ]; then
+        echo "🚨 [Mirrormere Verify] Error: shellcheck ${shellcheck_installed:-unknown} does not match the pin in requirements-lint.txt (${shellcheck_pinned:-missing}); run: pip install -r requirements-lint.txt" >&2
+        exit 1
+    fi
+    if [ -n "$staged_sh" ]; then
+        echo "   [shellcheck] Linting staged shell scripts..."
+        # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of the staged file list
+        (cd "$REPO_ROOT" && shellcheck --severity=style $staged_sh)
+    else
+        echo "   [shellcheck] Linting all tracked shell scripts..."
+        (cd "$REPO_ROOT" && git ls-files -z '*.sh' | xargs -0 shellcheck --severity=style)
     fi
 }
 
@@ -583,7 +621,7 @@ if [ "$MODE" = "staged" ]; then
             done
             if [ -n "$needed_pkgs" ]; then
                 echo "   [go test] Validating HTML templates and widget manifests..."
-                # shellcheck disable=SC2086
+                # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
                 go test $needed_pkgs
             fi
         fi
@@ -595,6 +633,7 @@ if [ "$MODE" = "staged" ]; then
 
     run_js_lint
     run_ruff
+    run_shellcheck
 
     if echo "$STAGED_FILES" | grep -q -E '^sidecars/eink-renderer/' && has_cmd node; then
         echo "   [node test] Running eink-renderer sidecar test suite..."
@@ -659,6 +698,7 @@ run_deadcode
 run_coverage_gate
 run_js_lint
 run_ruff
+run_shellcheck
 ui_changed=""
 if [ -n "$(git status --porcelain -- web/ui 2>/dev/null)" ]; then
     ui_changed=1

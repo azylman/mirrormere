@@ -200,7 +200,7 @@ COMBINED_PROF="${PROF_DIR}/coverage.out"
 TEST_LOG="${PROF_DIR}/test.log"
 
 # Run all targeted packages in a single parallel Go invocation
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
 if $GO_TEST_PREFIX env CGO_ENABLED="$cgo_val" go test ${race_flag:+"$race_flag"} -timeout "${MIRRORMERE_TEST_TIMEOUT:-180s}" -coverprofile="$COMBINED_PROF" $PACKAGES >"$TEST_LOG" 2>&1; then
     for pkg in $PACKAGES; do
         pkg_rel=$(echo "$pkg" | sed "s|^github.com/azylman/mirrormere/\?||")
