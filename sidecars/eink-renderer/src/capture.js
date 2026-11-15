@@ -329,7 +329,6 @@ class CaptureService {
             offLoad();
           }
           if (!loadFired) {
-            // eslint-disable-next-line no-console
             console.warn(
               `[eink-renderer] captureViaCDP: Page.loadEventFired not seen within `
               + `${this.loadEventTimeoutMs}ms - polling for settle anyway`
@@ -353,7 +352,6 @@ class CaptureService {
               maxWaitMs: this.settleTimeoutMs,
               sleep: this.sleep,
               onTimeout: (elapsedMs) => {
-                // eslint-disable-next-line no-console
                 console.warn(
                   `[eink-renderer] captureViaCDP: display did not settle within ${elapsedMs}ms `
                   + `(cap ${this.settleTimeoutMs}ms) - capturing anyway`

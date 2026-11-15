@@ -30,10 +30,10 @@ describe('Header Next Up Event Pill', () => {
       getElementById(id) {
         return getEl(id);
       },
-      querySelectorAll(selector) {
+      querySelectorAll() {
         return [];
       },
-      querySelector(selector) {
+      querySelector() {
         return null;
       },
       body: {

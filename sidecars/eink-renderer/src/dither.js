@@ -280,7 +280,7 @@ function decodePNG(pngBuffer) {
       const up = prevRow[x];
       const upLeft = x >= filterBpp ? prevRow[x - filterBpp] : 0;
 
-      let unfiltered = byteVal;
+      let unfiltered;
       switch (filterType) {
         case 0: // None
           unfiltered = byteVal;

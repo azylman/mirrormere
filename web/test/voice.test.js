@@ -12,7 +12,6 @@ const { AudioManager } = require('../static/js/audio.js');
 function createMockElement(tagName = 'div', id = '', className = '') {
   const listeners = new Map();
   const children = [];
-  const attributes = new Map();
 
   const element = {
     tagName: tagName.toUpperCase(),

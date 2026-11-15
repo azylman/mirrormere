@@ -107,7 +107,7 @@ function createMockElement(tagName = 'div', id = '') {
       // no-op mock
     },
 
-    canPlayType(type) {
+    canPlayType() {
       return '';
     },
   };

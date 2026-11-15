@@ -439,6 +439,41 @@ run_ui_checks() {
     (cd "$REPO_ROOT/web/ui" && npm run deadcode && npm run typecheck && npm run test:coverage && npm run build)
 }
 
+# 9. Vanilla JS lint (root eslint.config.js): web/static/js, web/test,
+# sidecars/eink-renderer and scripts/perf. web/ui is linted by its own config.
+# --staged lints only staged files in scope (whole scope when the root lint
+# config or this script is staged); --full and CI always lint the whole scope.
+JS_LINT_FILES='^(web/static/js|web/test|sidecars/eink-renderer|scripts/perf)/.*\.(js|mjs|cjs)$'
+JS_LINT_CONFIG='^(eslint\.config\.js|package(-lock)?\.json|scripts/verify\.sh)$'
+
+run_js_lint() {
+    staged_js_lint=""
+    if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E "$JS_LINT_CONFIG"; then
+        staged_js_lint=$(echo "$STAGED_FILES" | grep -E "$JS_LINT_FILES" | while read -r jf; do
+            if [ -f "$REPO_ROOT/$jf" ]; then echo "$jf"; fi
+        done)
+        if [ -z "$staged_js_lint" ]; then
+            return 0
+        fi
+    fi
+    if ! has_cmd npm; then
+        echo "🚨 [Mirrormere Verify] Error: npm not found in PATH; vanilla JS lint cannot run." >&2
+        exit 1
+    fi
+    if [ ! -d "$REPO_ROOT/node_modules" ]; then
+        echo "   [js lint] Installing root lint dependencies..."
+        (cd "$REPO_ROOT" && npm ci --no-audit --no-fund)
+    fi
+    if [ -n "$staged_js_lint" ]; then
+        echo "   [js lint] Linting staged vanilla JS with ESLint..."
+        # shellcheck disable=SC2086
+        (cd "$REPO_ROOT" && npx --no-install eslint --max-warnings=0 --no-warn-ignored $staged_js_lint)
+    else
+        echo "   [js lint] Linting all vanilla JS with ESLint..."
+        (cd "$REPO_ROOT" && npm run lint)
+    fi
+}
+
 if [ "$MODE" = "staged" ]; then
     if has_cmd git; then
         git rm --cached -q PR_DESCRIPTION.md .pr_description.md 2>/dev/null || true
@@ -520,6 +555,8 @@ if [ "$MODE" = "staged" ]; then
         run_ui_checks
     fi
 
+    run_js_lint
+
     if echo "$STAGED_FILES" | grep -q -E '^sidecars/eink-renderer/' && has_cmd node; then
         echo "   [node test] Running eink-renderer sidecar test suite..."
         TZ=UTC node --test sidecars/eink-renderer/test/*.test.js
@@ -581,6 +618,7 @@ run_code_health
 run_golangci_lint
 run_deadcode
 run_coverage_gate
+run_js_lint
 ui_changed=""
 if [ -n "$(git status --porcelain -- web/ui 2>/dev/null)" ]; then
     ui_changed=1

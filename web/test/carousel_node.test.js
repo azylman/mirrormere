@@ -380,7 +380,7 @@ test('carousel screen indicator and touch navigation', async (t) => {
   });
 
   await t.test('selectScreen dispatches POST to api/screen/select with payload', async () => {
-    const { c, indicator } = setupCarouselWithIndicator();
+    const { c } = setupCarouselWithIndicator();
     await c.handleScreenRotate({ widgets: [], current_screen: 0, total_screens: 2 });
 
     const origFetch = globalThis.fetch;
@@ -653,7 +653,7 @@ test('carousel unmounts outgoing widget controllers before DOM replacement', asy
     const existingNode = {
       dataset: { widgetId: 'w-target' },
       style: { gridColumn: '1 / span 2', gridRow: '1 / span 1' },
-      replaceWith(newNode) {
+      replaceWith() {
         if (unmounted.length === 0) {
           replacedBeforeUnmount = true;
         }

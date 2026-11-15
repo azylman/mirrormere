@@ -71,7 +71,7 @@ class AudioManager {
         try {
           const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
           handleEvent(data);
-        } catch (e) {
+        } catch {
           // ignore malformed event payload
         }
       });
@@ -126,7 +126,7 @@ class AudioManager {
     this.mediaElements.add(element);
     try {
       element.volume = this.getEffectiveVolume();
-    } catch (err) {
+    } catch {
       // ignore
     }
   }
@@ -153,7 +153,7 @@ class AudioManager {
       }
       try {
         element.volume = effective;
-      } catch (err) {
+      } catch {
         // ignore destroyed or detached elements
       }
     }

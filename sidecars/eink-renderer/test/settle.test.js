@@ -83,7 +83,6 @@ describe('pollForSettle', () => {
 
   it('gives up at maxWaitMs, calls onTimeout with the elapsed time, and still applies the paint delay without throwing', async () => {
     const sleepLog = [];
-    let evaluateCalls = 0;
     let timeoutElapsed = null;
 
     // Simulate elapsed time advancing by pollIntervalMs on each sleep so
@@ -102,7 +101,6 @@ describe('pollForSettle', () => {
     try {
       const settled = await pollForSettle(
         async () => {
-          evaluateCalls++;
           return false; // never settles
         },
         {
@@ -215,7 +213,6 @@ describe('SETTLE_PREDICATE_EXPRESSION', () => {
    * carousel.js actually produces).
    */
   function evaluateAgainst(fakeDocument) {
-    // eslint-disable-next-line no-new-func
     // Wrap in parens directly after `return` (no line break before the
     // expression) to avoid an ASI pitfall: `return\n(...)` gets a semicolon
     // inserted after `return`, silently making the function return undefined.
