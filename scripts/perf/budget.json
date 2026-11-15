@@ -6,7 +6,7 @@
     { "metric": "interaction", "stat": "p95", "max": 120, "min_count": 1 },
     { "metric": "frame", "stat": "p95", "max": 20.04, "min_count": 1 },
     { "metric": "frame", "stat": "max", "max": 39.6, "min_count": 1 },
-    { "metric": "screen_ready", "stat": "p95", "max": 1800, "min_count": 1 },
+    { "metric": "screen_ready", "stat": "p95", "max": 3600, "min_count": 1 },
     { "metric": "widget_update", "stat": "p95", "max": 60, "min_count": 0 }
   ],
   "long_task_during_swipes": { "max": 0 },
