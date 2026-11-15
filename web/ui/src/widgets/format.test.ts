@@ -508,7 +508,7 @@ describe('format helpers', () => {
       expect(relDate(refTime, null)).toBe('');
       expect(relDate(refTime, undefined)).toBe('');
       expect(relDate(refTime, '')).toBe('');
-      expect(relDate(null as unknown as Date, '2026-10-27')).toBe('2026-10-27');
+      expect(relDate(null, '2026-10-27')).toBe('2026-10-27');
       expect(relDate(new Date(NaN), '2026-10-27')).toBe('2026-10-27');
       expect(relDate(refTime, 'invalid-date')).toBe('invalid-date');
 
@@ -599,7 +599,7 @@ describe('format helpers', () => {
       const pts = [{ time: '2026-09-26T14:00', temp: 70, icon: 'weather-sunny' }];
       const layout = computeHourlyGraphLayout(pts, undefined, { baseY: 150 });
       expect(layout?.baseY).toBe(150);
-      expect(formatDate('2006-01-02', true as unknown as string)).toBe('true');
+      expect(formatDate('2006-01-02', true)).toBe('true');
     });
 
     it('covers calendarFeedDayGroups edge cases: past events, missing fields', () => {

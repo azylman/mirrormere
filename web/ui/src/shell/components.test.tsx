@@ -80,7 +80,7 @@ describe('WeatherPill component', () => {
           description: 'Custom Breezy Fog',
           icon: 'weather-fog',
           condition: 'Foggy',
-        } as unknown as { temperature: number; description: string; icon: string; condition: string },
+        },
       },
     });
     const { container, rerender } = render(<WeatherPill />);

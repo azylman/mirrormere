@@ -15,7 +15,7 @@ export interface UseVolumeSliderOptions {
 export interface UseVolumeSliderReturn {
   volume: number;
   isMuted: boolean;
-  handleSliderInput: (e: React.FormEvent<HTMLInputElement> | React.ChangeEvent<HTMLInputElement> | { target: { value: string } }) => void;
+  handleSliderInput: (e: React.InputEvent<HTMLInputElement> | React.ChangeEvent<HTMLInputElement> | { target: { value: string } }) => void;
   handleSliderCommit: (e?: React.SyntheticEvent | Event) => void;
   handleMuteToggle: (e?: React.SyntheticEvent | Event) => void;
 }
@@ -33,7 +33,7 @@ export function useVolumeSlider({
   onUserActivity,
   audioState,
 }: UseVolumeSliderOptions): UseVolumeSliderReturn {
-  const [localVolume, setLocalVolume] = useState<number>(storeVolume ?? 75);
+  const [localVolume, setLocalVolume] = useState<number>(storeVolume);
   const isDraggingRef = useRef(false);
   const throttleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingVolumeRef = useRef<number | null>(null);
@@ -44,7 +44,7 @@ export function useVolumeSlider({
   // Sync incoming store updates when not dragging and not in commit cooldown
   useEffect(() => {
     const now = Date.now();
-    if (!isDraggingRef.current && now >= commitCooldownUntilRef.current && storeVolume !== undefined) {
+    if (!isDraggingRef.current && now >= commitCooldownUntilRef.current) {
       setLocalVolume(storeVolume);
     }
   }, [audioState, storeVolume]);
@@ -60,12 +60,12 @@ export function useVolumeSlider({
   }, []);
 
   const handleSliderInput = (
-    e: React.FormEvent<HTMLInputElement> | React.ChangeEvent<HTMLInputElement> | { target: { value: string } },
+    e: React.InputEvent<HTMLInputElement> | React.ChangeEvent<HTMLInputElement> | { target: { value: string } },
   ) => {
     onUserActivity?.();
     isDraggingRef.current = true;
 
-    const targetVal = 'value' in e.target ? String(e.target.value) : '';
+    const targetVal = 'value' in e.target ? e.target.value : '';
     const val = parseInt(targetVal, 10);
     if (Number.isNaN(val)) return;
 
@@ -104,7 +104,7 @@ export function useVolumeSlider({
     const currentTarget = (e && 'currentTarget' in e ? e.currentTarget : null) as HTMLInputElement | null;
     const elVal = target?.value ?? currentTarget?.value;
     if (elVal !== undefined && elVal !== '') {
-      const parsed = parseInt(String(elVal), 10);
+      const parsed = parseInt(elVal, 10);
       if (!Number.isNaN(parsed)) {
         val = parsed;
       }

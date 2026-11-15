@@ -26,9 +26,9 @@ export function CalendarFeedWidget({
   id,
 }: WidgetComponentProps) {
   const entry = useWidget(id);
-  const config = entry?.meta?.config as Record<string, unknown> | undefined;
-  const data = entry?.data;
-  const isError = entry?.state === 'error';
+  const config = entry.meta?.config;
+  const data = entry.data;
+  const isError = entry.state === 'error';
 
   const storeTimezone = useDisplayStore((s) => s.header.timezone);
   const configTimezone =
@@ -50,7 +50,7 @@ export function CalendarFeedWidget({
       (Array.isArray((data as Record<string, unknown>).events) ||
         Array.isArray((data as Record<string, unknown>).Events)));
 
-  const entryTimestamp = entry?.timestamp;
+  const entryTimestamp = entry.timestamp;
   const groups = (() => {
     if (!isHydrated) return [];
     let refTime: Date | undefined;
@@ -95,11 +95,11 @@ export function CalendarFeedWidget({
       id: evId,
       title: ev.title,
       all_day: isAllDay,
-      location: ev.location ? String(ev.location) : undefined,
+      location: ev.location ? ev.location : undefined,
       description:
         typeof ev.description === 'string' ? ev.description : undefined,
-      color: ev.color ? String(ev.color) : undefined,
-      owners: calName ? [String(calName)] : undefined,
+      color: ev.color ? ev.color : undefined,
+      owners: calName ? [calName] : undefined,
       start: !isAllDay
         ? formatTime('3:04 PM', ev.start, tz) || ev.start
         : undefined,
@@ -209,11 +209,10 @@ export function CalendarFeedWidget({
                       role="button"
                       tabIndex={0}
                       data-event-id={ev.id ?? ''}
-                      data-event-start={ev.start ?? ''}
+                      data-event-start={ev.start}
                       data-event-end={ev.end ?? ''}
                       data-event-allday={isAllDay ? 'true' : 'false'}
-                      onClick={() =>
-                        handleActivateEvent(ev, evId, isAllDay, group.date)
+                      onClick={() => { handleActivateEvent(ev, evId, isAllDay, group.date); }
                       }
                       onKeyDown={(e) => {
                         if (
@@ -251,7 +250,7 @@ export function CalendarFeedWidget({
                         {ev.location && (
                           <div
                             className="event-location-row"
-                            title={String(ev.location)}
+                            title={ev.location}
                           >
                             <svg
                               width="12"
@@ -268,7 +267,7 @@ export function CalendarFeedWidget({
                               <circle cx="12" cy="9.5" r="3.2" fill="#ffffff" />
                             </svg>
                             <span className="event-location-text">
-                              {String(ev.location)}
+                              {ev.location}
                             </span>
                           </div>
                         )}
@@ -286,7 +285,7 @@ export function CalendarFeedWidget({
                               : undefined
                           }
                         >
-                          {String(calName)}
+                          {calName}
                         </span>
                       )}
                       <span

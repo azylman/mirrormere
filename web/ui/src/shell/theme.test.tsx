@@ -58,8 +58,8 @@ describe('theme pure helpers', () => {
       },
     };
     expect(getStoredThemeOverride(throwingStorage)).toBeNull();
-    expect(() => setStoredThemeOverride('day', throwingStorage)).not.toThrow();
-    expect(() => setStoredThemeOverride(null, throwingStorage)).not.toThrow();
+    expect(() => { setStoredThemeOverride('day', throwingStorage); }).not.toThrow();
+    expect(() => { setStoredThemeOverride(null, throwingStorage); }).not.toThrow();
   });
 
   it('resolveEffectiveTheme prioritizes override over serverTheme', () => {

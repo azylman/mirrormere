@@ -44,7 +44,7 @@ function matchesFamilyMember(ev: FamilyEvent, safeMembers: FamilyMember[]): bool
   const title = ev.title || '';
   const evMember = (ev as unknown as { member?: string }).member?.toLowerCase();
   for (const m of safeMembers) {
-    const name = m?.name?.trim();
+    const name = m.name.trim();
     if (!name) continue;
     const lower = name.toLowerCase();
     if (new RegExp(`\\b${escapeRegExp(name)}('s)?\\b`, 'i').test(title)) return true;
@@ -59,12 +59,11 @@ export function detectDaySpecialStatus(dayEvents?: FamilyEvent[], members?: Fami
   if (!dayEvents || dayEvents.length === 0) return null;
   const safeMembers = members || [];
   for (const ev of dayEvents) {
-    if (ev?.title && /\b(birthday|bday|b-day)\b/i.test(ev.title) && !isWorkExcluded(ev) && matchesFamilyMember(ev, safeMembers)) {
+    if (ev.title && /\b(birthday|bday|b-day)\b/i.test(ev.title) && !isWorkExcluded(ev) && matchesFamilyMember(ev, safeMembers)) {
       return 'birthday';
     }
   }
   for (const ev of dayEvents) {
-    if (!ev) continue;
     if (HOLIDAY_RE.test(ev.title || '')) return 'holiday';
     const cal = (ev as unknown as { calendar?: string; calendar_name?: string }).calendar ||
       (ev as unknown as { calendar?: string; calendar_name?: string }).calendar_name || '';
@@ -152,7 +151,7 @@ export interface CalendarAllDayBandProps {
 export function CalendarAllDayBand({
   activeView, weekVM, daysToRender, visibleAllDayEvents, currentDateISO, marginLeft, onOpenModal, eventFlair = true,
 }: CalendarAllDayBandProps) {
-  if (visibleAllDayEvents && visibleAllDayEvents.length > 0) {
+  if (visibleAllDayEvents.length > 0) {
     return (
       <div
         className="cf-allday-band cf-week-allday-grid"
@@ -164,9 +163,9 @@ export function CalendarAllDayBand({
         {visibleAllDayEvents.map((ev) => {
           const mealieImg = resolveMealieEventImage(ev);
           const isMealie = Boolean(mealieImg);
-          const flair = eventFlair !== false && !isMealie ? detectEventFlair(ev.title) : null;
+          const flair = eventFlair && !isMealie ? detectEventFlair(ev.title) : null;
           const spanStartDay = weekVM?.days?.[ev.start_col - 1]?.date || ev.start || daysToRender[0]?.date || currentDateISO;
-          const spanEndDay = ev.col_span > 1 ? weekVM?.days?.[Math.min((weekVM?.days?.length ?? 1) - 1, ev.start_col + ev.col_span - 2)]?.date || ev.end : ev.end;
+          const spanEndDay = ev.col_span > 1 ? weekVM?.days?.[Math.min(weekVM.days.length - 1, ev.start_col + ev.col_span - 2)]?.date || ev.end : ev.end;
           return (
             <div
               key={ev.id}
@@ -175,8 +174,8 @@ export function CalendarAllDayBand({
               data-event-id={ev.id} data-event-title={ev.title} data-event-allday="true"
               data-event-location={ev.location} data-event-description={ev.description}
               data-mealie-decorated={isMealie ? 'true' : undefined} data-flair={flair || undefined}
-              onClick={() => onOpenModal(ev, spanStartDay, spanEndDay)}
-              onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, spanStartDay, spanEndDay))}
+              onClick={() => { onOpenModal(ev, spanStartDay, spanEndDay); }}
+              onKeyDown={(e) => { handleBandEventKeyDown(e, () => { onOpenModal(ev, spanStartDay, spanEndDay); }); }}
               style={{
                 gridColumn: activeView === 'day' ? '1 / span 1' : `${ev.start_col} / span ${ev.col_span}`,
                 fontSize: '0.68rem', fontWeight: 700, borderRadius: '6px', padding: '3px 6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -207,7 +206,7 @@ export function CalendarAllDayBand({
             {day.all_day?.map((ev) => {
               const mealieImg = resolveMealieEventImage(ev);
               const isMealie = Boolean(mealieImg);
-              const flair = eventFlair !== false && !isMealie ? detectEventFlair(ev.title) : null;
+              const flair = eventFlair && !isMealie ? detectEventFlair(ev.title) : null;
               return (
                 <div
                   key={ev.id} className="cf-edge-band cf-allday-band-local"
@@ -222,8 +221,8 @@ export function CalendarAllDayBand({
                     data-event-id={ev.id} data-event-title={ev.title} data-event-allday="true"
                     data-event-location={ev.location} data-event-description={ev.description}
                     data-mealie-decorated={isMealie ? 'true' : undefined} data-flair={flair || undefined}
-                    onClick={() => onOpenModal(ev, day.date)}
-                    onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, day.date))}
+                    onClick={() => { onOpenModal(ev, day.date); }}
+                    onKeyDown={(e) => { handleBandEventKeyDown(e, () => { onOpenModal(ev, day.date); }); }}
                     style={{
                       fontSize: '0.65rem', fontWeight: 700, borderRadius: '4px', padding: '2px 4px', color: ev.text_color, backgroundColor: ev.color,
                       cursor: 'pointer', touchAction: 'manipulation', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -298,8 +297,8 @@ export function CalendarEdgeEventsBand({ edge, daysToRender, inferredTimeFormat,
                     aria-label={`${prefixLabel}: ${ev.title} at ${startDisplay}`}
                     data-event-id={ev.id} data-event-title={ev.title} data-event-start={ev.start}
                     data-event-end={ev.end} data-event-location={ev.location} data-event-description={ev.description}
-                    onClick={() => onOpenModal(ev, day.date)}
-                    onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, day.date))}
+                    onClick={() => { onOpenModal(ev, day.date); }}
+                    onKeyDown={(e) => { handleBandEventKeyDown(e, () => { onOpenModal(ev, day.date); }); }}
                     style={{
                       fontSize: '0.60rem', fontWeight: 700, padding: '2px 4px', borderRadius: '4px', backgroundColor: ev.color, color: ev.text_color,
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', touchAction: 'manipulation',
@@ -360,7 +359,7 @@ export interface CalendarDayEventCardProps {
 export function CalendarDayEventCard({ ev, dayDate, inferredTimeFormat, onOpenModal, eventFlair = true }: CalendarDayEventCardProps) {
   const startDisplay = formatEventTime(ev.start, inferredTimeFormat) || ev.start;
   const endDisplay = formatEventTime(ev.end, inferredTimeFormat) || ev.end;
-  const flair = eventFlair !== false ? detectEventFlair(ev.title) : null;
+  const flair = eventFlair ? detectEventFlair(ev.title) : null;
   return (
     <div
       className={`cf-day-event cf-event-clickable${flair ? ` cf-flair-${flair}` : ''}${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
@@ -369,8 +368,8 @@ export function CalendarDayEventCard({ ev, dayDate, inferredTimeFormat, onOpenMo
       aria-label={`${ev.title}, ${startDisplay} to ${endDisplay}${ev.location ? `, ${ev.location}` : ''}`}
       data-event-id={ev.id} data-event-title={ev.title} data-event-start={ev.start}
       data-event-end={ev.end} data-event-location={ev.location} data-event-description={ev.description} data-flair={flair || undefined}
-      onClick={() => onOpenModal(ev, dayDate)}
-      onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, dayDate))}
+      onClick={() => { onOpenModal(ev, dayDate); }}
+      onKeyDown={(e) => { handleBandEventKeyDown(e, () => { onOpenModal(ev, dayDate); }); }}
       style={{
         position: 'absolute', top: `${ev.top_pct}%`, height: `${ev.height_pct}%`,
         left: `calc(${ev.left_pct}% + 1px)`, width: `calc(${ev.width_pct}% - 2px)`,
@@ -425,8 +424,8 @@ function CalendarDayMealBar({ meals, dayDate, onOpenModal }: CalendarDayMealBarP
             data-event-id={ev.id} data-event-title={ev.title} data-event-allday="true"
             data-event-location={ev.location} data-event-image-url={imgSrc}
             data-event-description={ev.description} data-mealie-decorated="true"
-            onClick={() => onOpenModal(ev, dayDate)}
-            onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, dayDate))}
+            onClick={() => { onOpenModal(ev, dayDate); }}
+            onKeyDown={(e) => { handleBandEventKeyDown(e, () => { onOpenModal(ev, dayDate); }); }}
             style={{
               position: 'relative', minHeight: '128px', height: '128px', borderRadius: '12px',
               overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',

@@ -17,7 +17,7 @@ export function getTimezoneOffsetString(date: Date, tz?: string): string {
     const parts = formatter.formatToParts(date);
     for (const p of parts) {
       if (p.type === 'timeZoneName' && p.value) {
-        const offset = p.value.match(/GMT([+-]\d{2}:\d{2})/)?.[1];
+        const offset = (/GMT([+-]\d{2}:\d{2})/.exec(p.value))?.[1];
         if (offset) return offset;
         if (p.value === 'GMT' || p.value === 'UTC') return 'Z';
       }

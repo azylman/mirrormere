@@ -36,6 +36,7 @@ export function ScreenIndicator({
     // Keeps pointerup on the pill when the finger is released outside it. Not on a dot: capture
     // retargets the click to the pill, so the dot's onClick would never fire (Chromium).
     if (!(event.target instanceof Element && event.target.closest('button'))) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- jsdom does not implement pointer capture
       event.currentTarget.setPointerCapture?.(event.pointerId);
     }
   };
@@ -73,7 +74,7 @@ export function ScreenIndicator({
           aria-label={`Screen ${i + 1} of ${total}`}
           aria-current={i === active ? 'step' : 'false'}
           data-screen-index={i}
-          onClick={() => onSelect(i)}
+          onClick={() => { onSelect(i); }}
         />
       ))}
       {visible && onTogglePin ? (

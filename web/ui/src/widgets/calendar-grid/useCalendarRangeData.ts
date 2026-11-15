@@ -90,7 +90,7 @@ export function useCalendarRangeData({
   }, [entryTimestamp]);
 
   const resolveCachedRange = () => {
-    const vm = currentViewModel as Record<string, unknown> | undefined;
+    const vm = currentViewModel;
     let start = cachedRangeStartConfig || (vm?.cached_range_start as string) || dataCachedRangeStart;
     let end = cachedRangeEndConfig || (vm?.cached_range_end as string) || dataCachedRangeEnd;
 
@@ -119,8 +119,8 @@ export function useCalendarRangeData({
     const cacheKey = `${dateStr}:${viewStr}`;
 
     const cache = lruCacheRef.current;
-    if (cache.has(cacheKey)) {
-      const cachedVM = cache.get(cacheKey)!;
+    const cachedVM = cache.get(cacheKey);
+    if (cachedVM) {
       cache.delete(cacheKey);
       cache.set(cacheKey, cachedVM);
       setCurrentViewModel(cachedVM as Record<string, unknown>);
@@ -137,7 +137,7 @@ export function useCalendarRangeData({
 
     try {
       let url = `api/widgets/${encodeURIComponent(id)}?date=${encodeURIComponent(dateStr)}&view=${encodeURIComponent(viewStr)}`;
-      if (typeof window !== 'undefined' && window.location?.search) {
+      if (typeof window !== 'undefined' && window.location.search) {
         const node = new URLSearchParams(window.location.search).get('node');
         if (node) url += `&node=${encodeURIComponent(node)}`;
       }
@@ -146,9 +146,10 @@ export function useCalendarRangeData({
       if (ac.signal.aborted) return;
       if (!res.ok) throw new Error(`Fetch failed with status ${res.status}`);
 
-      const body = await res.json();
+      const body = (await res.json()) as { view_model?: CalendarGridViewModel } & CalendarGridViewModel;
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the request can be aborted while the body is read
       if (ac.signal.aborted) return;
-      const vm = (body.view_model ?? body) as CalendarGridViewModel;
+      const vm = body.view_model ?? body;
 
       if (cache.size >= 20) {
         const oldestKey = cache.keys().next().value;
@@ -195,7 +196,8 @@ export function useCalendarRangeData({
         return;
       }
       setPagedDate(target);
-      loadDateView(target, 'day', rollbackFn);
+      // Fire and forget: loadDateView handles its own errors and rolls back on failure.
+      void loadDateView(target, 'day', rollbackFn);
     } else if (activeView === 'week') {
       const targetStart = addDays(currentWeekStart, direction * weekStep);
       const checkStr = direction > 0 ? toISODate(targetStart) : toISODate(addDays(targetStart, weekStep - 1));
@@ -212,8 +214,9 @@ export function useCalendarRangeData({
       }
       setPagedWeekStart(targetStart);
       setPagedDate(targetStart);
-      loadDateView(targetStart, 'week', rollbackFn);
-    } else if (activeView === 'month') {
+      // Fire and forget: loadDateView handles its own errors and rolls back on failure.
+      void loadDateView(targetStart, 'week', rollbackFn);
+    } else {
       const targetMonth = addMonths(currentDate, direction);
       const targetMonthStr = toISODate(targetMonth).slice(0, 7);
       if (direction > 0 ? targetMonthStr > cached.end.slice(0, 7) : targetMonthStr < cached.start.slice(0, 7)) {
@@ -232,12 +235,13 @@ export function useCalendarRangeData({
         return;
       }
       setPagedDate(targetMonth);
-      loadDateView(targetMonth, 'month', rollbackFn);
+      // Fire and forget: loadDateView handles its own errors and rolls back on failure.
+      void loadDateView(targetMonth, 'month', rollbackFn);
     }
   };
 
-  const pageNext = () => stepDate(1);
-  const pagePrev = () => stepDate(-1);
+  const pageNext = () => { stepDate(1); };
+  const pagePrev = () => { stepDate(-1); };
 
   const resetDate = () => {
     setPagedDate(null);
@@ -247,7 +251,8 @@ export function useCalendarRangeData({
     if (entryViewModel) {
       setCurrentViewModel(entryViewModel);
     } else {
-      loadDateView(baseDate, activeView, () => {});
+      // Fire and forget: loadDateView handles its own errors and rolls back on failure.
+      void loadDateView(baseDate, activeView, () => { /* nothing to roll back */ });
     }
     onActivity?.();
   };
@@ -272,9 +277,7 @@ export function useCalendarRangeData({
           currentDate.getMonth() === baseDate.getMonth();
 
     if (isTargetAtBase) {
-      const baseVM = (entryViewModel ?? (isAtBaseDate ? currentViewModel : undefined)) as
-        | Record<string, unknown>
-        | undefined;
+      const baseVM = (entryViewModel ?? (isAtBaseDate ? currentViewModel : undefined));
       const hasMonth = Boolean(baseVM?.month);
       const hasWeek = Boolean(baseVM?.week);
       if (
@@ -298,7 +301,8 @@ export function useCalendarRangeData({
     } else if (targetView === 'week') {
       setPagedWeekStart(currentDate);
     }
-    loadDateView(
+    // Fire and forget: loadDateView handles its own errors and rolls back on failure.
+    void loadDateView(
       fetchAnchorDate,
       targetView,
       () => {
@@ -319,7 +323,8 @@ export function useCalendarRangeData({
     if (entryViewModel) {
       setCurrentViewModel(entryViewModel);
     } else {
-      loadDateView(baseDate, defaultView, () => {});
+      // Fire and forget: loadDateView handles its own errors and rolls back on failure.
+      void loadDateView(baseDate, defaultView, () => { /* nothing to roll back */ });
     }
   };
 
@@ -361,7 +366,8 @@ export function useCalendarRangeData({
       return;
     }
 
-    loadDateView(
+    // Fire and forget: loadDateView handles its own errors and rolls back on failure.
+    void loadDateView(
       targetDate,
       'day',
       () => {

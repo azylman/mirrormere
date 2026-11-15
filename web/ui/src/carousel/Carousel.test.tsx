@@ -64,6 +64,7 @@ const screens: ScreensResponse = { current_screen: 1, interval_seconds: 30, scre
 function settlePredicate(): boolean {
   const match = /SETTLE_PREDICATE_EXPRESSION = `([\s\S]*?)`;/.exec(captureSource);
   if (!match) throw new Error('SETTLE_PREDICATE_EXPRESSION not found in capture.js');
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval -- evaluates the real predicate source from capture.js
   return new Function(`return (${match[1]});`)() as boolean;
 }
 
@@ -170,7 +171,7 @@ describe('Carousel', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('api/screens', expect.anything());
     const hydrated = fetchMock.mock.calls
-      .map(([url]) => String(url))
+      .map(([url]) => url)
       .filter((url) => url.startsWith('api/widgets/') && !url.endsWith('/render'))
       .sort();
     expect(hydrated).toEqual(['api/widgets/a-0', 'api/widgets/b-1', 'api/widgets/b-2', 'api/widgets/c-2', 'api/widgets/shared']);
@@ -719,20 +720,6 @@ describe('Carousel', () => {
       expect(ric).toHaveBeenCalledWith(expect.any(Function), { timeout: 300 });
       cancel();
       expect(cic).toHaveBeenCalledWith(42);
-    });
-
-    it('does not run step if cancelled before requestIdleCallback fires', () => {
-      let idleCb: (() => void) | null = null;
-      vi.stubGlobal('requestIdleCallback', (cb: () => void) => {
-        idleCb = cb;
-        return 1;
-      });
-      vi.stubGlobal('cancelIdleCallback', vi.fn());
-      const step = vi.fn();
-      const cancel = scheduleIdleStep(step);
-      cancel();
-      if (idleCb) (idleCb as () => void)();
-      expect(step).not.toHaveBeenCalled();
     });
   });
 

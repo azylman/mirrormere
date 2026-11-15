@@ -39,7 +39,7 @@ export function resolveClothingOutfitLabel(state: ClothingConditionState): strin
   return OUTFIT_LABELS[state];
 }
 
-const CONDITION_KEYWORDS: ReadonlyArray< readonly [string, string] > = [
+const CONDITION_KEYWORDS: readonly (readonly [string, string])[] = [
   ['pouring', 'Heavy Rain'],
   ['lightning', 'Thunderstorms'],
   ['snow', 'Snow'],
@@ -62,7 +62,7 @@ export function resolveIconConditionLabel(iconToken: string): string {
 
 export function formatSlotForecastSummary(iconToken: string, precipProbPct: number): string {
   const condition = resolveIconConditionLabel(iconToken);
-  const clampedPrecip = Math.max(0, Math.min(100, Math.round(Number(precipProbPct) || 0)));
+  const clampedPrecip = Math.max(0, Math.min(100, Math.round(precipProbPct || 0)));
   return `${condition} · ${clampedPrecip}% rain`;
 }
 
@@ -85,7 +85,7 @@ function resolveLocalDateAndHour(
 ): { baseDate: string; hour: number } {
   const tz =
     timezone ||
-    (typeof document !== 'undefined' ? document.body?.dataset?.timezone : undefined);
+    (typeof document !== 'undefined' ? document.body.dataset.timezone : undefined);
   if (tz && timestamp.endsWith('Z')) {
     try {
       const d = new Date(timestamp);

@@ -223,7 +223,7 @@ describe('display store', () => {
     });
 
     it('ignores an older response that resolves after a newer request', async () => {
-      const resolvers: Array<(r: Response) => void> = [];
+      const resolvers: ((r: Response) => void)[] = [];
       vi.stubGlobal(
         'fetch',
         vi.fn(() => new Promise<Response>((resolve) => resolvers.push(resolve))),
@@ -312,8 +312,8 @@ describe('display store', () => {
       const fetchMock = stubFetch(detail({ widget_id: 'cal', type: 'calendar-grid', data: { events: 2 }, view_model: { week: 'new' } }));
 
       useDisplayStore.getState().applyEvents([widgetUpdate('cal', { events: 2 })]);
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-      await vi.waitFor(() => expect(entryAt(useDisplayStore.getState().widgets, 'cal').viewModel).toEqual({ week: 'new' }));
+      await vi.waitFor(() => { expect(fetchMock).toHaveBeenCalledTimes(1); });
+      await vi.waitFor(() => { expect(entryAt(useDisplayStore.getState().widgets, 'cal').viewModel).toEqual({ week: 'new' }); });
       expect(entryAt(useDisplayStore.getState().widgets, 'cal').data).toEqual({ events: 2 });
     });
 
@@ -329,7 +329,7 @@ describe('display store', () => {
           },
         },
       });
-      const resolvers: Array<(r: Response) => void> = [];
+      const resolvers: ((r: Response) => void)[] = [];
       const fetchMock = vi.fn(() => new Promise<Response>((resolve) => resolvers.push(resolve)));
       vi.stubGlobal('fetch', fetchMock);
       const calendarDetail = (viewModel: Record<string, unknown>) =>
@@ -346,7 +346,7 @@ describe('display store', () => {
 
       // The newer fetch resolves first, then the older one lands and must be dropped.
       itemAt(resolvers, 1)(calendarDetail({ week: 'second' }));
-      await vi.waitFor(() => expect(entryAt(useDisplayStore.getState().widgets, 'cal').viewModel).toEqual({ week: 'second' }));
+      await vi.waitFor(() => { expect(entryAt(useDisplayStore.getState().widgets, 'cal').viewModel).toEqual({ week: 'second' }); });
       itemAt(resolvers, 0)(calendarDetail({ week: 'first' }));
       await pending;
 

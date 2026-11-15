@@ -11,6 +11,8 @@ import {
 import { useHudAutoFade } from './useHudAutoFade';
 import { formatDuration, useStreamProgress } from './useStreamProgress';
 import { useVolumeSlider } from './useVolumeSlider';
+import type { LegacyVideoStatePayload } from './videoState';
+import { normalizeVideoState } from './videoState';
 
 interface VideoHUDManagerRef {
   isSwapped?: boolean;
@@ -36,7 +38,7 @@ export interface VideoHUDHandle {
   showHUD: () => void;
   hideHUD: () => void;
   syncStream: () => void;
-  handleVideoState: (data?: VideoStatePayload | null) => void;
+  handleVideoState: (data?: LegacyVideoStatePayload | null) => void;
   handleAudioState: (data?: Partial<AudioSlice> | null) => void;
   activeStream: VideoSource | null;
   videoManager?: VideoHUDControllerOptions['videoManager'] | null;
@@ -62,16 +64,16 @@ export interface VideoHUDHandle {
 }
 
 export class VideoHUDController implements VideoHUDHandle {
-  public showHUD: () => void = () => {};
-  public hideHUD: () => void = () => {};
-  public syncStream: () => void = () => {};
-  public handleVideoState: (data?: VideoStatePayload | null) => void = () => {};
-  public handleAudioState: (data?: Partial<AudioSlice> | null) => void = () => {};
+  public showHUD: () => void = () => { /* replaced by useHudController once mounted */ };
+  public hideHUD: () => void = () => { /* replaced by useHudController once mounted */ };
+  public syncStream: () => void = () => { /* replaced by useHudController once mounted */ };
+  public handleVideoState: (data?: LegacyVideoStatePayload | null) => void = () => { /* replaced once mounted */ };
+  public handleAudioState: (data?: Partial<AudioSlice> | null) => void = () => { /* replaced once mounted */ };
   public videoManager?: VideoHUDControllerOptions['videoManager'] | null = null;
   public lastVideoState?: VideoStatePayload | null = null;
   public isVisible?: boolean = false;
   public currentMuted?: boolean = false;
-  public destroy?: () => void = () => {};
+  public destroy?: () => void = () => { /* replaced once mounted */ };
   public formatStreamTitle?: (stream?: VideoSource | null) => string = formatStreamTitle;
   public formatTime?: (seconds: number) => string = formatDuration;
   public handlePlayPauseToggle?: () => Promise<void>;
@@ -111,7 +113,7 @@ export class VideoHUDController implements VideoHUDHandle {
 
 export interface HudProps {
   controllerRef?:
-    | React.MutableRefObject<VideoHUDController | null>
+    | React.RefObject<VideoHUDController | null>
     | React.RefCallback<VideoHUDController | null>;
   videoManager?: VideoHUDControllerOptions['videoManager'];
   remoteUrl?: string;
@@ -124,7 +126,7 @@ export interface HudProps {
 
 function assignControllerRef(
   target:
-    | React.MutableRefObject<VideoHUDController | null>
+    | React.RefObject<VideoHUDController | null>
     | React.RefCallback<VideoHUDController | null>
     | undefined,
   value: VideoHUDController | null,
@@ -140,7 +142,7 @@ function assignControllerRef(
 function resolveRemoteUrl(remoteUrl?: string, vm?: VideoHUDManagerRef | null): string {
   if (remoteUrl) return remoteUrl;
   if (vm?.remoteUrl) return vm.remoteUrl;
-  if (typeof document !== 'undefined' && document.body?.dataset?.remoteUrl) {
+  if (typeof document !== 'undefined' && document.body.dataset.remoteUrl) {
     return document.body.dataset.remoteUrl;
   }
   if (typeof window !== 'undefined' && (window as unknown as { MIRRORMERE_REMOTE_URL?: string }).MIRRORMERE_REMOTE_URL) {
@@ -157,7 +159,7 @@ async function dispatchHudAction(
   remoteKeyName?: string,
   value?: unknown,
 ): Promise<void> {
-  if (!activeStream || !activeStream.id) return;
+  if (!activeStream?.id) return;
 
   const payload = {
     id: activeStream.id,
@@ -204,8 +206,8 @@ export function useHudController({
   commitCooldown = 350,
 }: HudProps = {}) {
   const overlayRef = useRef<HTMLDivElement>(null);
-  const [syncTick, setSyncTick] = useState(0);
-  void syncTick;
+  // Only the setter is used: bumping it forces a re-render on sync.
+  const [, setSyncTick] = useState(0);
 
   const controllerInstanceRef = useRef<VideoHUDController>(new VideoHUDController());
   const [syncedVideoManager, setSyncedVideoManager] = useState<VideoManagerLike | null | undefined>(videoManager);
@@ -216,9 +218,9 @@ export function useHudController({
   const effectiveVideoManager = videoManager ?? syncedVideoManager;
   const isSwapped = Boolean(effectiveVideoManager?.isSwapped);
 
-  const activeStream = effectiveVideoManager && effectiveVideoManager.isSwapped
-    ? (effectiveVideoManager.serverPip || videoState?.pip || null)
-    : (effectiveVideoManager?.serverPrimary || videoState?.primary || null);
+  const activeStream = effectiveVideoManager?.isSwapped
+    ? (effectiveVideoManager.serverPip || videoState.pip || null)
+    : (effectiveVideoManager?.serverPrimary || videoState.primary || null);
 
   const resolvedRemoteUrl = resolveRemoteUrl(remoteUrl, effectiveVideoManager);
 
@@ -227,17 +229,17 @@ export function useHudController({
       (activeStream.controllable === true ||
         (activeStream.priority === 'persistent' && Boolean(resolvedRemoteUrl))),
   );
-  const isIdle = Boolean(activeStream && activeStream.player_state === 'idle');
-  const isPlaybackActive = Boolean(isMedia && !isIdle);
+  const isIdle = activeStream?.player_state === 'idle';
+  const isPlaybackActive = (isMedia && !isIdle);
   const isPaused = activeStream?.player_state === 'paused';
 
-  const resetAutoFadeRef = useRef<() => void>(() => {});
+  const resetAutoFadeRef = useRef<() => void>(() => { /* set once useHudAutoFade runs */ });
   const isActionPendingRef = useRef(false);
 
   const executeAction = async (actionName: string, remoteKeyName?: string, value?: unknown): Promise<void> => {
     resetAutoFadeRef.current();
     if (isActionPendingRef.current && actionName !== 'seek') return;
-    if (!activeStream || !activeStream.id) return;
+    if (!activeStream?.id) return;
 
     isActionPendingRef.current = true;
     let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
@@ -252,23 +254,25 @@ export function useHudController({
     }
   };
 
-  const handlePlayPauseToggle = () => executeAction('toggle_playback', 'play_pause');
-  const handleRewind = () => executeAction('rewind', 'rewind');
-  const handleFastForward = () => executeAction('fast_forward', 'fast_forward');
-  const handleBack = () => executeAction('back', 'back');
-  const handleHome = () => executeAction('home', 'home');
-  const handleCaptions = () => executeAction('captions', 'cc');
-  const handlePrevious = () => executeAction('previous', 'prev');
-  const handleNext = () => executeAction('next', 'next');
-  const handleSeek = (pos: number) => executeAction('seek', 'seek', pos);
+  // Controller actions return the request promise so programmatic callers (the window.videoHUD
+  // controller, tests) can await completion. UI event wrappers discard it with `void`.
+  const handlePlayPauseToggle = (): Promise<void> => executeAction('toggle_playback', 'play_pause');
+  const handleRewind = (): Promise<void> => executeAction('rewind', 'rewind');
+  const handleFastForward = (): Promise<void> => executeAction('fast_forward', 'fast_forward');
+  const handleBack = (): Promise<void> => executeAction('back', 'back');
+  const handleHome = (): Promise<void> => executeAction('home', 'home');
+  const handleCaptions = (): Promise<void> => executeAction('captions', 'cc');
+  const handlePrevious = (): Promise<void> => executeAction('previous', 'prev');
+  const handleNext = (): Promise<void> => executeAction('next', 'next');
+  const handleSeek = (pos: number): Promise<void> => executeAction('seek', 'seek', pos);
 
   const handleDismiss = (): void => {
     resetAutoFadeRef.current();
     if (isActionPendingRef.current) return;
 
-    const primaryId = effectiveVideoManager?.serverPrimary?.id || videoState?.primary?.id;
-    const pipId = effectiveVideoManager?.serverPip?.id || videoState?.pip?.id;
-    if (!primaryId && !pipId && (!activeStream || !activeStream.id)) return;
+    const primaryId = effectiveVideoManager?.serverPrimary?.id || videoState.primary?.id;
+    const pipId = effectiveVideoManager?.serverPip?.id || videoState.pip?.id;
+    if (!primaryId && !pipId && (!activeStream?.id)) return;
 
     isActionPendingRef.current = true;
     setTimeout(() => { isActionPendingRef.current = false; }, 300);
@@ -292,7 +296,8 @@ export function useHudController({
     stageElement: effectiveStageEl,
     autoFadeTimeout,
     isPlaybackActive,
-    onPlayPauseToggle: handlePlayPauseToggle,
+    // Gesture taps fire and forget; executeAction tracks its own pending state.
+    onPlayPauseToggle: () => { void handlePlayPauseToggle(); },
     isSwapped,
   });
 
@@ -325,7 +330,8 @@ export function useHudController({
   } = useStreamProgress({
     stream: activeStream,
     isVisible,
-    onSeek: handleSeek,
+    // Scrub commits fire and forget; executeAction tracks its own pending state.
+    onSeek: (pos) => { void handleSeek(pos); },
     onUserActivity: resetAutoFade,
   });
 
@@ -358,9 +364,9 @@ export function useHudController({
     ctrl.syncStream = () => {
       const vm = ctrl.videoManager ?? videoManager ?? null;
       setSyncedVideoManager(vm);
-      const currentStream = vm && vm.isSwapped
-        ? (vm.serverPip || videoState?.pip || null)
-        : (vm?.serverPrimary || videoState?.primary || null);
+      const currentStream = vm?.isSwapped
+        ? (vm.serverPip || videoState.pip || null)
+        : (vm?.serverPrimary || videoState.primary || null);
       if (!currentStream) {
         hideHUD();
       } else if (!hadStreamRef.current) {
@@ -371,7 +377,7 @@ export function useHudController({
 
     ctrl.handleVideoState = (data) => {
       if (data !== undefined) {
-        useDisplayStore.setState({ video: data ?? { mode: 'widgets', primary: null, pip: null } });
+        useDisplayStore.setState({ video: normalizeVideoState(data) });
       }
     };
 

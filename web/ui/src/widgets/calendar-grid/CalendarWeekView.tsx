@@ -73,13 +73,12 @@ function measureDayEventFit(evEl: HTMLElement): boolean {
  * Phase 1 reads all geometries into a plain array; Phase 2 toggles .cf-event-compact.
  */
 export function batchFitDayColumnEvents(columnEl: HTMLElement): void {
-  if (!columnEl || typeof columnEl.querySelectorAll !== 'function') return;
   const dayEvents = columnEl.querySelectorAll<HTMLElement>('.cf-day-event');
   if (dayEvents.length === 0) return;
 
   for (const evEl of dayEvents) evEl.classList.remove('cf-event-compact');
 
-  const measurements: Array<{ el: HTMLElement; fits: boolean }> = [];
+  const measurements: { el: HTMLElement; fits: boolean }[] = [];
   for (const evEl of dayEvents) {
     if (!evEl.querySelector('.cf-event-time') || !evEl.querySelector('.cf-event-title')) continue;
     measurements.push({ el: evEl, fits: measureDayEventFit(evEl) });
@@ -151,7 +150,7 @@ export function CalendarWeekView({
     const timer = setInterval(() => {
       setNow(new Date());
     }, 60_000);
-    return () => clearInterval(timer);
+    return () => { clearInterval(timer); };
   }, [isTimerActive]);
 
   const nowPct = computeNowIndicatorPct(weekVM, now, tz || undefined);
@@ -170,11 +169,11 @@ export function CalendarWeekView({
     if (typeof ResizeObserver === 'undefined') return;
     const observers: ResizeObserver[] = [];
     canvasRefs.current.forEach((canvasEl) => {
-      const ro = new ResizeObserver(() => batchFitDayColumnEvents(canvasEl));
+      const ro = new ResizeObserver(() => { batchFitDayColumnEvents(canvasEl); });
       ro.observe(canvasEl);
       observers.push(ro);
     });
-    return () => observers.forEach((ro) => ro.disconnect());
+    return () => { observers.forEach((ro) => { ro.disconnect(); }); };
   }, [weekVM, activeView, daysToRender]);
 
   const hasTimelineMarkers = Boolean(
@@ -213,21 +212,21 @@ export function CalendarWeekView({
                   ...(day.early_events || []),
                   ...(day.late_events || []),
                   ...(day.meals || []),
-                  ...(visibleAllDayEvents?.filter((s) => {
+                  ...(visibleAllDayEvents.filter((s) => {
                     if (s.start && s.end && day.date) {
                       const sStart = s.start.slice(0, 10);
                       const sEnd = s.end.slice(0, 10);
                       return day.date >= sStart && day.date <= sEnd;
                     }
                     return false;
-                  }) || []),
+                  })),
                 ];
                 const configuredBdayLabel =
-                  celebrateSpecialDays !== false
+                  celebrateSpecialDays
                     ? resolveConfiguredSpecialDayLabel(day.date, birthdays, specialDays)
                     : null;
                 const eventSpecialStatus =
-                  celebrateSpecialDays !== false
+                  celebrateSpecialDays
                     ? detectDaySpecialStatus(dayAllEvents, members)
                     : null;
                 const specialStatus = configuredBdayLabel ? 'birthday' : eventSpecialStatus;
@@ -300,7 +299,7 @@ export function CalendarWeekView({
 
                     <div
                       className="cf-day-canvas"
-                      ref={(el) => registerDayCanvas(day.date, el)}
+                      ref={(el) => { registerDayCanvas(day.date, el); }}
                       style={{ flex: 1, position: 'relative', minHeight: 0, marginTop: '6px' }}
                     >
                       {collapsedGaps.map((gap, gapIdx) => (

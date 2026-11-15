@@ -57,7 +57,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  document.head.querySelectorAll('link[rel="stylesheet"]').forEach((link) => link.remove());
+  document.head.querySelectorAll('link[rel="stylesheet"]').forEach((link) => { link.remove(); });
   window.history.replaceState({}, '', '/');
   delete (globalThis as Record<string, unknown>).MirrormereLegacyTest;
 });
@@ -145,15 +145,15 @@ describe('LegacyWidget', () => {
     respond = (_url, init) =>
       new Promise<Response>((resolve, reject) => {
         const signal = init.signal as AbortSignal;
-        signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        signal.addEventListener('abort', () => { reject(new DOMException('aborted', 'AbortError')); });
         calls.push({ signal, resolve });
       });
     setWidget('t1');
     const { container, unmount } = render(element(true));
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await vi.waitFor(() => { expect(calls).toHaveLength(1); });
 
     setWidget('t2');
-    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    await vi.waitFor(() => { expect(calls).toHaveLength(2); });
     expect(itemAt(calls, 0).signal.aborted).toBe(true);
     expect(itemAt(calls, 1).signal.aborted).toBe(false);
 
@@ -161,7 +161,7 @@ describe('LegacyWidget', () => {
     await waitForText(container, 'second');
 
     setWidget('t3');
-    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    await vi.waitFor(() => { expect(calls).toHaveLength(3); });
     unmount();
     expect(itemAt(calls, 2).signal.aborted).toBe(true);
   });
@@ -181,7 +181,7 @@ describe('LegacyWidget', () => {
     await waitForText(container, 'initial');
     respond = async () => new Response('gone', { status: 500 });
     setWidget('t2');
-    await vi.waitFor(() => expect(console.warn).toHaveBeenCalled());
+    await vi.waitFor(() => { expect(console.warn).toHaveBeenCalled(); });
     expect(container.querySelector('.widget-card')?.textContent).toContain('initial');
   });
 
@@ -209,7 +209,7 @@ describe('LegacyWidget', () => {
         </PaneContext.Provider>
       </>,
     );
-    await vi.waitFor(() => expect(container.querySelectorAll('.widget-card')).toHaveLength(2));
+    await vi.waitFor(() => { expect(container.querySelectorAll('.widget-card')).toHaveLength(2); });
     expect(document.head.querySelectorAll(`link[href="${assets}a.css"]`)).toHaveLength(1);
     expect(container.querySelector(`link[href="${assets}a.css"]`)).toBeNull();
   });

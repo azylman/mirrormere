@@ -117,8 +117,7 @@ export function useHudAutoFade({
     let startY: number | null = null;
 
     const getCoords = (e: Event): { x: number; y: number } | null => {
-      const touchEvent = e as TouchEvent;
-      const touch = touchEvent.changedTouches?.[0];
+      const touch = 'changedTouches' in e ? (e as TouchEvent).changedTouches[0] : undefined;
       if (touch) return { x: touch.clientX, y: touch.clientY };
       const mouseEvent = e as MouseEvent;
       if (typeof mouseEvent.clientX === 'number' && typeof mouseEvent.clientY === 'number') {

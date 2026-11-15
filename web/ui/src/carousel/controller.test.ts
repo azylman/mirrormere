@@ -11,7 +11,7 @@ interface Harness {
   host: { commit: ReturnType<typeof vi.fn>; select: ReturnType<typeof vi.fn> } & CarouselHost;
   controller: CarouselController;
   clock: { t: number };
-  frames: Array<() => void>;
+  frames: (() => void)[];
   flushFrames(): void;
   down(x: number, y: number, target?: EventTarget): void;
   move(x: number, y: number, ms?: number): void;
@@ -36,7 +36,7 @@ function build(initialIndex = 1, width = 1000): Harness {
   Object.defineProperty(viewport, 'clientWidth', { value: width, configurable: true });
   Object.defineProperty(track, 'clientWidth', { value: width, configurable: true });
 
-  const frames: Array<() => void> = [];
+  const frames: (() => void)[] = [];
   vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
     frames.push(cb);
     return frames.length;

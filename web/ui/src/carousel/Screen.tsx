@@ -26,7 +26,9 @@ export function scheduleIdleStep(step: () => void): () => void {
     if (!cancelled) step();
   };
   // Both functions are read once, so the cancel matches the scheduler that queued the step.
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- invoked below via .call(window)
   const ric = window.requestIdleCallback;
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- invoked below via .call(window)
   const cic = window.cancelIdleCallback;
   if (typeof ric === 'function' && typeof cic === 'function') {
     const id = ric.call(window, run, { timeout: 300 });

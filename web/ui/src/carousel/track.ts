@@ -71,6 +71,7 @@ export class TrackAnimator {
     this.track.style.willChange = 'transform';
     this.track.style.transition = `transform ${SETTLE_MS}ms ${SETTLE_EASING}`;
     // Flush the style so the transition starts from the current transform.
+    // eslint-disable-next-line @typescript-eslint/no-meaningless-void-operator -- reading the layout property forces a synchronous reflow
     void this.track.offsetWidth;
     this.track.style.transform = `translate3d(${px}px, 0px, 0px)`;
 

@@ -202,7 +202,7 @@ describe('EventStreamClient', () => {
       client.connect();
 
       const source = FakeEventSource.instances[0];
-      const listenersMap = (source as unknown as { listeners: Map<string, Array<(ev: MessageEvent) => void>> }).listeners;
+      const listenersMap = (source as unknown as { listeners: Map<string, ((ev: MessageEvent) => void)[]> }).listeners;
       const registered = listenersMap.get('system.reload') ?? [];
       for (const listener of registered) {
         listener({ data: 'not-valid-json-string', lastEventId: '' } as MessageEvent);

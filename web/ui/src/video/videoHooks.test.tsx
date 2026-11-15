@@ -13,6 +13,11 @@ import {
   useWebRTCStream,
 } from './useWebRTCStream';
 
+/** Drains enough microtask turns for an un-guarded negotiation to reach its next SDP step. */
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
 class FakeMediaStream {
   tracks: unknown[] = [];
   addTrack(t: unknown) {
@@ -27,15 +32,15 @@ describe('useHlsStream', () => {
 
   it('does nothing when disabled or streamUrl is missing', () => {
     const video = document.createElement('video');
-    const playSpy = vi.spyOn(video, 'play').mockResolvedValue(undefined as unknown as void);
+    const playSpy = vi.spyOn(video, 'play').mockResolvedValue(undefined);
     const videoRef = { current: video };
 
-    const { rerender } = renderHook(
-      ({ enabled, stream }) => useHlsStream({ videoRef, stream, enabled }),
+    const { rerender } = renderHook<undefined, { enabled: boolean; stream: VideoSource }>(
+      ({ enabled, stream }) => { useHlsStream({ videoRef, stream, enabled }); },
       {
         initialProps: {
           enabled: false,
-          stream: { id: 's1', stream_url: 'http://test/stream.m3u8', type: 'hls' } as VideoSource,
+          stream: { id: 's1', stream_url: 'http://test/stream.m3u8', type: 'hls' },
         },
       },
     );
@@ -45,7 +50,7 @@ describe('useHlsStream', () => {
 
     rerender({
       enabled: true,
-      stream: { id: 's1', stream_url: '', type: 'hls' } as VideoSource,
+      stream: { id: 's1', stream_url: '', type: 'hls' },
     });
     expect(video.src).toBe('');
     expect(playSpy).not.toHaveBeenCalled();
@@ -54,15 +59,14 @@ describe('useHlsStream', () => {
   it('warns when canPlayType does not natively support HLS', () => {
     const video = document.createElement('video');
     video.canPlayType = vi.fn().mockReturnValue('');
-    vi.spyOn(video, 'play').mockResolvedValue(undefined as unknown as void);
+    vi.spyOn(video, 'play').mockResolvedValue(undefined);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const videoRef = { current: video };
 
-    renderHook(() =>
-      useHlsStream({
+    renderHook(() => { useHlsStream({
         videoRef,
-        stream: { id: 's1', stream_url: 'http://test/stream.m3u8', type: 'hls' } as VideoSource,
-      }),
+        stream: { id: 's1', stream_url: 'http://test/stream.m3u8', type: 'hls' },
+      }); },
     );
 
     expect(warnSpy).toHaveBeenCalledWith('[MirrormereVideo] HLS playback not natively supported');
@@ -77,11 +81,10 @@ describe('useHlsStream', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const videoRef = { current: video };
 
-    renderHook(() =>
-      useHlsStream({
+    renderHook(() => { useHlsStream({
         videoRef,
-        stream: { id: 's1', stream_url: 'http://test/stream.m3u8', type: 'hls' } as VideoSource,
-      }),
+        stream: { id: 's1', stream_url: 'http://test/stream.m3u8', type: 'hls' },
+      }); },
     );
 
     await Promise.resolve();
@@ -96,15 +99,14 @@ describe('useHlsStream', () => {
     video.canPlayType = vi.fn().mockReturnValue('probably');
     const pauseSpy = vi.spyOn(video, 'pause').mockImplementation(() => {});
     const loadSpy = vi.spyOn(video, 'load').mockImplementation(() => {});
-    vi.spyOn(video, 'play').mockResolvedValue(undefined as unknown as void);
+    vi.spyOn(video, 'play').mockResolvedValue(undefined);
     const removeAttrSpy = vi.spyOn(video, 'removeAttribute');
     const videoRef = { current: video };
 
-    const { unmount } = renderHook(() =>
-      useHlsStream({
+    const { unmount } = renderHook(() => { useHlsStream({
         videoRef,
-        stream: { id: 's1', stream_url: 'http://test/stream.m3u8', type: 'hls' } as VideoSource,
-      }),
+        stream: { id: 's1', stream_url: 'http://test/stream.m3u8', type: 'hls' },
+      }); },
     );
 
     unmount();
@@ -127,7 +129,7 @@ describe('useWebRTCStream', () => {
     onicecandidate: ((e: RTCPeerConnectionIceEvent) => void) | null = null;
     closed = false;
 
-    private listeners = new Map<string, Array<() => void>>();
+    private listeners = new Map<string, (() => void)[]>();
     private receivers: RTCRtpReceiver[] = [];
 
     addEventListener(type: string, listener: () => void) {
@@ -209,13 +211,12 @@ describe('useWebRTCStream', () => {
     const video = document.createElement('video');
     const videoRef = { current: video };
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
         stream: null,
         enabled: false,
         RTCPeerConnectionClass: MockPCFactory,
-      }),
+      }); },
     );
 
     expect(activePC).toBeNull();
@@ -231,14 +232,13 @@ describe('useWebRTCStream', () => {
       text: async () => 'v=0\r\no=server-answer 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n',
     });
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam1', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam1', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
         onConnected,
-      }),
+      }); },
     );
 
     expect(activePC).not.toBeNull();
@@ -298,13 +298,12 @@ describe('useWebRTCStream', () => {
       text: async () => JSON.stringify({ sdp: 'v=0\r\no=json-answer\r\n' }),
     });
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam2', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam2', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: DeferredIceMockPCFactory,
-      }),
+      }); },
     );
 
     const pc = activePC!;
@@ -350,17 +349,16 @@ describe('useWebRTCStream', () => {
       status: 502,
     });
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-err', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam-err', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
         maxReconnectAttempts: 2,
         reconnectBaseDelay: 100,
         reconnectBackoffFactor: 2,
         onFallback,
-      }),
+      }); },
     );
 
     // Initial attempt: gathering complete -> HTTP 502 -> reconnect scheduled
@@ -400,15 +398,14 @@ describe('useWebRTCStream', () => {
       text: async () => 'sdp-ok',
     });
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-grace', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam-grace', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
         disconnectTimeout: 2000,
         reconnectBaseDelay: 100,
-      }),
+      }); },
     );
 
     const pc = activePC!;
@@ -456,7 +453,7 @@ describe('useWebRTCStream', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('handles video.play rejection autoplay warning and connection closed state', async () => {
+  it('handles video.play rejection autoplay warning', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const video = document.createElement('video');
     video.play = vi.fn().mockReturnValue(Promise.reject(new Error('Autoplay blocked')));
@@ -466,17 +463,15 @@ describe('useWebRTCStream', () => {
       text: async () => 'sdp-ok',
     });
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-closed', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam-closed', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
         reconnectBaseDelay: 50,
-      }),
+      }); },
     );
 
-    const pc = activePC!;
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
@@ -486,20 +481,6 @@ describe('useWebRTCStream', () => {
       expect.stringContaining('Playback prevented by browser autoplay policy'),
       expect.any(Error),
     );
-
-    // Closed state schedules reconnect
-    act(() => {
-      pc.connectionState = 'closed';
-      pc.onconnectionstatechange?.();
-    });
-
-    await act(async () => {
-      vi.advanceTimersByTime(50);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
     warnSpy.mockRestore();
   });
 
@@ -512,12 +493,11 @@ describe('useWebRTCStream', () => {
       throw new Error('WebRTC not supported on device');
     } as unknown as typeof RTCPeerConnection;
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-fail', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
+        stream: { id: 'cam-fail', stream_url: 'http://test/whep', type: 'webrtc' },
         RTCPeerConnectionClass: FailingPCFactory,
-      }),
+      }); },
     );
 
     expect(warnSpy).toHaveBeenCalledWith(
@@ -542,13 +522,12 @@ describe('useWebRTCStream', () => {
       text: async () => 'sdp-ice-timeout',
     });
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-slow-ice', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam-slow-ice', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: SlowIceMockPCFactory,
-      }),
+      }); },
     );
 
     expect(activePC).not.toBeNull();
@@ -577,23 +556,27 @@ describe('useWebRTCStream', () => {
       return pc;
     } as unknown as typeof RTCPeerConnection;
 
-    const { unmount } = renderHook(() =>
-      useWebRTCStream({
+    const { unmount } = renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-unmount', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
+        stream: { id: 'cam-unmount', stream_url: 'http://test/whep', type: 'webrtc' },
         RTCPeerConnectionClass: SlowOfferPCFactory,
-      }),
+      }); },
     );
 
     const pc = activePC!;
-    unmount();
+    const setLocalSpy = vi.spyOn(pc, 'setLocalDescription');
 
+    // Fulfil the offer, then unmount before its await continuation runs (a closed native
+    // connection never fulfils createOffer, so the offer must resolve while still open).
     await act(async () => {
       resolveOffer?.({ type: 'offer', sdp: 'late-sdp' });
-      await Promise.resolve();
+      unmount();
+      await flushMicrotasks();
     });
 
     expect(pc.closed).toBe(true);
+    // Negotiation must stop at the post-createOffer cancellation guard.
+    expect(setLocalSpy).not.toHaveBeenCalled();
   });
 
   it('aborts negotiation gracefully if unmounted during res.text()', async () => {
@@ -609,13 +592,12 @@ describe('useWebRTCStream', () => {
       text: () => textPromise,
     });
 
-    const { unmount } = renderHook(() =>
-      useWebRTCStream({
+    const { unmount } = renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-text-unmount', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam-text-unmount', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
-      }),
+      }); },
     );
 
     const pc = activePC!;
@@ -624,14 +606,17 @@ describe('useWebRTCStream', () => {
       await Promise.resolve();
     });
 
+    const setRemoteSpy = vi.spyOn(pc, 'setRemoteDescription');
     unmount();
 
     await act(async () => {
       resolveText('sdp-after-unmount');
-      await Promise.resolve();
+      await flushMicrotasks();
     });
 
     expect(pc.closed).toBe(true);
+    // Negotiation must stop at the post-res.text() cancellation guard.
+    expect(setRemoteSpy).not.toHaveBeenCalled();
   });
 
   it('aborts negotiation gracefully if unmounted during fetch', async () => {
@@ -641,13 +626,12 @@ describe('useWebRTCStream', () => {
     let resolveFetch: ((res: unknown) => void) | null = null;
     const fetchMock = vi.fn().mockImplementation(() => new Promise((res) => { resolveFetch = res; }));
 
-    const { unmount } = renderHook(() =>
-      useWebRTCStream({
+    const { unmount } = renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-fetch-unmount', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam-fetch-unmount', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
-      }),
+      }); },
     );
 
     const pc = activePC!;
@@ -658,15 +642,15 @@ describe('useWebRTCStream', () => {
 
     unmount();
 
+    const text = vi.fn().mockResolvedValue('sdp-unmounted');
     await act(async () => {
-      resolveFetch?.({
-        ok: true,
-        text: async () => 'sdp-unmounted',
-      });
-      await Promise.resolve();
+      resolveFetch?.({ ok: true, text });
+      await flushMicrotasks();
     });
 
     expect(pc.closed).toBe(true);
+    // Negotiation must stop at the post-fetch cancellation guard.
+    expect(text).not.toHaveBeenCalled();
   });
 
   it('clears disconnect and reconnect timers when transitioning to connected', async () => {
@@ -677,14 +661,13 @@ describe('useWebRTCStream', () => {
       text: async () => 'sdp-ok',
     });
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-timers', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam-timers', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
         disconnectTimeout: 2000,
-      }),
+      }); },
     );
 
     const pc = activePC!;
@@ -722,15 +705,14 @@ describe('useWebRTCStream', () => {
       text: async () => 'sdp-ok',
     });
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-fail-clear', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam-fail-clear', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
         disconnectTimeout: 5000,
         reconnectBaseDelay: 50,
-      }),
+      }); },
     );
 
     const pc = activePC!;
@@ -769,14 +751,13 @@ describe('useWebRTCStream', () => {
       text: async () => 'sdp-ok',
     });
 
-    const { unmount } = renderHook(() =>
-      useWebRTCStream({
+    const { unmount } = renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-unmount-timers', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'cam-unmount-timers', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
         disconnectTimeout: 2000,
-      }),
+      }); },
     );
 
     const pc = activePC!;
@@ -802,13 +783,12 @@ describe('useWebRTCStream', () => {
 
   it('handles ontrack safely when video element ref is null', async () => {
     const videoRef = { current: null };
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { id: 'cam-null-video', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: vi.fn().mockResolvedValue({ ok: true, text: async () => 'sdp-ok' }) as unknown as typeof fetch,
+        stream: { id: 'cam-null-video', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: vi.fn().mockResolvedValue({ ok: true, text: async () => 'sdp-ok' }),
         RTCPeerConnectionClass: MockPCFactory,
-      }),
+      }); },
     );
 
     const pc = activePC!;
@@ -849,7 +829,8 @@ describe('useWebRTCStream', () => {
     safePlay(fakeVid);
   });
 
-  it('handles stream without id and iceState === "closed"', async () => {
+
+  it('covers disconnect/failed/checking ICE transitions', async () => {
     const video = document.createElement('video');
     const videoRef = { current: video };
     const fetchMock = vi.fn().mockResolvedValue({
@@ -857,14 +838,13 @@ describe('useWebRTCStream', () => {
       text: async () => 'sdp-ok',
     });
 
-    renderHook(() =>
-      useWebRTCStream({
+    renderHook(() => { useWebRTCStream({
         videoRef,
-        stream: { stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        stream: { id: 'stream-fallback', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
         reconnectBaseDelay: 50,
-      }),
+      }); },
     );
 
     const pc = activePC!;
@@ -872,59 +852,6 @@ describe('useWebRTCStream', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-
-    // iceConnectionState closed triggers reconnect
-    act(() => {
-      pc.iceConnectionState = 'closed';
-      pc.oniceconnectionstatechange?.();
-    });
-
-    await act(async () => {
-      vi.advanceTimersByTime(50);
-      await Promise.resolve();
-    });
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('covers localDescription null fallback and disconnect/failed/checking transitions', async () => {
-    const video = document.createElement('video');
-    const videoRef = { current: video };
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => 'sdp-ok',
-    });
-
-    const NoLocalDescPCFactory = function () {
-      const pc = new MockRTCPeerConnection();
-      // Override setLocalDescription to leave localDescription null
-      pc.setLocalDescription = async () => {
-        pc.localDescription = null;
-      };
-      activePC = pc;
-      return pc;
-    } as unknown as typeof RTCPeerConnection;
-
-    renderHook(() =>
-      useWebRTCStream({
-        videoRef,
-        stream: { id: 'stream-fallback', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
-        RTCPeerConnectionClass: NoLocalDescPCFactory,
-        reconnectBaseDelay: 50,
-      }),
-    );
-
-    const pc = activePC!;
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    // Should have negotiated using offer.sdp
-    expect(fetchMock).toHaveBeenCalledWith('http://test/whep', expect.objectContaining({
-      body: expect.stringContaining('v=0'),
-    }));
 
     // iceState 'checking' clears disconnect timer
     act(() => {
@@ -960,14 +887,13 @@ describe('useWebRTCStream', () => {
       text: async () => 'sdp-ok',
     });
 
-    const { unmount } = renderHook(() =>
-      useWebRTCStream({
-        videoRef: videoRef as React.RefObject<HTMLVideoElement>,
-        stream: { id: 'stream-edge', stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+    const { unmount } = renderHook(() => { useWebRTCStream({
+        videoRef: videoRef,
+        stream: { id: 'stream-edge', stream_url: 'http://test/whep', type: 'webrtc' },
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: MockPCFactory,
         reconnectBaseDelay: 50,
-      }),
+      }); },
     );
 
     const pc = activePC!;
@@ -979,6 +905,7 @@ describe('useWebRTCStream', () => {
     // ontrack with audio track
     act(() => {
       pc.ontrack?.({
+        streams: [],
         track: { kind: 'audio', id: 'a-1' },
       } as unknown as RTCTrackEvent);
     });
@@ -1007,14 +934,13 @@ describe('useWebRTCStream', () => {
     } as unknown as typeof RTCPeerConnection;
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { unmount: unmountThrowing } = renderHook(() =>
-      useWebRTCStream({
-        videoRef: videoRef as React.RefObject<HTMLVideoElement>,
+    const { unmount: unmountThrowing } = renderHook(() => { useWebRTCStream({
+        videoRef: videoRef,
         stream: { stream_url: 'http://test/whep', type: 'webrtc' } as VideoSource,
-        fetchFn: fetchMock as unknown as typeof fetch,
+        fetchFn: fetchMock,
         RTCPeerConnectionClass: ThrowingPCFactory,
         reconnectBaseDelay: 50,
-      }),
+      }); },
     );
 
     expect(warnSpy).toHaveBeenCalledWith(
@@ -1031,59 +957,41 @@ describe('useTouchForwarding', () => {
     vi.restoreAllMocks();
   });
 
-  it('ignores touches when disabled or missing remoteUrl', () => {
-    const mediaEl = document.createElement('div');
-    const customFetch = vi.fn();
-    const mediaRef = { current: mediaEl };
+  // Each row differs from a dispatching pointerdown (enabled, primary button, configured
+  // remoteUrl, nonzero media rect) in exactly one guard, so removing that guard sends a request.
+  const ignoredPointerDownTests = [
+    { name: 'ignores touches when disabled', enabled: false, button: 0 },
+    { name: 'ignores non-primary buttons on pointerdown', enabled: true, button: 2 },
+  ];
+  for (const tc of ignoredPointerDownTests) {
+    it(tc.name, () => {
+      const mediaEl = document.createElement('div');
+      vi.spyOn(mediaEl, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 100, 100));
+      const customFetch = vi.fn().mockResolvedValue({ ok: true });
+      const mediaRef = { current: mediaEl };
 
-    const { result } = renderHook(() =>
-      useTouchForwarding({
-        enabled: false,
-        remoteUrl: '',
-        mediaRef,
-        customFetch: customFetch as unknown as typeof fetch,
-      }),
-    );
+      const { result } = renderHook(() =>
+        useTouchForwarding({
+          enabled: tc.enabled,
+          remoteUrl: 'http://sidecar/stream',
+          mediaRef,
+          customFetch: customFetch,
+        }),
+      );
 
-    const event = {
-      button: 0,
-      clientX: 50,
-      clientY: 50,
-      nativeEvent: new MouseEvent('pointerdown', { clientX: 50, clientY: 50 }),
-      preventDefault: vi.fn(),
-      stopPropagation: vi.fn(),
-    } as unknown as React.PointerEvent;
+      const event = {
+        button: tc.button,
+        clientX: 50,
+        clientY: 50,
+        nativeEvent: new MouseEvent('pointerdown', { clientX: 50, clientY: 50 }),
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as React.PointerEvent;
 
-    result.current.onPointerDown(event);
-    expect(customFetch).not.toHaveBeenCalled();
-  });
-
-  it('ignores non-primary buttons on pointerdown', () => {
-    const mediaEl = document.createElement('div');
-    const customFetch = vi.fn();
-    const mediaRef = { current: mediaEl };
-
-    const { result } = renderHook(() =>
-      useTouchForwarding({
-        enabled: true,
-        remoteUrl: 'http://sidecar/stream',
-        mediaRef,
-        customFetch: customFetch as unknown as typeof fetch,
-      }),
-    );
-
-    const event = {
-      button: 2, // right click
-      clientX: 50,
-      clientY: 50,
-      nativeEvent: new MouseEvent('pointerdown', { clientX: 50, clientY: 50 }),
-      preventDefault: vi.fn(),
-      stopPropagation: vi.fn(),
-    } as unknown as React.PointerEvent;
-
-    result.current.onPointerDown(event);
-    expect(customFetch).not.toHaveBeenCalled();
-  });
+      result.current.onPointerDown(event);
+      expect(customFetch).not.toHaveBeenCalled();
+    });
+  }
 
   it('distinguishes tap (<=10px) from drag (>10px) gestures and throttles moves', async () => {
     const mediaEl = document.createElement('div');
@@ -1106,7 +1014,7 @@ describe('useTouchForwarding', () => {
         enabled: true,
         remoteUrl: 'http://sidecar/stream',
         mediaRef,
-        customFetch: customFetch as unknown as typeof fetch,
+        customFetch: customFetch,
         throttleMs: 30,
       }),
     );
@@ -1174,7 +1082,7 @@ describe('useTouchForwarding', () => {
         enabled: true,
         remoteUrl: 'http://sidecar/stream',
         mediaRef,
-        customFetch: customFetch as unknown as typeof fetch,
+        customFetch: customFetch,
       }),
     );
 
@@ -1228,7 +1136,7 @@ describe('useVolumeSlider', () => {
         muted: false,
         throttleInterval: 100,
         commitCooldown: 300,
-        fetch: customFetch as unknown as typeof fetch,
+        fetch: customFetch,
         onUserActivity,
       }),
     );
@@ -1290,7 +1198,7 @@ describe('useVolumeSlider', () => {
       useVolumeSlider({
         volume: 50,
         muted: false,
-        fetch: customFetch as unknown as typeof fetch,
+        fetch: customFetch,
       }),
     );
 

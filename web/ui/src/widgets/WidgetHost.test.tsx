@@ -148,13 +148,13 @@ describe('WidgetHost widget.reload', () => {
     await settle();
     await mountNeighbours();
 
-    act(() => useDisplayStore.getState().pause());
+    act(() => { useDisplayStore.getState().pause(); });
     reload('clock');
     reload('clock');
     await settle();
     for (const id of CLOCK_IDS) expect(hydrations(fetchMock, id)).toBe(1);
 
-    act(() => useDisplayStore.getState().resume());
+    act(() => { useDisplayStore.getState().resume(); });
     await settle();
     for (const id of CLOCK_IDS) expect(hydrations(fetchMock, id)).toBe(2);
     expect(hydrations(fetchMock, 'b-1')).toBe(1);
@@ -212,7 +212,7 @@ describe('WidgetHost reload during the first hydrate', () => {
   it('defers a reload that arrived in flight while paused, then re-hydrates once on resume', async () => {
     const held = gate();
     const fetchMock = stubApi({ id: 'a-0', until: held.until });
-    act(() => useDisplayStore.getState().pause());
+    act(() => { useDisplayStore.getState().pause(); });
     render(cell());
     await settle();
     expect(hydrations(fetchMock, 'a-0')).toBe(1);
@@ -223,7 +223,7 @@ describe('WidgetHost reload during the first hydrate', () => {
     await settle();
     expect(hydrations(fetchMock, 'a-0')).toBe(1);
 
-    act(() => useDisplayStore.getState().resume());
+    act(() => { useDisplayStore.getState().resume(); });
     await settle();
     expect(hydrations(fetchMock, 'a-0')).toBe(2);
     await settle();

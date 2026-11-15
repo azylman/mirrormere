@@ -1,7 +1,8 @@
 export interface EntityState {
   entity_id: string;
   state: string;
-  attributes: Record<string, unknown>;
+  /** Go serializes a nil attribute map as null (e.g. upstream entities that omit attributes). */
+  attributes: Record<string, unknown> | null;
   last_changed?: string;
   last_updated?: string;
 }
@@ -189,19 +190,19 @@ export function getBinaryLabel(isOn: boolean, dc?: string): string {
   return isOn ? 'On' : 'Off';
 }
 
-export function formatStateLabel(domain: string, state: string, attrs?: Record<string, unknown>): string {
+export function formatStateLabel(domain: string, state: string, attrs?: Record<string, unknown> | null): string {
   if (domain === 'light') {
     const b = state === 'on' && typeof attrs?.brightness === 'number' ? Math.round((attrs.brightness / 255) * 100) : null;
     return b !== null ? `On · ${b}%` : state === 'on' ? 'On' : 'Off';
   }
   if (domain === 'climate' && attrs?.current_temperature !== undefined) {
-    return `${state} · ${attrs.current_temperature}°`;
+    return `${state} · ${String(attrs.current_temperature)}°`;
   }
   if (domain === 'media_player' && attrs?.media_title) {
-    return attrs.media_artist ? `${attrs.media_title} - ${attrs.media_artist}` : String(attrs.media_title);
+    return attrs.media_artist ? `${String(attrs.media_title)} - ${String(attrs.media_artist)}` : String(attrs.media_title);
   }
   if (domain === 'sensor') {
-    return `${state} ${attrs?.unit_of_measurement || ''}`.trim();
+    return `${state} ${String(attrs?.unit_of_measurement || '')}`.trim();
   }
   return state;
 }

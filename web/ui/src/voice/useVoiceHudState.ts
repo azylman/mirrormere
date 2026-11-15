@@ -1,5 +1,5 @@
 import { useLayoutEffect, useSyncExternalStore } from 'react';
-import { AudioController } from '../audio/useAudio';
+import type { AudioController } from '../audio/useAudio';
 import type { VoiceState } from '../sse/types';
 import { useDisplayStore } from '../store';
 import type { VoiceSlice } from '../store/types';
@@ -56,7 +56,7 @@ export function resetHUD(): void {
 const IDLE_HEADER_VOICE: Readonly<HeaderVoiceViewProps> = Object.freeze({
   isActive: false,
   stateClass: '',
-  iconKind: 'mic' as VoiceIconKind,
+  iconKind: 'mic',
   label: '',
   statusText: null,
   transcriptText: null,
@@ -73,12 +73,13 @@ const IDLE_VOICE_TOAST: Readonly<VoiceToastViewProps> = Object.freeze({
 });
 
 const IDLE_DERIVED_PROPS = Object.freeze({
-  headerVoice: IDLE_HEADER_VOICE as HeaderVoiceViewProps,
-  voiceToast: IDLE_VOICE_TOAST as VoiceToastViewProps,
+  headerVoice: IDLE_HEADER_VOICE,
+  voiceToast: IDLE_VOICE_TOAST,
 });
 
 export function deriveVoiceHudProps(state: {
-  activeState: VoiceState | string;
+  /** Usually a VoiceState, but unknown server states are tolerated and rendered as idle. */
+  activeState: string;
   transcript?: string | null;
   reply?: string | null;
   ttsEngine?: string | null;
@@ -156,7 +157,7 @@ export function deriveVoiceHudProps(state: {
   }
 
   const toastVisible =
-    isActive && activeState === 'speaking' && Boolean(reply) && !turnDismissed;
+    activeState === 'speaking' && Boolean(reply) && !turnDismissed;
   const toastBadgeText = toastVisible && ttsEngine ? ttsEngine.toLowerCase() : null;
   const toastBodyText = toastVisible && reply ? reply : null;
 
@@ -165,7 +166,7 @@ export function deriveVoiceHudProps(state: {
     stateClass,
     iconKind,
     label,
-    statusText: isActive ? statusText : null,
+    statusText,
     transcriptText,
     showDot: false,
     showPulse,
@@ -209,9 +210,9 @@ function computeNextLocal(prevLocal: VoiceLocalState, voice: VoiceSlice): VoiceL
   if (voice === prevLocal.prevVoice) {
     return prevLocal;
   }
-  const rawState = voice?.state ?? 'idle';
+  const rawState = voice.state;
   const normalizedStatus =
-    voice?.status && voice.status.trim().length > 0 ? voice.status : null;
+    voice.status && voice.status.trim().length > 0 ? voice.status : null;
   let nextDismissed = prevLocal.turnDismissed;
   let nextStatus = prevLocal.statusText;
 
@@ -260,13 +261,13 @@ export function useVoiceHudState(): VoiceHudSnapshot {
   };
 
   const isReset = effectiveLocal.resetForVoice !== null && effectiveLocal.resetForVoice === voice;
-  const rawActiveState = (voice?.state ?? 'idle') as VoiceState;
+  const rawActiveState = voice.state;
   const activeState: VoiceState = isReset ? 'idle' : rawActiveState;
   const effectiveStatus = isReset ? null : effectiveLocal.statusText;
   const effectiveDismissed = effectiveLocal.turnDismissed;
-  const transcript = voice?.transcript ?? null;
-  const reply = voice?.reply ?? null;
-  const ttsEngine = voice?.tts_engine ?? null;
+  const transcript = voice.transcript ?? null;
+  const reply = voice.reply ?? null;
+  const ttsEngine = voice.tts_engine ?? null;
 
   const { headerVoice, voiceToast } = deriveVoiceHudProps({
     activeState,

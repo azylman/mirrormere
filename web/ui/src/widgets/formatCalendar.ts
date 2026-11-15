@@ -171,7 +171,7 @@ export function calendarFeedDayGroups(
 ): CalendarFeedDayGroup[] {
   if (!data || typeof data !== 'object') return [];
 
-  const effectiveRefTime = refTime && !isNaN(refTime.getTime()) ? refTime : new Date();
+  const effectiveRefTime = !isNaN(refTime.getTime()) ? refTime : new Date();
 
   let rawEvents: unknown[] | null = null;
   if (Array.isArray(data)) {

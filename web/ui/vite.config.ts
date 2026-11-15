@@ -13,7 +13,7 @@ export default defineConfig({
   build: {
     outDir: '../static/ui',
     emptyOutDir: true,
-    rollupOptions: {
+    rolldownOptions: {
       // The JS entry, not index.html: index.html is only the dev-server shell.
       input: 'src/main.tsx',
       output: {

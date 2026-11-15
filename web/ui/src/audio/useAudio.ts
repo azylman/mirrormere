@@ -34,11 +34,10 @@ export const DUCK_VOICE_STATES: ReadonlySet<string> = new Set([
  */
 export function computeEffectiveVolume(
   volume: number,
-  isMuted: boolean = false,
-  isDucked: boolean = false,
+  isMuted = false,
+  isDucked = false,
 ): number {
-  const num = Number(volume);
-  const vol = Number.isNaN(num) ? 0 : Math.max(0, Math.min(100, num));
+  const vol = Number.isNaN(volume) ? 0 : Math.max(0, Math.min(100, volume));
   const muteMultiplier = isMuted ? 0.0 : 1.0;
   const duckMultiplier = isDucked ? DUCK_MULTIPLIER : 1.0;
 
@@ -64,7 +63,7 @@ export class AudioController {
   public mediaElements: Set<HTMLMediaElement>;
 
   constructor(options: AudioControllerOptions = {}) {
-    const rawVol = options.initialVolume !== undefined ? Number(options.initialVolume) : 75;
+    const rawVol = options.initialVolume ?? 75;
     this.volume = Number.isNaN(rawVol) ? 75 : Math.max(0, Math.min(100, rawVol));
     this.isMuted = Boolean(options.initialMuted);
     this.isDucked = false;
@@ -82,7 +81,7 @@ export class AudioController {
   }
 
   set muted(val: boolean) {
-    this.isMuted = Boolean(val);
+    this.isMuted = val;
   }
 
   get ducked(): boolean {
@@ -90,7 +89,7 @@ export class AudioController {
   }
 
   set ducked(val: boolean) {
-    this.isDucked = Boolean(val);
+    this.isDucked = val;
   }
 
   /**
@@ -99,13 +98,12 @@ export class AudioController {
   handleAudioState(data?: Partial<AudioSlice> | null): void {
     if (!data) return;
     if (data.volume !== undefined) {
-      const v = Number(data.volume);
-      if (!Number.isNaN(v)) {
-        this.volume = Math.max(0, Math.min(100, v));
+      if (!Number.isNaN(data.volume)) {
+        this.volume = Math.max(0, Math.min(100, data.volume));
       }
     }
     if (data.muted !== undefined) {
-      this.isMuted = Boolean(data.muted);
+      this.isMuted = data.muted;
     }
     this.applyVolumeToAll();
   }
@@ -121,9 +119,8 @@ export class AudioController {
    * Sets ducking attenuation state idempotently and reapplies effective volume.
    */
   setDucked(ducked: boolean): void {
-    const nextDucked = Boolean(ducked);
-    if (this.isDucked === nextDucked) return;
-    this.isDucked = nextDucked;
+    if (this.isDucked === ducked) return;
+    this.isDucked = ducked;
     this.applyVolumeToAll();
   }
 
@@ -138,7 +135,6 @@ export class AudioController {
    * Registers an HTMLMediaElement and immediately applies current effective volume.
    */
   registerMediaElement(element: HTMLMediaElement): void {
-    if (!element) return;
     this.mediaElements.add(element);
     this.applyVolumeToElement(element);
   }
@@ -147,7 +143,6 @@ export class AudioController {
    * Unregisters an HTMLMediaElement from volume management.
    */
   unregisterMediaElement(element: HTMLMediaElement): void {
-    if (!element) return;
     this.mediaElements.delete(element);
   }
 
@@ -155,7 +150,6 @@ export class AudioController {
    * Applies the current effective volume to an individual HTMLMediaElement.
    */
   applyVolumeToElement(element: HTMLMediaElement): void {
-    if (!element) return;
     try {
       const effective = this.getEffectiveVolume();
       element.volume = effective;
@@ -171,7 +165,7 @@ export class AudioController {
    */
   applyVolumeToAll(): void {
     for (const element of this.mediaElements) {
-      if (!element || element.isConnected === false) {
+      if (!element.isConnected) {
         this.mediaElements.delete(element);
         continue;
       }
@@ -199,8 +193,8 @@ export function useAudioController(): AudioController {
   const [controller] = useState(
     () =>
       new AudioController({
-        initialVolume: audio?.volume ?? 75,
-        initialMuted: audio?.muted ?? false,
+        initialVolume: audio.volume,
+        initialMuted: audio.muted,
       }),
   );
 

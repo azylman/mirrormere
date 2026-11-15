@@ -80,7 +80,8 @@ export interface FamilyViewModel {
   range_end: string;
   range_label: string;
   today: string;
-  time_format?: '12h' | '24h' | string;
+  /** '12h' or '24h' in practice; any other value falls back to 24h. */
+  time_format?: string;
   hours_start?: string | undefined;
   hours_end?: string | undefined;
   hour_markers?: string[];
@@ -131,7 +132,8 @@ export interface FamilyMonthViewModel {
   range_start: string;
   range_end: string;
   today: string;
-  weekday_headers: string[];
+  /** Go nil slice: serialised as null when the month view is not populated. */
+  weekday_headers?: string[] | null;
   members?: FamilyMember[];
   weeks?: FamilyMonthWeek[] | undefined;
   days?: FamilyMonthDay[] | undefined;

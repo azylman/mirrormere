@@ -6,7 +6,7 @@ export function applyCursorSuppression(search?: string, body?: HTMLElement | nul
   const targetBody = body !== undefined ? body : (typeof document !== 'undefined' ? document.body : null);
   if (!targetBody) return;
 
-  const searchStr = search !== undefined ? search : (typeof window !== 'undefined' && window.location ? window.location.search : '');
+  const searchStr = search !== undefined ? search : (typeof window !== 'undefined' ? window.location.search : '');
   if (!searchStr) return;
 
   const urlParams = new URLSearchParams(searchStr);

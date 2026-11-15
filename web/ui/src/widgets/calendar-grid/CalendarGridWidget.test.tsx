@@ -664,7 +664,7 @@ describe('CalendarGridWidget', () => {
     });
     expect(requestedUrl).toContain('date=2026-11-01');
     const todayBadge = container.querySelector('.cf-today-badge') as HTMLElement;
-    expect(todayBadge?.style.display).not.toBe('none');
+    expect(todayBadge.style.display).not.toBe('none');
 
     const weekBtn = container.querySelector('.cf-view-btn[data-view="week"]')!;
     await act(async () => {
@@ -739,7 +739,7 @@ describe('CalendarGridWidget', () => {
     expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('0');
     expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-current-date')).toBe('2026-10-27');
     const todayBadge = container.querySelector('.cf-today-badge') as HTMLElement;
-    expect(todayBadge?.style.display).toBe('none');
+    expect(todayBadge.style.display).toBe('none');
   });
 
   it('tracks baseDate and baseWeekStart updates when resting without flipping isInteractive or pausing store', () => {
@@ -858,7 +858,7 @@ describe('CalendarGridWidget', () => {
 
     expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('1');
     const todayBadge = container.querySelector('.cf-today-badge') as HTMLElement;
-    expect(todayBadge?.style.display).not.toBe('none');
+    expect(todayBadge.style.display).not.toBe('none');
   });
 
   describe('cf-now-indicator', () => {

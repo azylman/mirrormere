@@ -76,8 +76,7 @@ export function rotateChangesLayout(layout: readonly ScreenLayout[], data: Scree
   return current.some((w, i) => {
     const next = incoming[i];
     return (
-      !next ||
-      w.widget_id !== next.widget_id ||
+      w.widget_id !== next?.widget_id ||
       w.origin[0] !== next.origin[0] ||
       w.origin[1] !== next.origin[1] ||
       w.dimensions[0] !== next.dimensions[0] ||
@@ -118,7 +117,6 @@ export function needsHydrate(id: string, dimensions?: [number, number]): boolean
   if (!entry?.meta) return true;
   if (
     dimensions !== undefined &&
-    entry.meta.dimensions !== undefined &&
     (entry.meta.dimensions[0] !== dimensions[0] || entry.meta.dimensions[1] !== dimensions[1])
   ) {
     return true;
@@ -143,7 +141,7 @@ function applyWidgetEvent(
 ): void {
   const { widget_id: id, state: health, timestamp, data: widgetData } = data;
   const current = (ctx.widgets ?? ctx.state.widgets)[id];
-  if (!current || current.state !== health || !deepEqual(current.data, widgetData)) {
+  if (current?.state !== health || !deepEqual(current.data, widgetData)) {
     ctx.widgets ??= { ...ctx.state.widgets };
     // Keep the previous data reference when only the state changed.
     const keepData = current !== undefined && deepEqual(current.data, widgetData);
@@ -308,7 +306,7 @@ export const useDisplayStore = create<DisplayStore>()((set, get) => ({
     // unless a widget reload landed in between or the caller asked for a fresh one.
     const reloadsNow = get().widgetReloads;
     const existing = inflight.get(id);
-    if (!opts?.fresh && existing && existing.reloads === reloadsNow) return existing.promise;
+    if (!opts?.fresh && existing?.reloads === reloadsNow) return existing.promise;
 
     const run = async (): Promise<void> => {
       const seq = (hydrateSeq.get(id) ?? 0) + 1;

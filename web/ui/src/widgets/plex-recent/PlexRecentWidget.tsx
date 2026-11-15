@@ -10,11 +10,11 @@ export interface PlexItem {
   id: string | number;
   title: string;
   subtitle?: string;
-  year?: string | number;
+  year?: string | number | null;
   category?: string; // 'movie' | 'tv' | 'audiobook' | 'upcoming'
   type?: string;
   badge?: string;
-  rating?: number | string;
+  rating?: number | string | null;
   thumb?: string;
   summary?: string;
 }
@@ -50,7 +50,7 @@ function formatDetailSub(item: PlexItem): string {
 }
 
 function formatBadge(item: PlexItem): string {
-  if (item.badge) return String(item.badge).toUpperCase();
+  if (item.badge) return item.badge.toUpperCase();
   if (item.category === 'audiobook') return 'BOOK';
   if (item.category === 'tv') return 'TV';
   return 'MOVIE';
@@ -89,7 +89,7 @@ function WarningIcon() {
  */
 export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
-  const config = entry?.meta?.config as Record<string, unknown> | undefined;
+  const config = entry.meta?.config;
   const rawApiBase = config?.api_base ?? config?.apiBase;
   const apiBase =
     typeof rawApiBase === 'string' && rawApiBase.trim() !== ''
@@ -124,15 +124,15 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
       try {
         const [recentRes, upcomingRes] = await Promise.all([
           fetch(`${apiBase}/plex/recent`)
-            .then((r) => (r.ok ? r.json() : { items: [] }))
+            .then((r) => (r.ok ? (r.json() as Promise<{ items?: unknown }>) : { items: [] }))
             .catch(() => ({ items: [] })),
           fetch(`${apiBase}/plex/upcoming`)
-            .then((r) => (r.ok ? r.json() : { items: [] }))
+            .then((r) => (r.ok ? (r.json() as Promise<{ items?: unknown }>) : { items: [] }))
             .catch(() => ({ items: [] })),
         ]);
         if (!cancelled) {
-          const nextRecent = Array.isArray(recentRes?.items) ? recentRes.items : [];
-          const nextUpcoming = Array.isArray(upcomingRes?.items) ? upcomingRes.items : [];
+          const nextRecent = Array.isArray(recentRes.items) ? (recentRes.items as PlexItem[]) : [];
+          const nextUpcoming = Array.isArray(upcomingRes.items) ? (upcomingRes.items as PlexItem[]) : [];
           setRecentItems((prev) => (JSON.stringify(prev) === JSON.stringify(nextRecent) ? prev : nextRecent));
           setUpcomingItems((prev) => (JSON.stringify(prev) === JSON.stringify(nextUpcoming) ? prev : nextUpcoming));
         }
@@ -158,7 +158,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
       const timer = window.setTimeout(() => {
         seerrInputRef.current?.focus();
       }, 50);
-      return () => window.clearTimeout(timer);
+      return () => { window.clearTimeout(timer); };
     }
   }, [isSeerrOpen]);
 
@@ -185,7 +185,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
           type: selectedItem.type || selectedItem.category,
         }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json().catch(() => ({}))) as { ok?: unknown } | null;
       if (res.ok && data?.ok !== false) {
         setTvPlayState('success');
         setSharedPlexSession({
@@ -205,7 +205,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
     }
   };
 
-  const handleSeerrSearch = async (e: React.FormEvent) => {
+  const handleSeerrSearch = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     const q = seerrQuery.trim();
     if (!q) return;
@@ -213,8 +213,8 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
     setSeerrSearchError(false);
     try {
       const res = await fetch(`${apiBase}/seerr/search?q=${encodeURIComponent(q)}`);
-      const data = await res.json();
-      setSeerrResults(Array.isArray(data?.items) ? data.items : []);
+      const data = (await res.json()) as { items?: unknown } | null;
+      setSeerrResults(Array.isArray(data?.items) ? (data.items as SeerrResultItem[]) : []);
       setSeerrSearching(false);
     } catch {
       setSeerrSearching(false);
@@ -235,7 +235,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
           tmdb_id: Number(item.tmdb_id),
         }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json().catch(() => ({}))) as { ok?: unknown } | null;
       if (res.ok && data?.ok !== false) {
         setReqStatusMap((prev) => ({ ...prev, [key]: 'requested' as const }));
       } else {
@@ -285,7 +285,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
               className={`tab-btn ${activeCat === cat.key ? 'active' : ''}`}
               data-cat={cat.key}
               aria-label={cat.label}
-              onClick={() => setActiveCat(cat.key)}
+              onClick={() => { setActiveCat(cat.key); }}
             >
               {cat.label}
             </button>
@@ -296,7 +296,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
           className="req-open-btn"
           id="open-seerr-btn"
           aria-label="Request media"
-          onClick={() => setIsSeerrOpen(true)}
+          onClick={() => { setIsSeerrOpen(true); }}
         >
           + Request
         </button>
@@ -371,7 +371,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
                     className="seerr-btn seerr-close"
                     id="close-detail-btn"
                     aria-label="Close details"
-                    onClick={() => setSelectedItem(null)}
+                    onClick={() => { setSelectedItem(null); }}
                   >
                     ✕
                   </button>
@@ -387,7 +387,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
                       id="tv-play-btn"
                       aria-label={playBtnAriaLabel}
                       disabled={tvPlayState === 'loading' || tvPlayState === 'success'}
-                      onClick={handleTvPlay}
+                      onClick={() => { void handleTvPlay(); /* handles its own errors */ }}
                     >
                       {playBtnContent}
                     </button>
@@ -402,14 +402,14 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
       {/* Seerr Request Modal */}
       <ViewTransition default="none">
         <div className={`overlay-modal ${isSeerrOpen ? 'open' : ''}`} id="seerr-modal" data-prevent-screen-swipe="">
-          <form className="seerr-bar" id="seerr-form" onSubmit={handleSeerrSearch}>
+          <form className="seerr-bar" id="seerr-form" onSubmit={(e) => { void handleSeerrSearch(e); /* handles its own errors */ }}>
             <input
               ref={seerrInputRef}
               type="text"
               className="seerr-input" data-prevent-screen-swipe=""
               id="seerr-input"
               value={seerrQuery}
-              onChange={(e) => setSeerrQuery(e.target.value)}
+              onChange={(e) => { setSeerrQuery(e.target.value); }}
               placeholder="Search Seerr for a movie or TV show..."
               autoComplete="off"
             />
@@ -421,7 +421,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
               className="seerr-btn seerr-close"
               id="close-seerr-btn"
               aria-label="Close search"
-              onClick={() => setIsSeerrOpen(false)}
+              onClick={() => { setIsSeerrOpen(false); }}
             >
               Close
             </button>
@@ -474,7 +474,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
                         data-id={String(item.tmdb_id)}
                         aria-label={btnLabel}
                         disabled={isDisabled}
-                        onClick={() => handleSeerrRequest(item)}
+                        onClick={() => { void handleSeerrRequest(item); /* handles its own errors */ }}
                       >
                         {btnLabel}
                       </button>

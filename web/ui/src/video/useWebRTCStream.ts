@@ -24,6 +24,7 @@ export function safePlay(video: HTMLVideoElement | null): void {
   if (!video || typeof video.play !== 'function') return;
   try {
     const p = video.play();
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- jsdom's play() returns undefined, not a Promise
     if (p !== undefined && typeof p.catch === 'function') {
       p.catch((err: unknown) => {
         console.warn('[MirrormereVideo] Playback prevented by browser autoplay policy:', err);
@@ -89,6 +90,8 @@ export function useWebRTCStream({
     }
 
     let cancelled = false;
+    // Read through a call: cleanup flips `isCancelled()` across awaits, which TS narrowing cannot see.
+    const isCancelled = (): boolean => cancelled;
     let pc: RTCPeerConnection | null = null;
     let mountedVideoEl: HTMLVideoElement | null = videoRef.current;
     let reconnectAttempts = 0;
@@ -129,7 +132,7 @@ export function useWebRTCStream({
     };
 
     const scheduleReconnect = (): void => {
-      if (cancelled || reconnectTimer) return;
+      if (isCancelled() || reconnectTimer) return;
 
       if (reconnectAttempts >= maxReconnectAttempts) {
         console.warn(
@@ -146,14 +149,14 @@ export function useWebRTCStream({
 
       reconnectTimer = setTimeout(async () => {
         reconnectTimer = null;
-        if (cancelled) return;
+        if (isCancelled()) return;
         await reconnect();
       }, delay);
       tryUnref(reconnectTimer);
     };
 
     const handleConnectionChange = (currentPC: RTCPeerConnection): void => {
-      if (cancelled || !currentPC) return;
+      if (isCancelled()) return;
 
       const connState = currentPC.connectionState;
       const iceState = currentPC.iceConnectionState;
@@ -197,38 +200,34 @@ export function useWebRTCStream({
         if (!disconnectTimer) {
           disconnectTimer = setTimeout(() => {
             disconnectTimer = null;
-            if (cancelled) return;
+            if (isCancelled()) return;
             scheduleReconnect();
           }, disconnectTimeout);
           tryUnref(disconnectTimer);
         }
         return;
       }
-
-      // 5. Closed unexpectedly
-      if ((connState === 'closed' || iceState === 'closed') && !cancelled) {
-        scheduleReconnect();
-      }
+      // 'closed' needs no branch: it is only reached through our own close(), which fires no state-change event.
     };
 
     const negotiate = async (currentPC: RTCPeerConnection): Promise<void> => {
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       try {
         const offer = await currentPC.createOffer();
-        if (cancelled || pc !== currentPC) {
+        if (isCancelled() || pc !== currentPC) {
           closePC(currentPC);
           return;
         }
 
         await currentPC.setLocalDescription(offer);
-        if (cancelled || pc !== currentPC) {
+        if (isCancelled() || pc !== currentPC) {
           closePC(currentPC);
           return;
         }
 
         // Wait for ICE gathering completion or 500ms safety timeout
         await new Promise<void>((resolve) => {
-          if (currentPC.iceGatheringState === 'complete') return resolve();
+          if (currentPC.iceGatheringState === 'complete') { resolve(); return; }
           let settled = false;
           let iceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -264,7 +263,7 @@ export function useWebRTCStream({
           tryUnref(iceTimer);
         });
 
-        if (cancelled || pc !== currentPC) {
+        if (isCancelled() || pc !== currentPC) {
           closePC(currentPC);
           return;
         }
@@ -276,11 +275,9 @@ export function useWebRTCStream({
             ? window.fetch.bind(window)
             : fetch);
 
-        if (!effectiveFetch) return;
-
         const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
         if (controller) {
-          timeoutId = setTimeout(() => controller.abort(), negotiationTimeout);
+          timeoutId = setTimeout(() => { controller.abort(); }, negotiationTimeout);
           tryUnref(timeoutId);
         }
 
@@ -296,7 +293,7 @@ export function useWebRTCStream({
           timeoutId = null;
         }
 
-        if (cancelled || pc !== currentPC) {
+        if (isCancelled() || pc !== currentPC) {
           closePC(currentPC);
           return;
         }
@@ -306,14 +303,14 @@ export function useWebRTCStream({
         }
 
         const text = await res.text();
-        if (cancelled || pc !== currentPC) {
+        if (isCancelled() || pc !== currentPC) {
           closePC(currentPC);
           return;
         }
 
         let answerSDP = text;
         try {
-          const json = JSON.parse(text) as { sdp?: string };
+          const json = JSON.parse(text) as { sdp?: string } | null;
           if (json && typeof json.sdp === 'string') {
             answerSDP = json.sdp;
           }
@@ -324,7 +321,7 @@ export function useWebRTCStream({
         await currentPC.setRemoteDescription({ type: 'answer', sdp: answerSDP });
         if (typeof currentPC.getReceivers === 'function') {
           for (const receiver of currentPC.getReceivers()) {
-            if (receiver?.track?.kind === 'video') {
+            if (receiver.track.kind === 'video') {
               applyZeroLatencyPlayoutDelay(receiver);
             }
           }
@@ -333,7 +330,7 @@ export function useWebRTCStream({
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
-        if (!cancelled) {
+        if (!isCancelled()) {
           console.warn('[MirrormereVideo] WebRTC SDP negotiation failed:', err);
           closePC(currentPC);
           if (pc === currentPC) pc = null;
@@ -343,7 +340,7 @@ export function useWebRTCStream({
     };
 
     const connect = async (): Promise<void> => {
-      if (cancelled || !PeerConnection) return;
+      if (isCancelled() || !PeerConnection) return;
 
       try {
         const newPC = new PeerConnection();
@@ -352,21 +349,19 @@ export function useWebRTCStream({
         if (typeof newPC.addTransceiver === 'function') {
           const videoTransceiver = newPC.addTransceiver('video', { direction: 'recvonly' });
           newPC.addTransceiver('audio', { direction: 'recvonly' });
-          if (videoTransceiver && videoTransceiver.receiver) {
-            applyZeroLatencyPlayoutDelay(videoTransceiver.receiver);
-          }
+          applyZeroLatencyPlayoutDelay(videoTransceiver.receiver);
         }
 
         newPC.ontrack = (event: RTCTrackEvent) => {
-          if (cancelled) return;
-          if (event.receiver && event.track && event.track.kind === 'video') {
+          if (isCancelled()) return;
+          if (event.track.kind === 'video') {
             applyZeroLatencyPlayoutDelay(event.receiver);
           }
           const videoEl = videoRef.current;
           if (!videoEl) return;
           mountedVideoEl = videoEl;
 
-          if (event.streams && event.streams[0]) {
+          if (event.streams[0]) {
             videoEl.srcObject = event.streams[0];
           } else {
             const MediaStreamConstructor =
@@ -380,22 +375,21 @@ export function useWebRTCStream({
             }
             if (
               videoEl.srcObject &&
-              typeof (videoEl.srcObject as MediaStream).addTrack === 'function' &&
-              event.track
+              typeof (videoEl.srcObject as MediaStream).addTrack === 'function'
             ) {
               (videoEl.srcObject as MediaStream).addTrack(event.track);
             }
           }
         };
 
-        const onConnChange = (): void => handleConnectionChange(newPC);
+        const onConnChange = (): void => { handleConnectionChange(newPC); };
         newPC.oniceconnectionstatechange = onConnChange;
         newPC.onconnectionstatechange = onConnChange;
 
         await negotiate(newPC);
       } catch (err: unknown) {
         console.warn('[MirrormereVideo] RTCPeerConnection initialization error:', err);
-        if (!cancelled) {
+        if (!isCancelled()) {
           scheduleReconnect();
         }
       }
@@ -404,7 +398,7 @@ export function useWebRTCStream({
     };
 
     const reconnect = async (): Promise<void> => {
-      if (cancelled) return;
+      if (isCancelled()) return;
       closePC(pc);
       pc = null;
       flushHardwareBuffer();

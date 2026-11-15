@@ -21,7 +21,7 @@ function ParentWithUnrelatedState() {
 
   return (
     <div>
-      <button type="button" data-testid="inc-btn" onClick={() => setCounter((c) => c + 1)}>
+      <button type="button" data-testid="inc-btn" onClick={() => { setCounter((c) => c + 1); }}>
         {counter}
       </button>
       <PlainChild items={items} onClick={() => {}} />

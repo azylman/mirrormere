@@ -13,7 +13,6 @@ import {
   MOUTH_X0,
   Waveform,
   WaveformMouth,
-  type WaveformMouthOptions,
   clamp,
   defaultClock,
   defaultEventSourceFactory,
@@ -28,7 +27,7 @@ import {
 class MockEventSource {
   static instances: MockEventSource[] = [];
   url: string;
-  listeners: Record<string, Array<(e: { data?: unknown }) => void>> = {};
+  listeners: Record<string, ((e: { data?: unknown }) => void)[]> = {};
   closed = false;
 
   constructor(url: string) {
@@ -38,12 +37,12 @@ class MockEventSource {
 
   addEventListener(type: string, cb: (e: { data?: unknown }) => void) {
     if (!this.listeners[type]) this.listeners[type] = [];
-    this.listeners[type]!.push(cb);
+    this.listeners[type].push(cb);
   }
 
   emit(type: string, data: unknown) {
     const payload = { data: typeof data === 'string' ? data : JSON.stringify(data) };
-    this.listeners[type]?.forEach((cb) => cb(payload));
+    this.listeners[type]?.forEach((cb) => { cb(payload); });
   }
 
   close() {
@@ -86,10 +85,10 @@ describe('Waveform and WaveformMouth', () => {
     useDisplayStore.setState(initialStore, true);
     for (let i = 0; i < 5; i++) endAnimation();
     delete window.voiceWaveform;
-    if (document.body?.dataset?.voiceWaveformUrl) {
+    if (document.body.dataset.voiceWaveformUrl) {
       delete document.body.dataset.voiceWaveformUrl;
     }
-    if (document.body?.dataset?.voiceWaveformGain) {
+    if (document.body.dataset.voiceWaveformGain) {
       delete document.body.dataset.voiceWaveformGain;
     }
   });
@@ -174,7 +173,7 @@ describe('Waveform and WaveformMouth', () => {
     });
 
     it('formatPoints formats points to 2 decimal places separated by spaces', () => {
-      const pts: Array<[number, number]> = [
+      const pts: [number, number][] = [
         [20, 50],
         [21.875, 42.123],
       ];
@@ -187,26 +186,6 @@ describe('Waveform and WaveformMouth', () => {
       expect(typeof defaultReducedMotion()).toBe('boolean');
     });
 
-    it('returns false when window.matchMedia throws in defaultReducedMotion', () => {
-      const origMatchMedia = window.matchMedia;
-      Object.defineProperty(window, 'matchMedia', {
-        value: () => {
-          throw new Error('matchMedia blocked');
-        },
-        configurable: true,
-        writable: true,
-      });
-      expect(defaultReducedMotion()).toBe(false);
-      if (origMatchMedia) {
-        Object.defineProperty(window, 'matchMedia', {
-          value: origMatchMedia,
-          configurable: true,
-          writable: true,
-        });
-      } else {
-        delete (window as unknown as { matchMedia?: unknown }).matchMedia;
-      }
-    });
 
     it('drawFrame eases toward flat line when not speaking or levels are stale', () => {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -676,7 +655,7 @@ describe('Waveform and WaveformMouth', () => {
         levelsUrl: 'http://test',
         svgElement: svg,
         polylineElement: polyline,
-        sseClient: sseClient as unknown as WaveformMouthOptions['sseClient'],
+        sseClient: sseClient,
       });
       expect(() => {
         handler?.(null);

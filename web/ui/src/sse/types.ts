@@ -55,6 +55,8 @@ export interface HeaderWeather {
   weather_code?: number;
   icon?: string;
   condition?: string;
+  /** Free-text description that overrides the icon/condition mapping. */
+  description?: string;
   location?: string;
 }
 
@@ -79,8 +81,8 @@ export interface VideoSource {
   muted?: boolean;
   title?: string;
   series?: string;
-  season?: string | number;
-  episode?: string | number;
+  season?: string | number | null;
+  episode?: string | number | null;
   position?: number;
   duration?: number;
   position_updated_at?: number;

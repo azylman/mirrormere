@@ -28,9 +28,9 @@ export function parseLiveViewConfig(raw: unknown, fallbackId = ''): LiveViewConf
     obj = raw as Record<string, unknown>;
   } else if (typeof raw === 'string') {
     try {
-      let parsed = JSON.parse(raw);
+      let parsed = JSON.parse(raw) as unknown;
       if (typeof parsed === 'string') {
-        try { parsed = JSON.parse(parsed); } catch { /* ignore */ }
+        try { parsed = JSON.parse(parsed) as unknown; } catch { /* ignore */ }
       }
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         obj = parsed as Record<string, unknown>;
@@ -50,7 +50,7 @@ export function parseLiveViewConfig(raw: unknown, fallbackId = ''): LiveViewConf
   const controllable = Boolean(obj.controllable);
   const controlUrl = typeof obj.control_url === 'string' ? obj.control_url : '';
   const expandStreamUrl = typeof obj.expand_stream_url === 'string' && obj.expand_stream_url.trim() !== '' ? obj.expand_stream_url : streamUrl;
-  const expandStreamType = typeof obj.expand_stream_type === 'string' && obj.expand_stream_type.trim() !== '' ? obj.expand_stream_type : (streamType || 'webrtc');
+  const expandStreamType = typeof obj.expand_stream_type === 'string' && obj.expand_stream_type.trim() !== '' ? obj.expand_stream_type : streamType;
   const timeoutNum = Number(obj.timeout_seconds);
   const timeoutSeconds = obj.timeout_seconds !== undefined && obj.timeout_seconds !== null && !isNaN(timeoutNum) && timeoutNum > 0 ? timeoutNum : undefined;
 
@@ -84,23 +84,17 @@ function waitForIceGathering(pc: RTCPeerConnection, signal: AbortSignal): Promis
 }
 
 function attachTrackToVideo(video: HTMLVideoElement, event: RTCTrackEvent): void {
-  if (event.streams && event.streams[0]) {
+  if (event.streams[0]) {
     video.srcObject = event.streams[0];
-  } else if (event.track) {
+  } else {
     const MediaStreamCtor = typeof MediaStream !== 'undefined'
       ? MediaStream
       : (window as unknown as { MediaStream?: typeof MediaStream }).MediaStream;
     if (MediaStreamCtor) {
-      try {
-        video.srcObject = new MediaStreamCtor([event.track]);
-      } catch {
-        const ms = new MediaStreamCtor();
-        if (typeof ms.addTrack === 'function') ms.addTrack(event.track);
-        video.srcObject = ms;
-      }
+      video.srcObject = new MediaStreamCtor([event.track]);
     }
   }
-  video.play?.()?.catch?.(() => {});
+  video.play().catch(() => { /* autoplay can be refused; the element stays paused */ });
 }
 
 async function exchangeWhepSDP(streamUrl: string, sdpOffer: string, signal: AbortSignal): Promise<string> {
@@ -113,15 +107,14 @@ async function exchangeWhepSDP(streamUrl: string, sdpOffer: string, signal: Abor
   if (!res.ok) throw new Error(`SDP exchange failed with HTTP ${res.status}`);
   const resText = await res.text();
   try {
-    const json = JSON.parse(resText);
+    const json = JSON.parse(resText) as { sdp?: unknown } | null;
     if (json && typeof json.sdp === 'string') return json.sdp;
   } catch { /* use raw text */ }
   return resText;
 }
 
 function getPointerCoords(e: React.PointerEvent | React.TouchEvent | React.MouseEvent): { x: number; y: number } | null {
-  const touchEvt = e as unknown as React.TouchEvent;
-  const touch = touchEvt.changedTouches?.[0];
+  const touch = 'changedTouches' in e ? e.changedTouches[0] : undefined;
   if (touch) return { x: touch.clientX, y: touch.clientY };
   const mouseEvt = e as unknown as React.MouseEvent;
   if (typeof mouseEvt.clientX === 'number' && !isNaN(mouseEvt.clientX) && typeof mouseEvt.clientY === 'number' && !isNaN(mouseEvt.clientY)) {
@@ -134,9 +127,9 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
   const isCurrentPane = useIsCurrentPane();
   const isDocumentVisible = useDocumentVisible();
-  const videoMode = useDisplayStore((s) => s.video.mode || (s.video.primary ? 'video' : 'widgets'));
+  const videoMode = useDisplayStore((s) => s.video.mode);
 
-  const rawConfig = entry?.meta?.config ?? entry?.data;
+  const rawConfig = entry.meta?.config ?? entry.data;
   const config = parseLiveViewConfig(rawConfig, id);
 
   const {
@@ -187,13 +180,13 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.target === el) setIsIntersecting(Boolean(entry.isIntersecting));
+          if (entry.target === el) setIsIntersecting(entry.isIntersecting);
         }
       },
       { threshold: 0.1 },
     );
     observer.observe(el);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); };
   }, []);
 
   const stopDecoders = () => {
@@ -209,7 +202,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
       try { videoRef.current.removeAttribute('src'); } catch { /* ignore */ }
-      try { videoRef.current.pause?.(); } catch { /* ignore */ }
+      try { videoRef.current.pause(); } catch { /* ignore */ }
     }
     if (imgRef.current) {
       imgRef.current.src = '';
@@ -226,20 +219,22 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     }
     const epoch = ++epochRef.current;
     const ac = new AbortController();
+    // A newer start or the cleanup can supersede this negotiation across awaits.
+    const isStale = (): boolean => epochRef.current !== epoch || ac.signal.aborted;
     abortControllerRef.current = ac;
 
     if (streamType === 'mjpeg') {
       if (imgRef.current) imgRef.current.src = streamUrl;
-      return () => stopDecoders();
+      return () => { stopDecoders(); };
     }
     if (streamType === 'hls') {
       if (videoRef.current) {
         videoRef.current.muted = true;
         videoRef.current.volume = 0;
         videoRef.current.src = streamUrl;
-        videoRef.current.play?.()?.catch?.(() => {});
+        videoRef.current.play().catch(() => { /* autoplay can be refused; the element stays paused */ });
       }
-      return () => stopDecoders();
+      return () => { stopDecoders(); };
     }
 
     const startWebRTC = async () => {
@@ -262,34 +257,34 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
         };
 
         const offer = await pc.createOffer();
-        if (epochRef.current !== epoch || ac.signal.aborted) {
+        if (isStale()) {
           try { pc.close(); } catch { /* ignore */ }
           return;
         }
         await pc.setLocalDescription(offer);
-        if (epochRef.current !== epoch || ac.signal.aborted) {
+        if (isStale()) {
           try { pc.close(); } catch { /* ignore */ }
           return;
         }
 
         await waitForIceGathering(pc, ac.signal);
-        if (epochRef.current !== epoch || ac.signal.aborted) {
+        if (isStale()) {
           try { pc.close(); } catch { /* ignore */ }
           return;
         }
 
         const answerSdp = await exchangeWhepSDP(streamUrl, pc.localDescription?.sdp ?? '', ac.signal);
-        if (epochRef.current !== epoch || ac.signal.aborted) {
+        if (isStale()) {
           try { pc.close(); } catch { /* ignore */ }
           return;
         }
 
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-        if (epochRef.current !== epoch || ac.signal.aborted) {
+        if (isStale()) {
           try { pc.close(); } catch { /* ignore */ }
           return;
         }
-        videoRef.current?.play?.()?.catch?.(() => {});
+        videoRef.current?.play().catch(() => { /* autoplay can be refused; the element stays paused */ });
       } catch (err) {
         if (epochRef.current === epoch && !ac.signal.aborted) {
           console.warn(`[MirrormereLiveView] WebRTC negotiation error for ${id}:`, err);
@@ -298,7 +293,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     };
 
     void startWebRTC();
-    return () => stopDecoders();
+    return () => { stopDecoders(); };
   }, [shouldPlay, streamUrl, streamType, id]);
 
   const triggerExpand = async () => {
@@ -318,10 +313,10 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
       id: streamId,
       stream_url: expandStreamUrl || streamUrl,
       type: expandStreamType || streamType || 'webrtc',
-      priority: priority || 'persistent',
-      controllable: Boolean(controllable),
+      priority,
+      controllable: controllable,
       control_url: controlUrl || '',
-      ...(timeoutSeconds !== undefined && Number(timeoutSeconds) > 0 ? { timeout_seconds: Number(timeoutSeconds) } : {}),
+      ...(timeoutSeconds !== undefined && timeoutSeconds > 0 ? { timeout_seconds: timeoutSeconds } : {}),
     };
 
     if (controllable && controlUrl) {
@@ -329,7 +324,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: streamId, action: 'wake' }),
-      }).catch((err) => {
+      }).catch((err: unknown) => {
         console.warn('[MirrormereLiveView] Wake action failed:', err);
       });
     }

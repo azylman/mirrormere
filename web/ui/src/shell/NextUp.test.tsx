@@ -51,7 +51,7 @@ describe('parseEventDates', () => {
   const refNow = new Date('2026-10-31T10:00:00Z');
 
   it('returns null for invalid inputs', () => {
-    expect(parseEventDates(null as unknown as RawCalendarEvent, refNow)).toBeNull();
+    expect(parseEventDates(null, refNow)).toBeNull();
     expect(parseEventDates({ title: 'Invalid', start: 'invalid-date' }, refNow)).toBeNull();
   });
 
@@ -597,15 +597,13 @@ describe('NextUp component', () => {
   it('covers parseEventDates edge cases: date/dayDate fallbacks, standalone times, Date instances, UTC offset', () => {
     const baseNow = new Date('2026-10-31T12:00:00Z');
 
-    expect(parseEventDates(null as unknown as RawCalendarEvent, baseNow)).toBeNull();
-
     // All-day with date instead of start
-    const p1 = parseEventDates({ title: 'Ad Date', date: '2026-10-31', allDay: true } as unknown as RawCalendarEvent, baseNow, 'UTC');
+    const p1 = parseEventDates({ title: 'Ad Date', date: '2026-10-31', allDay: true }, baseNow, 'UTC');
     expect(p1).not.toBeNull();
     expect(p1?.startDate.toISOString()).toContain('2026-10-31');
 
     // All-day with dayDate
-    const p2 = parseEventDates({ title: 'Ad DayDate', dayDate: '2026-10-31', allDay: true } as unknown as RawCalendarEvent, baseNow, 'UTC');
+    const p2 = parseEventDates({ title: 'Ad DayDate', dayDate: '2026-10-31', allDay: true }, baseNow, 'UTC');
     expect(p2).not.toBeNull();
 
     // All-day with Date instances
@@ -1103,6 +1101,32 @@ describe('NextUp component', () => {
         subtitle: '4:15 left',
         actionLabel: 'Cancel',
       });
+    });
+
+    it('builds HA activities for entities whose attributes arrive as null', () => {
+      const refNow = new Date('2026-10-31T10:00:00Z');
+      // Go serializes a nil attribute map as null; titles fall back to the entity id.
+      const activities = selectHomeAssistantLiveActivities(
+        {
+          'ha-null': {
+            state: 'ok',
+            timestamp: '2026-10-31T10:00:00Z',
+            data: {
+              entities: {
+                'lock.side_door': { entity_id: 'lock.side_door', state: 'unlocked', attributes: null },
+                'timer.oven': { entity_id: 'timer.oven', state: 'active', attributes: null },
+                'sensor.team_tracker_bare': { entity_id: 'sensor.team_tracker_bare', state: 'in', attributes: null },
+              },
+            },
+          },
+        },
+        refNow,
+      );
+
+      expect(activities.slice(0, 2)).toMatchObject([
+        { kind: 'ha-alert', entityId: 'lock.side_door', title: 'side door', subtitle: 'Unlocked' },
+        { kind: 'ha-timer', entityId: 'timer.oven', title: 'oven', subtitle: 'Timer active' },
+      ]);
     });
 
     it('renders HA alert pill, dispatches 1-tap Lock action with optimistic store update, and navigates on pill click', async () => {

@@ -17,17 +17,17 @@ class MockRTCPeerConnection {
   public iceGatheringState: RTCIceGatheringState = 'complete';
   public localDescription: RTCSessionDescriptionInit | null = null;
   public remoteDescription: RTCSessionDescriptionInit | null = null;
-  public transceivers: Array<{
+  public transceivers: {
     kind: string;
     direction: string;
     receiver: { playoutDelayHint: number | null; track: { kind: string } };
-  }> = [];
+  }[] = [];
   public ontrack: ((ev: RTCTrackEvent) => void) | null = null;
   public onconnectionstatechange: ((ev: Event) => void) | null = null;
   public oniceconnectionstatechange: ((ev: Event) => void) | null = null;
   public closed = false;
 
-  private listeners = new Map<string, Array<(e: Event) => void>>();
+  private listeners = new Map<string, ((e: Event) => void)[]>();
 
   addEventListener(type: string, listener: (e: Event) => void): void {
     if (!this.listeners.has(type)) this.listeners.set(type, []);
@@ -76,7 +76,7 @@ class MockRTCPeerConnection {
     return t;
   }
 
-  getReceivers(): Array<{ playoutDelayHint: number | null; track: { kind: string } }> {
+  getReceivers(): { playoutDelayHint: number | null; track: { kind: string } }[] {
     return this.transceivers.map((t) => t.receiver);
   }
 
@@ -218,7 +218,7 @@ describe('VideoStage Declarative Suite', () => {
       expect(
         getNormalizedVideoCoordinates(
           { clientX: 100, clientY: 100 },
-          null as unknown as HTMLVideoElement,
+          null,
         ),
       ).toBeNull();
       const zeroRectVideo = {
@@ -391,7 +391,7 @@ describe('VideoStage Declarative Suite', () => {
         }
         return { ok: true, status: 200, text: async () => '' };
       });
-      window.fetch = mockFetch as unknown as typeof fetch;
+      window.fetch = mockFetch;
 
       render(<VideoStage />);
 
@@ -497,7 +497,7 @@ describe('VideoStage Declarative Suite', () => {
         ok: true,
         status: 200,
         text: async () => 'v=0\r\ns=answer',
-      }) as unknown as typeof fetch;
+      });
 
       render(<VideoStage />);
 
@@ -762,14 +762,14 @@ describe('VideoStage Declarative Suite', () => {
 
   describe('Touch Forwarding', () => {
     it('dispatches tap, move, and up actions over remoteUrl', async () => {
-      const dispatched: Array<{ url: string; body: unknown }> = [];
+      const dispatched: { url: string; body: unknown }[] = [];
       const mockFetch = vi.fn().mockImplementation(async (url: string, opts) => {
         if (opts?.body) {
           dispatched.push({ url, body: JSON.parse(opts.body) });
         }
         return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
       });
-      window.fetch = mockFetch as unknown as typeof fetch;
+      window.fetch = mockFetch;
       document.body.dataset.remoteUrl = 'http://sidecar:8092';
 
       render(<VideoStage />);
@@ -863,7 +863,7 @@ describe('VideoStage Declarative Suite', () => {
         'tap',
         0.5,
         0.5,
-        mockFetch as unknown as typeof fetch,
+        mockFetch,
       );
 
       expect(calls).toEqual(['http://sidecar:8092/touch', 'http://sidecar:8092/tap']);
@@ -1130,17 +1130,25 @@ describe('VideoStage Declarative Suite', () => {
     });
 
     it('handles VideoPlayerManager edge branches: undefined data, inferred mode, and swapped destroy', () => {
+      const { container, unmount } = render(<VideoStage />);
       const vpm = new VideoPlayerManager();
 
       // 1. undefined data
-      vpm.handleVideoState(undefined as unknown as import('../sse/types').VideoStatePayload);
+      vpm.handleVideoState(undefined);
 
-      // 2. data without mode but with primary and pip -> infers mode = 'video'
-      vpm.handleVideoState({
-        primary: { id: 'prim', stream_url: 'http://prim', type: 'mjpeg' },
-        pip: { id: 'pip2', stream_url: 'http://pip2', type: 'mjpeg' },
-      } as unknown as import('../sse/types').VideoStatePayload);
+      // 2. data without mode but with primary and pip -> infers mode = 'video' and shows the stage
+      act(() => {
+        vpm.handleVideoState({
+          primary: { id: 'prim', stream_url: 'http://prim', type: 'mjpeg' },
+          pip: { id: 'pip2', stream_url: 'http://pip2', type: 'mjpeg' },
+        });
+      });
       expect(vpm.currentMode).toBe('video');
+      expect(useDisplayStore.getState().video.mode).toBe('video');
+      expect(container.querySelector('.video-stage')?.classList.contains('active')).toBe(true);
+      // Unmount the stage so the swap below exercises this instance, not the window.videoManager bridge.
+      unmount();
+      delete window.videoManager;
 
       // 3. swapStreams when primary and pip both exist
       vpm.swapStreams();

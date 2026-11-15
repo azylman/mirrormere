@@ -10,9 +10,9 @@ export function observeDocumentVisibility(
   win: Window,
   setVisible: (visible: boolean) => void,
 ): () => void {
-  const onVisibilityChange = () => setVisible(!doc.hidden);
-  const onPageHide = () => setVisible(false);
-  const onPageShow = () => setVisible(!doc.hidden);
+  const onVisibilityChange = () => { setVisible(!doc.hidden); };
+  const onPageHide = () => { setVisible(false); };
+  const onPageShow = () => { setVisible(!doc.hidden); };
 
   doc.addEventListener('visibilitychange', onVisibilityChange);
   win.addEventListener('pagehide', onPageHide);

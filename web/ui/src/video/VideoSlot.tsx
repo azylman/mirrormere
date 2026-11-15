@@ -120,7 +120,7 @@ export function VideoSlot({
     const safetyTimer = setTimeout(() => {
       dismissSpinnerRef.current();
     }, 12000);
-    return () => clearTimeout(safetyTimer);
+    return () => { clearTimeout(safetyTimer); };
   }, [showSpinner, isLoaded]);
 
   // Audio focus registration on active full-screen video only
@@ -138,9 +138,7 @@ export function VideoSlot({
     }
 
     return () => {
-      if (el) {
-        audioController?.unregisterMediaElement?.(el);
-      }
+      audioController?.unregisterMediaElement?.(el);
     };
   }, [isPresentationPrimary, audioController, protocol, stream?.id]);
 
@@ -241,10 +239,8 @@ export function VideoSlot({
             dismissSpinner();
             if (protocol === 'webrtc') {
               handleWebRTCFallback();
-            } else if (protocol === 'hls') {
-              handleHlsFallback();
             } else {
-              handleTerminalFailure();
+              handleHlsFallback();
             }
           }}
           {...(isPresentationPrimary ? touchHandlers : {})}

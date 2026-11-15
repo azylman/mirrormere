@@ -164,7 +164,7 @@ function TaskRow({ item, defaultListId, onItemClick }: TaskRowProps) {
   const isDone = item.done;
   const isCompleting = item.isCompleting;
   const isPendingUndo = Boolean(item.isPendingUndo);
-  const title = String(item.title ?? item.Title ?? '');
+  const title = (item.title ?? item.Title ?? '');
   const section = item.section ?? item.Section;
   const assignee = item.assignee ?? item.Assignee;
   const dueDate = item.due_date ?? item.DueDate ?? item.due ?? item.Due;
@@ -182,7 +182,7 @@ function TaskRow({ item, defaultListId, onItemClick }: TaskRowProps) {
       data-list-id={listId}
       data-completing={isCompleting ? 'true' : undefined}
       data-pending-undo={isPendingUndo ? 'true' : undefined}
-      onClick={() => onItemClick(itemId, listId, isDone)}
+      onClick={() => { onItemClick(itemId, listId, isDone); }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -215,13 +215,13 @@ function TaskRow({ item, defaultListId, onItemClick }: TaskRowProps) {
         {hasTags && (
           <div className="task-tags">
             {section ? (
-              <span className="task-tag-section">#{String(section)}</span>
+              <span className="task-tag-section">#{section}</span>
             ) : null}
             {assignee ? (
-              <span className="task-tag-assignee">@{String(assignee)}</span>
+              <span className="task-tag-assignee">@{assignee}</span>
             ) : null}
             {dueDate ? (
-              <span className="task-tag-due">{String(dueDate)}</span>
+              <span className="task-tag-due">{dueDate}</span>
             ) : null}
           </div>
         )}
@@ -264,9 +264,9 @@ function TaskGroupSection({ items, defaultListId, onItemClick }: TaskGroupSectio
  */
 export function TasksWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
-  const config = entry?.meta?.config as Record<string, unknown> | undefined;
-  const data = entry?.data as Record<string, unknown> | undefined;
-  const isError = entry?.state === 'error';
+  const config = entry.meta?.config;
+  const data = entry.data as Record<string, unknown> | undefined;
+  const isError = entry.state === 'error';
 
   const isHydrated = Boolean(
     data && ('items' in data || 'Items' in data || 'list' in data || 'List' in data),
@@ -279,7 +279,7 @@ export function TasksWidget({ id }: WidgetComponentProps) {
   const [optimisticDone, setOptimisticDone] = useState<Record<string, boolean>>({});
   const [pendingUndo, setPendingUndo] = useState<Record<string, boolean>>({});
   const pendingTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const [prevSnapshot, setPrevSnapshot] = useState({ data, timestamp: entry?.timestamp });
+  const [prevSnapshot, setPrevSnapshot] = useState({ data, timestamp: entry.timestamp });
 
   useEffect(() => {
     return () => {
@@ -290,8 +290,8 @@ export function TasksWidget({ id }: WidgetComponentProps) {
     };
   }, []);
 
-  if (entry?.timestamp !== prevSnapshot.timestamp || data !== prevSnapshot.data) {
-    setPrevSnapshot({ data, timestamp: entry?.timestamp });
+  if (entry.timestamp !== prevSnapshot.timestamp || data !== prevSnapshot.data) {
+    setPrevSnapshot({ data, timestamp: entry.timestamp });
     if (Object.keys(optimisticDone).length > 0) {
       let changed = false;
       const next = { ...optimisticDone };
@@ -318,7 +318,7 @@ export function TasksWidget({ id }: WidgetComponentProps) {
       id,
   );
 
-  const handleItemClick = async (itemId: string, listId: string, currentDone: boolean) => {
+  const handleItemClick = (itemId: string, listId: string, currentDone: boolean) => {
     if (pendingTimersRef.current[itemId] !== undefined || pendingUndo[itemId]) {
       if (pendingTimersRef.current[itemId] !== undefined) {
         clearTimeout(pendingTimersRef.current[itemId]);

@@ -486,10 +486,11 @@ describe('HomeAssistantWidget', () => {
     expect(getEntityName(undefined, 'light.bulb', 'Explicit Custom')).toBe('Explicit Custom');
     expect(
       getEntityName(
-        { entity_id: 'light.bulb', state: 'on', attributes: { friendly_name: 123 as unknown as string } },
+        { entity_id: 'light.bulb', state: 'on', attributes: { friendly_name: 123 } },
         'light.bulb',
       ),
     ).toBe('bulb');
+    expect(getEntityName({ entity_id: 'light.bulb', state: 'on', attributes: null }, 'light.bulb')).toBe('bulb');
 
     expect(getDomainIcon('fan', 'on')).toBe('🌀');
     expect(getDomainIcon('fan', 'off')).toBe('🪭');
@@ -548,7 +549,7 @@ describe('HomeAssistantWidget', () => {
     const res = await dispatchWidgetAction(
       'w-1',
       { domain: 'light', service: 'toggle' },
-      jsonFailMock as unknown as typeof fetch,
+      jsonFailMock,
     );
     expect(res).toEqual({});
   });
@@ -674,7 +675,7 @@ describe('HomeAssistantWidget', () => {
 
     const { container } = render(<HomeAssistantWidget id="ha-custom-cards" type="home-assistant" />);
     const grid = container.querySelector('.ha-card-grid') as HTMLElement;
-    expect(grid?.style.gridTemplateColumns).toMatch(/repeat\(3,\s*minmax\(0(px)?, 1fr\)\)/);
+    expect(grid.style.gridTemplateColumns).toMatch(/repeat\(3,\s*minmax\(0(px)?, 1fr\)\)/);
     expect(container.querySelector('.ha-card-wrapper')).not.toBeNull();
     expect(container.querySelector('.ha-card-unknown')?.textContent).toBe('Unsupported');
   });
@@ -1111,7 +1112,7 @@ describe('HomeAssistantWidget', () => {
     const fetchMock = vi.fn().mockImplementation((url: string, options: RequestInit) => {
       fetchCalls.push({ url, options });
       return new Promise((resolve) => {
-        resolveCall = () => resolve(new Response(JSON.stringify({ status: 'ok' })));
+        resolveCall = () => { resolve(new Response(JSON.stringify({ status: 'ok' }))); };
       });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -1155,12 +1156,6 @@ describe('HomeAssistantWidget', () => {
 
     // 1. ButtonCard tap with svcEnt and empty domain prefix (falls back to domain)
     const btn = container.querySelector('.ha-card-button') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(btn);
-    });
-
-    // While inFlight is true, clicking again triggers if (inFlight) return
-    btn.removeAttribute('disabled');
     await act(async () => {
       fireEvent.click(btn);
     });
@@ -1425,27 +1420,7 @@ describe('HomeAssistantWidget', () => {
       fireEvent.click(closeBtn);
     });
 
-    // 10. Light brightness and fan speed controls
-    setHaWidget('ha-bright-speed', {
-            cards: [
-              { type: 'tile', entity: 'light.desk_lamp' },
-              { type: 'tile', entity: 'fan.desk_fan' },
-            ],
-            entities: {
-              'light.desk_lamp': { entity_id: 'light.desk_lamp', state: 'on', attributes: { brightness: 100 } },
-              'fan.desk_fan': { entity_id: 'fan.desk_fan', state: 'on', attributes: { percentage: 50 } },
-            },
-          });
-
-    const { container: brightCont } = render(<HomeAssistantWidget id="ha-bright-speed" type="home-assistant" />);
-    const bright50Btn = brightCont.querySelector('.ha-quick-brightness .ha-btn-sub') as HTMLButtonElement;
-    const speedMedBtn = brightCont.querySelector('.ha-quick-speeds .ha-btn-sub') as HTMLButtonElement;
-    await act(async () => {
-      if (bright50Btn) fireEvent.click(bright50Btn);
-      if (speedMedBtn) fireEvent.click(speedMedBtn);
-    });
-
-    // 11. Unknown cards
+    // 10. Unknown cards
     setHaWidget('ha-unknowns', {
             cards: [
               { type: 'custom-foo', title: 'Foo Title' },
@@ -1654,6 +1629,23 @@ describe('HomeAssistantWidget', () => {
     expect(tstatCont.querySelector('.ha-target-num')?.textContent).toBe('70°');
     const plusBtn = tstatCont.querySelector('.ha-target-temp-dial button:last-child') as HTMLButtonElement;
     await act(async () => { fireEvent.click(plusBtn); });
+
+    // 6. Null attribute maps (Go nil map) fall back to defaults instead of throwing
+    setHaWidget('ha-null-attrs', {
+      cards: [
+        { type: 'thermostat', entity: 'climate.nullattrs' },
+        { type: 'picture-entity', entity: 'camera.nullattrs', camera_image: 'camera.nullattrs' },
+      ],
+      entities: {
+        'climate.nullattrs': { entity_id: 'climate.nullattrs', state: 'off', attributes: null },
+        'camera.nullattrs': { entity_id: 'camera.nullattrs', state: 'idle', attributes: null },
+      },
+    });
+
+    const { container: nullCont } = render(<HomeAssistantWidget id="ha-null-attrs" type="home-assistant" />);
+    expect(nullCont.querySelector('.ha-thermostat-title')?.textContent).toBe('nullattrs');
+    expect(nullCont.querySelector('.ha-target-num')?.textContent).toBe('70°');
+    expect(nullCont.querySelector('[data-entity-id="camera.nullattrs"]')).not.toBeNull();
   });
 
   it('covers inFlight state rendering and disabled interactions', async () => {

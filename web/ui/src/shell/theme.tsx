@@ -73,8 +73,7 @@ export function computeThemeButtonAttrs(
   const mode = override ? 'manual' : 'auto';
   const modeLabel = activeTheme === 'night' ? 'Dark Mode' : 'Light Mode';
   const nextLabel = activeTheme === 'night' ? 'Light Mode' : 'Dark Mode';
-  const autoTheme = serverTheme || 'day';
-  const oppositeOfAuto = autoTheme === 'night' ? 'day' : 'night';
+  const oppositeOfAuto = serverTheme === 'night' ? 'day' : 'night';
   const isOppositeOverride = override === oppositeOfAuto;
   const actionLabel = !override
     ? nextLabel
@@ -93,25 +92,19 @@ export function applyThemeToDOM(activeTheme: ThemeMode, doc?: Document): void {
   const d = doc !== undefined ? doc : (typeof document !== 'undefined' ? document : undefined);
   if (!d) return;
   const normalized = normalizeTheme(activeTheme);
-  if (d.documentElement?.dataset) {
-    d.documentElement.dataset.theme = normalized;
-  }
-  if (d.body?.dataset) {
-    d.body.dataset.theme = normalized;
-  }
+  d.documentElement.dataset.theme = normalized;
+  d.body.dataset.theme = normalized;
   const appEl = d.getElementById('mirrormere-app');
   if (appEl?.dataset) {
     appEl.dataset.theme = normalized;
   }
   let metaTheme = d.querySelector('meta[name="theme-color"]');
-  if (!metaTheme && d.head) {
+  if (!metaTheme) {
     metaTheme = d.createElement('meta');
     metaTheme.setAttribute('name', 'theme-color');
     d.head.appendChild(metaTheme);
   }
-  if (metaTheme) {
-    metaTheme.setAttribute('content', normalized === 'night' ? '#3b364c' : '#f8f5ee');
-  }
+  metaTheme.setAttribute('content', normalized === 'night' ? '#3b364c' : '#f8f5ee');
 }
 
 interface UseThemeResult {

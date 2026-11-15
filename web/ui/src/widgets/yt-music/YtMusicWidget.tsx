@@ -1,5 +1,5 @@
 import './YtMusicWidget.css';
-import { memo, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { memo, useEffect, useRef, useState, type ChangeEvent, type SubmitEvent } from 'react';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { useWidget } from '../../store/hooks';
@@ -61,7 +61,7 @@ function YtMusicHeader({ accounts, activeAccountId, isLocalSpeaker, onSelectAcco
   return (
     <div className="ytm-header">
       <div className="ytm-account-wrap">
-        <select id="account-picker" className="ytm-account-select account-pill" aria-label="Select Account" value={activeAccountId ?? accounts[0]?.id ?? ''} onChange={(e) => onSelectAccount(e.target.value)}>
+        <select id="account-picker" className="ytm-account-select account-pill" aria-label="Select Account" value={activeAccountId ?? accounts[0]?.id ?? ''} onChange={(e) => { onSelectAccount(e.target.value); }}>
           {accounts.map((acc) => (
             <option key={acc.id} value={acc.id}>{acc.name}{acc.handle ? ` (${acc.handle})` : ''}</option>
           ))}
@@ -88,7 +88,7 @@ function YtMusicSpeakerBar({ speakers, activeSpeaker, onSelectSpeaker }: {
           className={`spk-pill ${s.entity_id === 'this_device' || s.entity_id === 'local' ? 'spk-local' : ''} ${s.entity_id === activeSpeaker ? 'active' : ''}`}
           data-spk={s.entity_id}
           aria-label={s.name}
-          onClick={() => onSelectSpeaker(s.entity_id)}
+          onClick={() => { onSelectSpeaker(s.entity_id); }}
         >
           <YtMusicSpeakerIcon />
           {s.name}
@@ -141,7 +141,7 @@ function YtMusicDiscovery({
         <div className="discovery-section-header"><span className="discovery-section-title">Playlists</span></div>
         <div className="discovery-grid">
           {playlists.map((p) => (
-            <MediaTile key={p.playlist_id} title={p.title} sub={`${Number(p.count || 0)} tracks · Shuffle`} thumb={p.thumb} dataAttrs={{ 'data-pl': p.playlist_id, 'data-title': p.title }} onClick={() => onPlayPlaylist(p)} />
+            <MediaTile key={p.playlist_id} title={p.title} sub={`${(p.count || 0)} tracks · Shuffle`} thumb={p.thumb} dataAttrs={{ 'data-pl': p.playlist_id, 'data-title': p.title }} onClick={() => { onPlayPlaylist(p); }} />
           ))}
         </div>
       </div>
@@ -149,7 +149,7 @@ function YtMusicDiscovery({
         <div className="discovery-section-header"><span className="discovery-section-title">Suggested Artists &amp; Albums</span></div>
         <div className="discovery-grid">
           {suggestions.map((sug) => (
-            <MediaTile key={sug.id} title={sug.title} sub={sug.subtitle || (sug.kind === 'artist' ? 'Artist' : 'Album')} badge={sug.kind} thumb={sug.thumb} isArtist={sug.kind === 'artist'} dataAttrs={{ 'data-sug': sug.id }} onClick={() => onPlaySuggestion(sug)} />
+            <MediaTile key={sug.id} title={sug.title} sub={sug.subtitle || (sug.kind === 'artist' ? 'Artist' : 'Album')} badge={sug.kind} thumb={sug.thumb} isArtist={sug.kind === 'artist'} dataAttrs={{ 'data-sug': sug.id }} onClick={() => { onPlaySuggestion(sug); }} />
           ))}
         </div>
       </div>
@@ -169,7 +169,7 @@ function YtMusicMediaGrid({
     return (
       <div className="media-grid" id="media-grid" style={{ touchAction: 'pan-y' }}>
         {searchResults.map((t, idx) => (
-          <MediaTile key={t.video_id || idx} title={t.title} sub={`${t.artist}${t.duration ? ` · ${t.duration}` : ''}`} thumb={t.thumb} dataAttrs={{ 'data-sidx': idx }} onClick={() => onPlayResult(t)} />
+          <MediaTile key={t.video_id || idx} title={t.title} sub={`${t.artist}${t.duration ? ` · ${t.duration}` : ''}`} thumb={t.thumb} dataAttrs={{ 'data-sidx': idx }} onClick={() => { onPlayResult(t); }} />
         ))}
       </div>
     );
@@ -177,7 +177,7 @@ function YtMusicMediaGrid({
   return (
     <div className="media-grid" id="media-grid" style={{ touchAction: 'pan-y' }}>
       {queue.map((t, idx) => (
-        <MediaTile key={t.id ?? t.video_id ?? `${t.title}:${t.artist}:${idx}`} title={t.title} sub={t.artist} thumb={t.thumb} isPlaying={idx === queueIndex} dataAttrs={{ 'data-qidx': idx }} onClick={() => onPlayIndex(idx)} />
+        <MediaTile key={t.id ?? t.video_id ?? `${t.title}:${t.artist}:${idx}`} title={t.title} sub={t.artist} thumb={t.thumb} isPlaying={idx === queueIndex} dataAttrs={{ 'data-qidx': idx }} onClick={() => { onPlayIndex(idx); }} />
       ))}
     </div>
   );
@@ -199,7 +199,8 @@ function useYtMusicLocalAudio(
         audio.src = streamUrl;
       }
       const playPromise = audio.play();
-      if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => {});
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-misused-promises -- jsdom's play() returns undefined, not a Promise
+      if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => { /* autoplay can be refused */ });
     } else {
       audio.pause();
       if (!isPrimaryInstance || !isLocalSpeaker || np.state === 'stopped') {
@@ -222,7 +223,7 @@ function resolveActiveVideoId(np: NowPlaying, queue?: QueueItem[]): string | und
 export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponentProps) {
   'use no memo';
   const entry = useWidget(id);
-  const config = entry?.meta?.config as Record<string, unknown> | undefined;
+  const config = entry.meta?.config;
   const apiBase = resolveApiBase(config);
 
   const isCurrentPane = useIsCurrentPane();
@@ -314,7 +315,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
     await postControl('stop');
   };
 
-  const handleSearchSubmit = async (e: FormEvent) => {
+  const handleSearchSubmit = async (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     const q = searchQuery.trim();
     if (!q) return;
@@ -324,7 +325,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
       const param = activeAccountId ? `&account_id=${encodeURIComponent(activeAccountId)}` : '';
       const r = await fetch(`${apiBase}/music/search?q=${encodeURIComponent(q)}${param}`);
       const data = (await r.json()) as { items?: SearchResultItem[] };
-      setSearchResults(Array.isArray(data?.items) ? data.items : []);
+      setSearchResults(Array.isArray(data.items) ? data.items : []);
     } catch {
       setSearchResults([]);
     } finally {
@@ -406,7 +407,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
           onStop={() => void handleStop()}
           onVolumeChange={handleVolumeChange}
           onPlayQueueIndex={(idx) => { setUserBrowsing(false); void postControl('play_index', { index: idx }); }}
-          onBrowseLibrary={() => setUserBrowsing(true)}
+          onBrowseLibrary={() => { setUserBrowsing(true); }}
         />
       ) : (
         <>
@@ -438,7 +439,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
               className={`mode-btn ${activeTab === 'playlists' || activeTab === 'discovery' ? 'active' : ''}`}
               data-tab="playlists"
               aria-label="Playlists"
-              onClick={() => setActiveTab('playlists')}
+              onClick={() => { setActiveTab('playlists'); }}
             >
               Playlists
             </button>
@@ -447,7 +448,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
               className={`mode-btn ${activeTab === 'queue' ? 'active' : ''}`}
               data-tab="queue"
               aria-label="Queue"
-              onClick={() => setActiveTab('queue')}
+              onClick={() => { setActiveTab('queue'); }}
             >
               Queue
             </button>
@@ -461,7 +462,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
                 placeholder="Search YouTube Music songs or artists..."
                 autoComplete="off"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => { setSearchQuery(e.target.value); }}
               />
               <button type="submit" className={`mode-btn ${activeTab === 'search' ? 'active' : ''}`} aria-label="Search">
                 Search

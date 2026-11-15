@@ -109,6 +109,7 @@ export function createReloadController(env: ReloadEnvironment): ReloadController
   }
 
   function handleSystemReload(data: Pick<SystemReloadPayload, 'reason'>, delayMs = SYSTEM_RELOAD_DEBOUNCE_MS): void {
+    // eslint-disable-next-line no-console -- intentional operator-visible notice, not debug output
     console.info(`[mirrormere] server-instructed reload (${data.reason})`);
     if (pendingSystemTimer !== null) {
       env.clearTimer(pendingSystemTimer);

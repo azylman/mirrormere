@@ -5,7 +5,8 @@ import { useDisplayStore } from '../../store';
 export interface PhotoItem {
   id?: string; url?: string; URL?: string; width?: number; height?: number; aspect_ratio?: number;
   timestamp?: string; location?: string; album_name?: string; dominant_color?: string;
-  media_type?: 'photo' | 'video' | 'gif' | string;
+  /** 'photo', 'video' or 'gif' in practice; unknown values render as photos. */
+  media_type?: string;
 }
 export function isVideoPhoto(photo?: PhotoItem): boolean { return photo?.media_type === 'video'; }
 export function isGifPhoto(photo?: PhotoItem): boolean { return photo?.media_type === 'gif'; }
@@ -28,7 +29,7 @@ export const PHOTO_CONTROLS_HIDE_MS = 3000;
 export const PHOTO_PAUSE_INACTIVITY_MS = 60000;
 const OVERLAY_DATE_FMT = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 export function formatPhotoOverlayDate(timestamp?: string): string {
-  if (!timestamp || !timestamp.trim()) return '';
+  if (!timestamp?.trim()) return '';
   const d = new Date(timestamp.trim());
   return Number.isNaN(d.getTime()) ? '' : OVERLAY_DATE_FMT.format(d);
 }
@@ -61,14 +62,14 @@ export function isWideContainer(size: ContainerSize): boolean {
 }
 export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
   if (!raw) return {};
-  if (typeof raw === 'object' && !Array.isArray(raw)) return raw as PhotoCarouselData;
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw;
   if (typeof raw === 'string') {
     try {
-      let parsed = JSON.parse(raw);
+      let parsed = JSON.parse(raw) as unknown;
       if (typeof parsed === 'string') {
-        try { parsed = JSON.parse(parsed); } catch { /* ignore */ }
+        try { parsed = JSON.parse(parsed) as unknown; } catch { /* ignore */ }
       }
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as PhotoCarouselData;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
     } catch { return {}; }
   }
   return {};
@@ -76,8 +77,8 @@ export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
 export function resolvePhotoCarouselSourceAndUrl(config?: PhotoCarouselConfig, data?: PhotoCarouselData): { source: 'share_url' | 'ember_bridge'; albumUrl: string } {
   if (Array.isArray(config?.albums) && config.albums.length > 0) {
     const emberEntry = config.albums.find((a) => a.source === 'ember_bridge');
-    if (emberEntry) return { source: 'ember_bridge', albumUrl: (emberEntry.url || config?.album_url || data?.album_url || '').trim() };
-    return { source: 'share_url', albumUrl: (config.albums[0]?.url || config?.album_url || data?.album_url || '').trim() };
+    if (emberEntry) return { source: 'ember_bridge', albumUrl: (emberEntry.url || config.album_url || data?.album_url || '').trim() };
+    return { source: 'share_url', albumUrl: (config.albums[0]?.url || config.album_url || data?.album_url || '').trim() };
   }
   return { source: config?.source === 'ember_bridge' ? 'ember_bridge' : 'share_url', albumUrl: (config?.album_url || data?.album_url || '').trim() };
 }
@@ -87,8 +88,8 @@ export function getBackdropPhotoURL(rawUrl?: string, isGif = false): string {
 export function getSizedPhotoURL(rawUrl?: string, containerSize?: ContainerSize, isVideo = false, isGif = false): string {
   if (!rawUrl) return '';
   const dpr = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
-  const screenWidth = Math.round((((typeof window !== 'undefined' && (window.screen?.width || window.innerWidth)) || 1920) * dpr));
-  const screenHeight = Math.round((((typeof window !== 'undefined' && (window.screen?.height || window.innerHeight)) || 1080) * dpr));
+  const screenWidth = Math.round((((typeof window !== 'undefined' && (window.screen.width || window.innerWidth)) || 1920) * dpr));
+  const screenHeight = Math.round((((typeof window !== 'undefined' && (window.screen.height || window.innerHeight)) || 1080) * dpr));
   const rectW = Math.round((containerSize?.width || 0) * dpr);
   const rectH = Math.round((containerSize?.height || 0) * dpr);
   const suffix = isVideo ? '-no' : isGif ? '-k' : '';
@@ -100,7 +101,7 @@ export const photoDeckStateById = new Map<string, WidgetPhotoDeckState>();
 
 useDisplayStore.subscribe((state) => {
   for (const id of Array.from(photoDeckStateById.keys())) {
-    if (!state?.widgets?.[id]) photoDeckStateById.delete(id);
+    if (!state.widgets[id]) photoDeckStateById.delete(id);
   }
 });
 
@@ -153,7 +154,7 @@ export function selectCompanionPortraitIndex(
     const key = getPhotoItemKey(candidate, idx);
     if (key === primaryKey) continue;
     if (firstFallbackPortrait === null) firstFallbackPortrait = idx;
-    if (!seenKeys || !seenKeys.has(key)) return idx;
+    if (!seenKeys?.has(key)) return idx;
   }
   return firstFallbackPortrait;
 }
@@ -180,9 +181,9 @@ export function selectPreloadPhotoIndices(photos: readonly PhotoItem[], baseInde
 }
 
 function scheduleCycleTick(
-  timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
-  activeDelayMsRef: React.MutableRefObject<number>,
-  cycleStartedAtRef: React.MutableRefObject<number | null>,
+  timerRef: React.RefObject<ReturnType<typeof setTimeout> | null>,
+  activeDelayMsRef: React.RefObject<number>,
+  cycleStartedAtRef: React.RefObject<number | null>,
   deck: WidgetPhotoDeckState, cycleIntervalSeconds: number, triggerAdvance: () => void, delayMs: number,
 ) {
   timerRef.current = setTimeout(() => {
@@ -201,11 +202,11 @@ function preloadAndDecode(src: string): Promise<boolean> {
     let settled = false;
     const finish = (ok: boolean) => { if (!settled) { settled = true; resolve(ok); } };
     if (typeof preload.decode === 'function') {
-      preload.decode().then(() => finish(true), () => finish(false));
-      preload.onerror = () => finish(false);
+      preload.decode().then(() => { finish(true); }, () => { finish(false); });
+      preload.onerror = () => { finish(false); };
     } else {
-      preload.onload = () => finish(true);
-      preload.onerror = () => finish(false);
+      preload.onload = () => { finish(true); };
+      preload.onerror = () => { finish(false); };
     }
   });
 }
@@ -250,7 +251,7 @@ export function useContainerSize() {
       }
     });
     ro.observe(element);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); };
   }, [element]);
 
   return { rootRef, containerSize, containerSizeRef };
@@ -277,7 +278,7 @@ export function registerEmberSyncListener(listener: EmberSyncListener): () => vo
 export interface UsePhotoSlideshowTransitionOptions {
   id: string; photos: readonly PhotoItem[]; cycleIntervalSeconds: number;
   isCurrentPane: boolean; isDocumentVisible: boolean; isVideoMode: boolean;
-  isPaused: boolean; containerSizeRef: React.MutableRefObject<ContainerSize>;
+  isPaused: boolean; containerSizeRef: React.RefObject<ContainerSize>;
   wide?: boolean;
 }
 
@@ -333,17 +334,18 @@ export function usePhotoSlideshowTransition({
   const triggerAdvance = (direction: 'next' | 'prev' = 'next') => {
     const currentPhotos = photosRef.current;
     if (currentPhotos.length <= 1) return;
-    const isTransitionActive = Boolean(transitionStateRef.current?.active);
+    const activeTransition = transitionStateRef.current?.active ? transitionStateRef.current : null;
+    const isTransitionActive = activeTransition !== null;
     const isProbing = !isTransitionActive && probeIndexRef.current !== null;
-    const baseIndex = isTransitionActive
-      ? transitionStateRef.current!.nextIndex
+    const baseIndex = activeTransition
+      ? activeTransition.nextIndex
       : (probeIndexRef.current ?? currentIndexRef.current);
 
     const deck = getWidgetPhotoDeckState(id);
     const wide = isWideContainer(containerSizeRef.current);
     const baseKey = getPhotoItemKey(currentPhotos[baseIndex], baseIndex);
-    const activeCompanionIdx = isTransitionActive
-      ? transitionStateRef.current!.companionIndex
+    const activeCompanionIdx = activeTransition
+      ? activeTransition.companionIndex
       : (isProbing ? null : currentCompanionIndexRef.current);
     const baseSecIdx = wide ? activeCompanionIdx : null;
     const baseSecKey = baseSecIdx !== null ? getPhotoItemKey(currentPhotos[baseSecIdx], baseSecIdx) : null;
@@ -412,10 +414,10 @@ export function usePhotoSlideshowTransition({
       }, CROSSFADE_MS);
     };
 
-    if (nextSecFgUrl) {
-      Promise.all([preloadAndDecode(nextFgUrl), preloadAndDecode(nextSecFgUrl)]).then(([ok1, ok2]) => handleDecodeResult(ok1, ok2));
+    if (nextSecFgUrl) { // preloadAndDecode resolves false instead of rejecting, so voiding is safe
+      void Promise.all([preloadAndDecode(nextFgUrl), preloadAndDecode(nextSecFgUrl)]).then(([ok1, ok2]) => { handleDecodeResult(ok1, ok2); });
     } else {
-      preloadAndDecode(nextFgUrl).then((ok1) => handleDecodeResult(ok1, true));
+      void preloadAndDecode(nextFgUrl).then((ok1) => { handleDecodeResult(ok1, true); });
     }
   };
 
@@ -481,7 +483,7 @@ export function usePhotoSlideshowTransition({
     const initialDelayMs = deck.remainingMs ?? cycleIntervalSeconds * 1000;
     activeDelayMsRef.current = initialDelayMs;
     cycleStartedAtRef.current = Date.now();
-    scheduleCycleTick(timerRef, activeDelayMsRef, cycleStartedAtRef, deck, cycleIntervalSeconds, () => triggerAdvanceRef.current(), initialDelayMs);
+    scheduleCycleTick(timerRef, activeDelayMsRef, cycleStartedAtRef, deck, cycleIntervalSeconds, () => { triggerAdvanceRef.current(); }, initialDelayMs);
 
     return () => {
       if (cycleStartedAtRef.current !== null) {
