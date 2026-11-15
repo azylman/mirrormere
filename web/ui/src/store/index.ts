@@ -101,6 +101,7 @@ const hydratedAtReload = new Map<string, number>();
 /** Hydrates in flight per widget id, keyed to the widgetReloads they started under. */
 const inflight = new Map<string, { reloads: Record<string, number>; promise: Promise<void> }>();
 let screensSeq = 0;
+let screensInflight: Promise<void> | null = null;
 
 /** The widgetReloads count for its type when the widget's meta was last fetched; 0 before any fetch. */
 export function hydratedReloadCount(id: string): number {
@@ -353,15 +354,22 @@ export const useDisplayStore = create<DisplayStore>()((set, get) => ({
   },
 
   async loadScreens() {
+    if (screensInflight) return screensInflight;
     const seq = ++screensSeq;
-    const body = await fetchScreenLayouts();
-    if (seq !== screensSeq) return;
-    const layout = body.screens;
-    if (deepEqual(get().layout, layout)) return;
-    set((s) => ({
-      layout,
-      screen: s.screen.totalScreens === layout.length ? s.screen : { ...s.screen, totalScreens: layout.length },
-    }));
+    const run = async () => {
+      const body = await fetchScreenLayouts();
+      if (seq !== screensSeq) return;
+      const layout = body.screens;
+      if (deepEqual(get().layout, layout)) return;
+      set((s) => ({
+        layout,
+        screen: s.screen.totalScreens === layout.length ? s.screen : { ...s.screen, totalScreens: layout.length },
+      }));
+    };
+    screensInflight = run().finally(() => {
+      screensInflight = null;
+    });
+    return screensInflight;
   },
 
   pause() {

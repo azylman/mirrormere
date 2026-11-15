@@ -117,6 +117,9 @@ export function startRuntime(options: RuntimeOptions = {}): Runtime {
   syncMaintenance(store.getState().visibility.visible);
 
   client.connect();
+  store.getState().loadScreens().catch((err: unknown) => {
+    console.warn('[mirrormere] screen layout load failed:', err);
+  });
 
   current = {
     client,

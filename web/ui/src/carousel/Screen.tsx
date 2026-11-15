@@ -179,6 +179,12 @@ export function Screen({ index, offset, placements, ready }: ScreenProps) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    const isHydrated = isCurrent ? ready : (ready && hydratedCount >= placements.length);
+    if (isHydrated) {
+      el.dataset.paneHydrated = 'true';
+    } else {
+      delete el.dataset.paneHydrated;
+    }
     if (isCurrent && ready) {
       el.dataset.widgetCount = String(placements.length);
       el.dataset.screenHydrated = 'true';
@@ -189,7 +195,7 @@ export function Screen({ index, offset, placements, ready }: ScreenProps) {
       delete el.dataset.widgetCount;
       delete el.dataset.screenHydrated;
     }
-  }, [isCurrent, ready, placements]);
+  }, [isCurrent, ready, placements, hydratedCount]);
 
   const visibleCount = isCurrent ? placements.length : hydratedCount;
   const visiblePlacements = placements.slice(0, visibleCount);

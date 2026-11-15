@@ -213,7 +213,12 @@ async function waitForHydration(cdp) {
   const deadline = Date.now() + HYDRATE_TIMEOUT_MS;
   const expression = `(function () {
     var c = document.querySelector('#grid-canvas');
-    return !!(window.__mmPerf && c && c.dataset.screenHydrated === 'true');
+    if (!(window.__mmPerf && c && c.dataset.screenHydrated === 'true')) return false;
+    var panes = document.querySelectorAll('.grid-pane');
+    if (panes.length > 0) {
+      return Array.from(panes).every(function (p) { return p.dataset.paneHydrated === 'true'; });
+    }
+    return true;
   })()`;
   while (Date.now() < deadline) {
     try {
@@ -299,7 +304,7 @@ export async function runBench(opts, log = (msg) => process.stderr.write(`${msg}
     // Drop the about:blank entry Chrome started with so a right swipe has no history to go back to.
     await cdp.send('Page.resetNavigationHistory');
     // Allow cold-load hydration microtasks, style passes, and initial effects to settle before measuring.
-    await sleep(SWIPE_GAP_MS);
+    await sleep(SWIPE_GAP_MS * 2);
     log(`screen hydrated; sending ${opts.swipes} swipes`);
 
     // Long tasks and settles from cold load are in the snapshot too. The swipe window is measured
