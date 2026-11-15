@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { PaneContext } from '../../carousel/PaneContext';
 import { NextUp, resolveYtMusicScreenIndex } from '../../shell/NextUp';
 import { useDisplayStore } from '../../store';
@@ -60,7 +60,7 @@ beforeEach(() => {
 });
 
 describe('YtMusicWidget', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: Mock<(url: string | URL | Request, init?: RequestInit) => Promise<unknown>>;
   beforeEach(() => {
     resetSharedYtMusicState();
     useDisplayStore.setState(initialStore, true);
@@ -183,7 +183,7 @@ describe('YtMusicWidget', () => {
     expect(npTitle?.textContent).toBe('Starboy');
     expect(npArtist?.textContent).toBe('The Weeknd');
     expect(playBtn?.getAttribute('aria-label')).toBe('Play');
-    expect(volSlider?.value).toBe('50');
+    expect(volSlider.value).toBe('50');
     // Discovery sections: playlists and suggestions
     const plSection = container.querySelector('[data-section="playlists"]');
     const sugSection = container.querySelector('[data-section="suggestions"]');
@@ -882,15 +882,15 @@ describe('YtMusicWidget', () => {
     const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
     const audio = await waitFor(() => {
       const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
-      expect(el?.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
-      expect(el?.getAttribute('data-video-id')).toBe('v_starboy');
-      expect(el?.volume).toBe(0.5);
+      expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
+      expect(el.getAttribute('data-video-id')).toBe('v_starboy');
+      expect(el.volume).toBe(0.5);
       expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
       return el;
     });
     // Audio element persists when browsing library
     fireEvent.click(container.querySelector('#btn-browse-library')!);
-    await waitFor(() => expect(container.querySelector('.ytm-discovery')).not.toBeNull());
+    await waitFor(() => { expect(container.querySelector('.ytm-discovery')).not.toBeNull(); });
     expect(container.querySelector('#ytm-local-audio')).toBe(audio);
     // Audio ended triggers next
     fireEvent.ended(audio);
@@ -924,8 +924,8 @@ describe('YtMusicWidget', () => {
     const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
     const audio = await waitFor(() => {
       const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
-      expect(el?.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
-      expect(el?.getAttribute('data-video-id')).toBe('v_starboy');
+      expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
+      expect(el.getAttribute('data-video-id')).toBe('v_starboy');
       return el;
     });
     fireEvent.click(container.querySelector('#btn-stop')!);
@@ -944,7 +944,7 @@ describe('YtMusicWidget', () => {
       { id: 'ext-1', name: 'Extra 1', handle: '@ext1', type: 'brand' },
       { email: 'ext2@example.com' },
       {},
-      123 as unknown as string,
+      123,
     ]);
     expect(result.some((a) => a.id === 'extra@example.com')).toBe(true);
     expect(result.some((a) => a.id === 'username_only' && a.handle === undefined)).toBe(true);
@@ -1154,7 +1154,7 @@ describe('YtMusicWidget', () => {
       const { container } = render(<NextUp onPillClick={onPillClick} />);
       expect(container.querySelector('#live-island-title')?.textContent).toBe('YouTube Music');
       expect(container.querySelector('#live-island-artist')?.textContent).toBe('Ready');
-      expect((container.querySelector('#live-island-art') as HTMLImageElement)?.src).toContain(DEFAULT_ART);
+      expect((container.querySelector('#live-island-art') as HTMLImageElement).src).toContain(DEFAULT_ART);
       const pill = container.querySelector('#next-event-pill') as HTMLElement;
       fireEvent.keyDown(pill, { key: 'Enter' });
       expect(onPillClick).toHaveBeenCalledTimes(1);

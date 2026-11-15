@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { VideoSource, VideoStatePayload } from '../sse/types';
+import type { VideoSource } from '../sse/types';
 import { useAudioController } from '../audio/useAudio';
 import { useDisplayStore } from '../store';
-import { Hud, VideoHUDController } from './Hud';
+import type { VideoHUDController } from './Hud';
+import { Hud } from './Hud';
+import type { LegacyVideoStatePayload } from './videoState';
+import { normalizeVideoState } from './videoState';
 import {
   getNormalizedVideoCoordinates,
 } from './coordinates';
@@ -22,12 +25,11 @@ export type { CoordinateEvent, NormalizedCoordinates } from './coordinates';
 export function flushCompositorPaint(): void {
   if (typeof document === 'undefined') return;
 
-  if (document.body && typeof document.body.offsetHeight === 'number') {
-    void document.body.offsetHeight;
-  }
+  // eslint-disable-next-line @typescript-eslint/no-meaningless-void-operator -- reading the layout property forces a synchronous reflow
+  void document.body.offsetHeight;
 
   let hb = document.getElementById('mm-compositor-heartbeat');
-  if (!hb && document.body && typeof document.body.appendChild === 'function') {
+  if (!hb) {
     hb = document.createElement('div');
     hb.id = 'mm-compositor-heartbeat';
     hb.className = 'mm-compositor-heartbeat';
@@ -47,18 +49,11 @@ export function flushCompositorPaint(): void {
   let frameCount = 0;
   const step = (): void => {
     frameCount++;
-    if (hb) {
-      if (hb.dataset) {
-        hb.dataset.flush = String(frameCount);
-      }
-      if (hb.style) {
-        hb.style.transform =
-          frameCount % 2 === 1 ? 'translateZ(0) scale(1.001)' : 'translateZ(0) scale(1)';
-      }
-    }
-    if (document.body && typeof document.body.offsetHeight === 'number') {
-      void document.body.offsetHeight;
-    }
+    hb.dataset.flush = String(frameCount);
+    hb.style.transform =
+      frameCount % 2 === 1 ? 'translateZ(0) scale(1.001)' : 'translateZ(0) scale(1)';
+    // eslint-disable-next-line @typescript-eslint/no-meaningless-void-operator -- reading the layout property forces a synchronous reflow
+    void document.body.offsetHeight;
 
     if (frameCount < 2) {
       rAF(step);
@@ -132,14 +127,15 @@ export class VideoPlayerManager {
     this.hud = hud;
   }
 
-  syncAudioFocus(): void {}
+  syncAudioFocus(): void {
+    // Audio focus is owned by useAudioController; legacy callers expect the method to exist.
+  }
 
-  handleVideoState(data?: VideoStatePayload | null): void {
+  handleVideoState(data?: LegacyVideoStatePayload | null): void {
     if (data !== undefined) {
-      useDisplayStore.setState({
-        video: data ?? { mode: 'widgets', primary: null, pip: null },
-      });
-      this.currentMode = data?.mode || (data?.primary ? 'video' : 'widgets');
+      const video = normalizeVideoState(data);
+      useDisplayStore.setState({ video });
+      this.currentMode = video.mode;
     }
   }
 
@@ -172,18 +168,18 @@ export function VideoStage(): React.JSX.Element {
   const audioController = useAudioController();
   const videoState = useDisplayStore((s) => s.video);
 
-  const mode = videoState?.mode || (videoState?.primary || videoState?.pip ? 'video' : 'widgets');
-  const isActive = mode === 'video' && Boolean(videoState?.primary || videoState?.pip);
+  const mode = videoState.mode;
+  const isActive = mode === 'video' && Boolean(videoState.primary || videoState.pip);
 
-  const primaryStream = videoState?.primary || null;
-  const pipStream = videoState?.pip || null;
+  const primaryStream = videoState.primary || null;
+  const pipStream = videoState.pip || null;
 
   const [isSwapped, setIsSwapped] = useState(false);
   const effectiveSwapped = Boolean(pipStream) && isSwapped;
 
   // Sync HUD stream state whenever effectiveSwapped or videoState changes
   useEffect(() => {
-    hudControllerRef.current?.syncStream?.();
+    hudControllerRef.current?.syncStream();
   }, [effectiveSwapped, videoState]);
 
   // Carousel coordination on video presentation mode entry/exit
@@ -291,7 +287,7 @@ export function VideoStage(): React.JSX.Element {
   };
 
   const resolvedRemoteUrl =
-    (typeof document !== 'undefined' && document.body?.dataset?.remoteUrl) ||
+    (typeof document !== 'undefined' && document.body.dataset.remoteUrl) ||
     (typeof window !== 'undefined' &&
       (window as unknown as { MIRRORMERE_REMOTE_URL?: string }).MIRRORMERE_REMOTE_URL) ||
     '';
@@ -316,11 +312,9 @@ export function VideoStage(): React.JSX.Element {
         useDisplayStore.setState({ video: { mode: 'widgets', primary: null, pip: null } });
         flushCompositorPaint();
       },
-      handleVideoState: (data?: VideoStatePayload | null) => {
+      handleVideoState: (data?: LegacyVideoStatePayload | null) => {
         if (data !== undefined) {
-          useDisplayStore.setState({
-            video: data ?? { mode: 'widgets', primary: null, pip: null },
-          });
+          useDisplayStore.setState({ video: normalizeVideoState(data) });
         }
       },
       destroy: () => {
@@ -339,7 +333,7 @@ export function VideoStage(): React.JSX.Element {
       setHUD: (hud: VideoHUDController | null) => {
         hudControllerRef.current = hud;
       },
-      syncAudioFocus: () => {},
+      syncAudioFocus: () => { /* audio focus is owned by useAudioController */ },
     };
 
     window.videoManager = managerBridge as unknown as VideoPlayerManager;

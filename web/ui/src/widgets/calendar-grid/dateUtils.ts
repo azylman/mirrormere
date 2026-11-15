@@ -161,7 +161,7 @@ export function formatEventTime(label?: string, timeFormat?: string): string {
   const h24 = Math.floor(mins / 60) % 24;
   const m = mins % 60;
 
-  if (timeFormat && timeFormat.toLowerCase() === '12h') {
+  if (timeFormat?.toLowerCase() === '12h') {
     const period = h24 >= 12 ? 'pm' : 'am';
     const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
     if (m === 0) {
@@ -247,7 +247,7 @@ export function parseTimeMinutes(label?: string): number | null {
   const s = label.trim();
   if (!s) return null;
 
-  const m12 = s.match(/^(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i);
+  const m12 = /^(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i.exec(s);
   if (m12) {
     const [, h = '', mm, ap = ''] = m12;
     let hours = parseInt(h, 10);
@@ -264,7 +264,7 @@ export function parseTimeMinutes(label?: string): number | null {
     return total >= 0 && total <= 1440 ? total : null;
   }
 
-  const m24 = s.match(/^(\d{1,2}):(\d{2})$/);
+  const m24 = /^(\d{1,2}):(\d{2})$/.exec(s);
   if (m24) {
     const [, h = '', mm = ''] = m24;
     const hours = parseInt(h, 10);

@@ -304,7 +304,7 @@ function useEmberAlbumSync(id: string, source: 'share_url' | 'ember_bridge', alb
     const listener: EmberSyncListener = (rawPayload) => {
       let payload = rawPayload as Record<string, unknown> | null;
       if (typeof rawPayload === 'string') {
-        try { payload = JSON.parse(rawPayload); } catch { return; }
+        try { payload = JSON.parse(rawPayload) as Record<string, unknown> | null; } catch { return; }
       }
       if (!payload || typeof payload !== 'object') return;
 
@@ -321,7 +321,7 @@ function useEmberAlbumSync(id: string, source: 'share_url' | 'ember_bridge', alb
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ photos: payload.photos }),
-        }).catch(() => {});
+        }).catch(() => { /* best-effort: the next Ember sync retries */ });
       }
     };
 
@@ -394,14 +394,14 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
   const isCurrentPane = useIsCurrentPane();
   const isDocumentVisible = useDocumentVisible();
-  const isVideoMode = useDisplayStore((s) => (s.video?.mode || (s.video?.primary ? 'video' : 'widgets')) === 'video');
-  const config = entry?.meta?.config as PhotoCarouselConfig | undefined;
-  const data = parsePhotoCarouselData(entry?.data);
-  const hasLoaded = entry?.state !== 'loading' && Array.isArray(data.photos);
+  const isVideoMode = useDisplayStore((s) => s.video.mode === 'video');
+  const config = entry.meta?.config as PhotoCarouselConfig | undefined;
+  const data = parsePhotoCarouselData(entry.data);
+  const hasLoaded = entry.state !== 'loading' && Array.isArray(data.photos);
   const { source, albumUrl } = resolvePhotoCarouselSourceAndUrl(config, data);
   const { needsAuth, syncError } = useEmberAlbumSync(id, source, albumUrl);
   const photos = Array.isArray(data.photos) ? data.photos : EMPTY_PHOTOS;
-  const cycleIntervalSeconds = Math.max(5, Number(data?.cycle_interval_seconds) || DEFAULT_CYCLE_SECONDS);
+  const cycleIntervalSeconds = Math.max(5, Number(data.cycle_interval_seconds) || DEFAULT_CYCLE_SECONDS);
 
   const [isPaused, setIsPaused] = useState(false);
   const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
@@ -467,7 +467,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
           {photos.length > 1 && (
             <PhotoTransportControls
               visible={controlsVisible || isPaused} isPaused={isPaused}
-              onPrev={() => handleStep('prev')} onNext={() => handleStep('next')} onTogglePause={togglePause}
+              onPrev={() => { handleStep('prev'); }} onNext={() => { handleStep('next'); }} onTogglePause={togglePause}
             />
           )}
         </div>

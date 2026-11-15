@@ -51,7 +51,7 @@ interface ParsedTime {
   minute: number;
   valid: boolean;
 }
-function parseTimeString(s: string, hasValidTz: boolean, tz?: string): ParsedTime {
+function parseTimeString(s: string, validTz?: string): ParsedTime {
   // Go formatTime returns "" on date-only input (length 10: YYYY-MM-DD)
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
     return { hour: -1, minute: 0, valid: false };
@@ -60,10 +60,10 @@ function parseTimeString(s: string, hasValidTz: boolean, tz?: string): ParsedTim
   const isoMatch = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/.exec(s);
   if (isoMatch) {
     const tzMatch = isoMatch[7];
-    if (hasValidTz && (tzMatch === 'Z' || (tzMatch && tzMatch !== ''))) {
+    if (validTz && (tzMatch === 'Z' || (tzMatch && tzMatch !== ''))) {
       const d = new Date(s);
       if (isNaN(d.getTime())) return { hour: -1, minute: 0, valid: false };
-      const hm = extractHourMinute(getTimeFormatter(tz!), d);
+      const hm = extractHourMinute(getTimeFormatter(validTz), d);
       return { hour: hm.hour, minute: hm.minute, valid: true };
     }
     if (tzMatch === 'Z') {
@@ -80,20 +80,20 @@ function parseTimeString(s: string, hasValidTz: boolean, tz?: string): ParsedTim
   }
   const d = new Date(s);
   if (isNaN(d.getTime())) return { hour: -1, minute: 0, valid: false };
-  if (hasValidTz) {
-    const hm = extractHourMinute(getTimeFormatter(tz!), d);
+  if (validTz) {
+    const hm = extractHourMinute(getTimeFormatter(validTz), d);
     return { hour: hm.hour, minute: hm.minute, valid: true };
   }
   return { hour: d.getHours(), minute: d.getMinutes(), valid: true };
 }
-function resolveRawTime(val: unknown, hasValidTz: boolean, tz?: string): ParsedTime {
+function resolveRawTime(val: unknown, validTz?: string): ParsedTime {
   if (typeof val === 'string') {
-    return parseTimeString(val.trim(), hasValidTz, tz);
+    return parseTimeString(val.trim(), validTz);
   }
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return { hour: -1, minute: 0, valid: false };
-    if (hasValidTz) {
-      const hm = extractHourMinute(getTimeFormatter(tz!), val);
+    if (validTz) {
+      const hm = extractHourMinute(getTimeFormatter(validTz), val);
       return { hour: hm.hour, minute: hm.minute, valid: true };
     }
     return { hour: val.getHours(), minute: val.getMinutes(), valid: true };
@@ -101,8 +101,8 @@ function resolveRawTime(val: unknown, hasValidTz: boolean, tz?: string): ParsedT
   if (typeof val === 'number') {
     const d = new Date(val);
     if (isNaN(d.getTime())) return { hour: -1, minute: 0, valid: false };
-    if (hasValidTz) {
-      const hm = extractHourMinute(getTimeFormatter(tz!), d);
+    if (validTz) {
+      const hm = extractHourMinute(getTimeFormatter(validTz), d);
       return { hour: hm.hour, minute: hm.minute, valid: true };
     }
     return { hour: d.getHours(), minute: d.getMinutes(), valid: true };
@@ -146,8 +146,8 @@ export function formatTime(layoutOrValue: unknown, value?: unknown, tz?: string)
     const cached = formatTimeCache.get(cacheKey);
     if (cached !== undefined) return cached;
   }
-  const hasValidTz = Boolean(tz && isValidTimezone(tz));
-  const parsed = resolveRawTime(val, hasValidTz, tz);
+  const validTz = tz && isValidTimezone(tz) ? tz : undefined;
+  const parsed = resolveRawTime(val, validTz);
   if (!parsed.valid || parsed.hour < 0 || parsed.hour > 23 || parsed.minute < 0 || parsed.minute > 59) {
     return '';
   }
@@ -199,7 +199,7 @@ interface ParsedDateParts {
   valid: boolean;
   rawFallback: string;
 }
-function parseDateFromString(s: string, hasValidTz: boolean, tz?: string): ParsedDateParts {
+function parseDateFromString(s: string, validTz?: string): ParsedDateParts {
   const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if (dateOnlyMatch) {
     const year = Number(dateOnlyMatch[1]);
@@ -212,8 +212,8 @@ function parseDateFromString(s: string, hasValidTz: boolean, tz?: string): Parse
   if (isNaN(d.getTime())) {
     return { year: -1, month: -1, day: -1, weekdayIdx: -1, valid: false, rawFallback: s };
   }
-  if (hasValidTz) {
-    const dp = extractDateParts(getDateFormatter(tz!), d);
+  if (validTz) {
+    const dp = extractDateParts(getDateFormatter(validTz), d);
     return { ...dp, valid: true, rawFallback: s };
   }
   if (s.endsWith('Z')) {
@@ -235,17 +235,17 @@ function parseDateFromString(s: string, hasValidTz: boolean, tz?: string): Parse
     rawFallback: s,
   };
 }
-function resolveRawDateParts(val: unknown, hasValidTz: boolean, tz?: string): ParsedDateParts {
+function resolveRawDateParts(val: unknown, validTz?: string): ParsedDateParts {
   if (typeof val === 'string') {
-    return parseDateFromString(val.trim(), hasValidTz, tz);
+    return parseDateFromString(val.trim(), validTz);
   }
   if (val instanceof Date || typeof val === 'number') {
     const d = typeof val === 'number' ? new Date(val) : val;
     if (isNaN(d.getTime())) {
       return { year: -1, month: -1, day: -1, weekdayIdx: -1, valid: false, rawFallback: String(val) };
     }
-    if (hasValidTz) {
-      const dp = extractDateParts(getDateFormatter(tz!), d);
+    if (validTz) {
+      const dp = extractDateParts(getDateFormatter(validTz), d);
       return { ...dp, valid: true, rawFallback: String(val) };
     }
     return {
@@ -310,8 +310,8 @@ export function formatDate(layoutOrValue: unknown, value?: unknown, tz?: string)
     const cached = formatDateCache.get(cacheKey);
     if (cached !== undefined) return cached;
   }
-  const hasValidTz = Boolean(tz && isValidTimezone(tz));
-  const dp = resolveRawDateParts(val, hasValidTz, tz);
+  const validTz = tz && isValidTimezone(tz) ? tz : undefined;
+  const dp = resolveRawDateParts(val, validTz);
   if (!dp.valid) {
     return dp.rawFallback;
   }
@@ -328,7 +328,7 @@ export function formatDate(layoutOrValue: unknown, value?: unknown, tz?: string)
 /**
  * Returns human-readable relative date expressions ("Today", "Tomorrow", "Yesterday", "in N days", "N days ago").
  */
-export function relDate(refTime: Date, value: unknown, tz?: string): string {
+export function relDate(refTime: Date | null | undefined, value: unknown, tz?: string): string {
   if (value === null || value === undefined || value === '') return '';
   if (!refTime || isNaN(refTime.getTime())) return String(value);
   const refDateStr = formatDate('2006-01-02', refTime, tz);

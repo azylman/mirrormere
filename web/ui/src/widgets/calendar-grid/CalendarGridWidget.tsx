@@ -95,7 +95,7 @@ function computeMemberCssVars(
     if (m.color) vars[`--mm-member-${i}`] = m.color;
     if (m.text_color) vars[`--mm-member-${i}-text`] = m.text_color;
   });
-  return vars as CSSProperties;
+  return vars;
 }
 
 function resolveRangeLabels(
@@ -111,7 +111,7 @@ function resolveRangeLabels(
   }
 
   let rangeLabelMonth = monthVM?.month_label || '';
-  if (!rangeLabelMonth && currentDate) {
+  if (!rangeLabelMonth) {
     rangeLabelMonth = formatMonthLabel(currentDate);
   }
 
@@ -191,10 +191,10 @@ export function CalendarGridWidget({
   id,
 }: WidgetComponentProps) {
   const entry = useWidget(id);
-  const config = entry?.meta?.config as Record<string, unknown> | undefined;
-  const data = entry?.data as Record<string, unknown> | undefined;
-  const isError = entry?.state === 'error';
-  const entryVM = entry?.viewModel as Record<string, unknown> | undefined;
+  const config = entry.meta?.config;
+  const data = entry.data as Record<string, unknown> | undefined;
+  const isError = entry.state === 'error';
+  const entryVM = entry.viewModel;
 
   const defaultView = resolveDefaultView(config, entryVM);
   const celebrateSpecialDays = config?.celebrate_special_days !== false;
@@ -210,7 +210,7 @@ export function CalendarGridWidget({
   const { baseDate, baseWeekStart, weekStep } = resolveCalendarBaselines(entryVM, data, config);
 
   // Ref for user activity hook so range data callbacks can notify inactivity timer
-  const activityCallbackRef = useRef<() => void>(() => {});
+  const activityCallbackRef = useRef<() => void>(() => { /* set once the activity handler is wired */ });
 
   const {
     currentViewModel,
@@ -231,13 +231,13 @@ export function CalendarGridWidget({
     weekStep,
     activeView,
     setActiveView,
-    entryTimestamp: entry?.timestamp,
-    entryViewModel: entry?.viewModel,
+    entryTimestamp: entry.timestamp,
+    entryViewModel: entry.viewModel,
     cachedRangeStartConfig: config?.cached_range_start as string | undefined,
     cachedRangeEndConfig: config?.cached_range_end as string | undefined,
     dataCachedRangeStart: data?.cached_range_start as string | undefined,
     dataCachedRangeEnd: data?.cached_range_end as string | undefined,
-    onActivity: () => activityCallbackRef.current(),
+    onActivity: () => { activityCallbackRef.current(); },
   });
 
   const handleInactivityReset = () => {
@@ -369,7 +369,7 @@ export function CalendarGridWidget({
         activeView={activeView}
         monthVM={filteredMonthVM}
         members={members}
-        onOpenModal={(ev, date) => openModal(ev, date)}
+        onOpenModal={(ev, date) => { openModal(ev, date); }}
         onSelectDay={selectDayView}
         celebrateSpecialDays={celebrateSpecialDays}
         birthdays={birthdaysConfig}

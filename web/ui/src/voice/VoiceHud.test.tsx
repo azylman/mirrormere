@@ -4,7 +4,7 @@ import { AudioController } from '../audio/useAudio';
 import { HeaderVoice } from '../shell/Header';
 import { useDisplayStore } from '../store';
 import { VoiceIcon } from './VoiceIcon';
-import { DUCK_STATES, VoiceHud } from './VoiceHud';
+import { VoiceHud } from './VoiceHud';
 import { deriveVoiceHudProps, resetHUD } from './useVoiceHudState';
 
 function renderVoiceSystem() {
@@ -38,29 +38,10 @@ describe('VoiceHud and declarative voice system', () => {
   });
 
   describe('constants & icons', () => {
-    it('exports duck states and VoiceIcon renders correct SVG icons and hits memo cache', () => {
-      expect(DUCK_STATES.has('listening')).toBe(true);
-      expect(DUCK_STATES.has('transcribing')).toBe(true);
-      expect(DUCK_STATES.has('thinking')).toBe(true);
-      expect(DUCK_STATES.has('synthesizing')).toBe(true);
-      expect(DUCK_STATES.has('speaking')).toBe(true);
-      expect(DUCK_STATES.has('idle')).toBe(false);
-
-      function VoiceIconWrapper({ count, kind }: { count: number; kind: import('./VoiceIcon').VoiceIconKind }) {
-        return (
-          <div>
-            <VoiceIcon kind={kind} />
-            <span>{count}</span>
-          </div>
-        );
-      }
-      const { container, rerender } = render(<VoiceIconWrapper count={1} kind="mic" />);
+    it('VoiceIcon renders correct SVG icons', () => {
+      const { container } = render(<VoiceIcon kind="mic" />);
       expect(container.querySelector('svg.mm-voice-icon-svg')).not.toBeNull();
       expect(container.innerHTML).toContain('M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z');
-
-      // Exercise memo cache hit on parent rerender with same kind
-      rerender(<VoiceIconWrapper count={2} kind="mic" />);
-      expect(container.querySelector('svg.mm-voice-icon-svg')).not.toBeNull();
 
       // Direct renders of think and sparkle
       const thinkRes = render(<VoiceIcon kind="think" />);

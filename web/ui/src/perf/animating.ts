@@ -7,7 +7,7 @@
 let active = 0;
 
 function sync(): void {
-  if (typeof document === 'undefined' || !document.body) return;
+  if (typeof document === 'undefined') return;
   document.body.dataset.animating = active > 0 ? '1' : '0';
 }
 

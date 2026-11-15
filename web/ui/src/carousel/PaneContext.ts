@@ -15,7 +15,7 @@ export const PaneContext = createContext<PaneContextValue>({ isCurrentPane: true
 export function useIsCurrentPane(): boolean {
   const { isCurrentPane } = useContext(PaneContext);
   const isVideoMode = useDisplayStore(
-    (s) => (s.video?.mode || (s.video?.primary ? 'video' : 'widgets')) === 'video',
+    (s) => s.video.mode === 'video',
   );
   return isCurrentPane && !isVideoMode;
 }

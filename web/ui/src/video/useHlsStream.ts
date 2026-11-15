@@ -1,19 +1,6 @@
 import { useEffect } from 'react';
 import type { VideoSource } from '../sse/types';
-
-function safePlay(video: HTMLVideoElement | null): void {
-  if (!video || typeof video.play !== 'function') return;
-  try {
-    const p = video.play();
-    if (p !== undefined && typeof p.catch === 'function') {
-      p.catch((err: unknown) => {
-        console.warn('[MirrormereVideo] Playback prevented by browser autoplay policy:', err);
-      });
-    }
-  } catch {
-    // ignore
-  }
-}
+import { safePlay } from './useWebRTCStream';
 
 export interface UseHlsStreamOptions {
   videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -51,21 +38,19 @@ export function useHlsStream({
     safePlay(video);
 
     return () => {
-      if (video) {
-        if (typeof video.pause === 'function') {
-          try {
-            video.pause();
-          } catch {
-            // ignore
-          }
+      if (typeof video.pause === 'function') {
+        try {
+          video.pause();
+        } catch {
+          // ignore
         }
-        video.removeAttribute('src');
-        if (typeof video.load === 'function') {
-          try {
-            video.load();
-          } catch {
-            // ignore
-          }
+      }
+      video.removeAttribute('src');
+      if (typeof video.load === 'function') {
+        try {
+          video.load();
+        } catch {
+          // ignore
         }
       }
     };

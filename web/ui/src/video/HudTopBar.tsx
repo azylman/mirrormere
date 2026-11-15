@@ -8,7 +8,7 @@ export interface HudTopBarProps {
   onBack: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onHome: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onDismiss: (e: React.MouseEvent<HTMLButtonElement>) => void;
-  onVolumeInput: (e: React.FormEvent<HTMLInputElement>) => void;
+  onVolumeInput: (e: React.InputEvent<HTMLInputElement> | React.ChangeEvent<HTMLInputElement>) => void;
   onVolumeCommit: (e?: React.SyntheticEvent | Event) => void;
   onMuteToggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }

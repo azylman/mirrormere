@@ -26,7 +26,7 @@ function makeEnv(overrides: Partial<ReloadEnvironment> = {}) {
   const env: ReloadEnvironment = {
     now: () => Date.now(),
     setTimer: (fn, ms) => setTimeout(fn, ms),
-    clearTimer: (t) => clearTimeout(t),
+    clearTimer: (t) => { clearTimeout(t); },
     reload,
     storage,
     ...overrides,

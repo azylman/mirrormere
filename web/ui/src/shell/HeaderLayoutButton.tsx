@@ -15,7 +15,7 @@ export function HeaderLayoutButton({ fetchImpl }: HeaderLayoutButtonProps = {}) 
     fetchLayoutEditor(fetchImpl)
       .then((res) => {
         if (active) {
-          setAllowed(Boolean(res.allow_layout_edit));
+          setAllowed(res.allow_layout_edit);
         }
       })
       .catch((err: unknown) => {

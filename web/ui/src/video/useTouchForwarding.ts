@@ -39,7 +39,7 @@ export function useTouchForwarding({
 
   const onPointerDown = (e: ReactPointerEvent) => {
     if (!enabled || !remoteUrl) return;
-    if (e.button !== undefined && e.button !== 0) return;
+    if (e.button !== 0) return;
 
     const mediaEl = mediaRef.current;
     const coords = getNormalizedVideoCoordinates(e.nativeEvent, mediaEl);

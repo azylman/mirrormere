@@ -31,8 +31,8 @@ export {
 
 export const HomeAssistantWidget = memo(function HomeAssistantWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
-  const data = entry?.data as HomeAssistantSnapshot | undefined;
-  const isError = entry?.state === 'error';
+  const data = entry.data as HomeAssistantSnapshot | undefined;
+  const isError = entry.state === 'error';
   const [overrides, setOverrides] = useState<Record<string, EntityState>>({});
   const [prevData, setPrevData] = useState(data);
   const [inFlight, setInFlight] = useState<Record<string, boolean>>({});
@@ -86,7 +86,7 @@ export const HomeAssistantWidget = memo(function HomeAssistantWidget({ id }: Wid
   const cardsToRender = useMemo(() => {
     if (data?.cards?.length) return data.cards;
     if (data?.view?.cards?.length) return data.view.cards;
-    if (entities && Object.keys(entities).length > 0) {
+    if (Object.keys(entities).length > 0) {
       return Object.keys(entities).map((entId) => {
         const d = getDomain(entId);
         const t = d === 'climate' ? 'thermostat' : d === 'camera' ? 'picture-entity' : d === 'scene' || d === 'script' ? 'button' : 'tile';
@@ -129,7 +129,7 @@ export const HomeAssistantWidget = memo(function HomeAssistantWidget({ id }: Wid
       {actionError && (
         <div className="ha-alert-banner" role="alert">
           <span>⚠️ {actionError}</span>
-          <button type="button" className="ha-banner-dismiss" onClick={() => setActionError(null)}>✕</button>
+          <button type="button" className="ha-banner-dismiss" onClick={() => { setActionError(null); }}>✕</button>
         </div>
       )}
 
@@ -175,8 +175,8 @@ function renderCard(card: LovelaceCard, ctx: Ctx, key?: string) {
         {card.title && <h4 className="ha-card-title">{card.title}</h4>}
         <div className="ha-entity-list">
           {card.entities?.map((item, idx) => {
-            const isObj = typeof item === 'object' && item !== null;
-            const entId = typeof item === 'string' ? item : (item?.entity ?? '');
+            const isObj = typeof item === 'object';
+            const entId = typeof item === 'string' ? item : (item.entity ?? '');
             if (!entId || (isObj && item.type === 'divider')) {
               return <div key={`div-${idx}`} className="ha-divider" />;
             }
@@ -264,7 +264,7 @@ function renderButtonCard(card: LovelaceCard, entityId: string, ctx: Ctx, key?: 
       if (act.action === 'call-service' || act.action === 'call_service') {
         const full = String(act.service || '');
         const [dom, srv = ''] = full.includes('.') ? full.split('.') : [domain, full];
-        void ctx.sendAction({ domain: dom || domain, service: srv, entity_id: resolvedEntityId, service_data: (svc || dat || {}) as Record<string, unknown> });
+        void ctx.sendAction({ domain: dom || domain, service: srv, entity_id: resolvedEntityId, service_data: (svc || dat || {}) });
         return;
       }
       if (act.action !== 'toggle') return;
@@ -315,10 +315,10 @@ function renderThermostatCard(entityId: string, ctx: Ctx, title?: string, key?: 
 
 function renderPictureEntityCard(card: LovelaceCard, entityId: string, ctx: Ctx, key?: string) {
   const entity = ctx.entities[entityId];
-  const name = getEntityName(entity, entityId, (card.title || card.name) as string | undefined);
+  const name = getEntityName(entity, entityId, (card.title || card.name));
   const state = entity?.state ?? 'idle';
   const camPic = card.camera_image ? (ctx.entities[card.camera_image]?.attributes?.entity_picture as string | undefined) : undefined;
-  const pic = (entity?.attributes?.entity_picture as string | undefined) || camPic || (card.image as string | undefined) || (card.camera_image as string | undefined);
+  const pic = (entity?.attributes?.entity_picture as string | undefined) || camPic || (card.image) || (card.camera_image);
   const cameraTimestamp = ctx.cameraTimestamps[entityId] || (card.camera_image ? ctx.cameraTimestamps[card.camera_image] : undefined);
   const imageSrc = pic ? (cameraTimestamp ? `${pic}${pic.includes('?') ? '&' : '?'}ts=${cameraTimestamp}` : pic) : '';
 
@@ -342,15 +342,16 @@ function renderPictureEntityCard(card: LovelaceCard, entityId: string, ctx: Ctx,
   );
 }
 
+// Button handlers fire sendAction and forget it: sendAction tracks in-flight state itself.
 function renderLight(entityId: string, isOn: boolean, attrs: Record<string, unknown>, inFlight: boolean, sendAction: (p: ActionPayload) => Promise<void>) {
   const b = typeof attrs.brightness === 'number' ? Math.round((attrs.brightness / 255) * 100) : 0;
   return (
     <div className="ha-controls-light">
-      <button type="button" className={`ha-btn ha-btn-toggle ${isOn ? 'is-on' : ''}`} disabled={inFlight} onClick={() => sendAction({ domain: 'light', service: 'toggle', entity_id: entityId })} data-action="toggle">{isOn ? 'Turn Off' : 'Turn On'}</button>
+      <button type="button" className={`ha-btn ha-btn-toggle ${isOn ? 'is-on' : ''}`} disabled={inFlight} onClick={() => { void sendAction({ domain: 'light', service: 'toggle', entity_id: entityId }); }} data-action="toggle">{isOn ? 'Turn Off' : 'Turn On'}</button>
       {isOn && (
         <div className="ha-quick-brightness">
           {[25, 50, 100].map((pct) => (
-            <button key={pct} type="button" className={`ha-btn-sub ${b >= pct - 10 && b <= pct + 10 ? 'active' : ''}`} disabled={inFlight} onClick={() => sendAction({ domain: 'light', service: 'turn_on', entity_id: entityId, service_data: { brightness: Math.round(pct * 2.55) } })}>{pct}%</button>
+            <button key={pct} type="button" className={`ha-btn-sub ${b >= pct - 10 && b <= pct + 10 ? 'active' : ''}`} disabled={inFlight} onClick={() => { void sendAction({ domain: 'light', service: 'turn_on', entity_id: entityId, service_data: { brightness: Math.round(pct * 2.55) } }); }}>{pct}%</button>
           ))}
         </div>
       )}
@@ -362,11 +363,11 @@ function renderFan(entityId: string, isOn: boolean, attrs: Record<string, unknow
   const pct = typeof attrs.percentage === 'number' ? attrs.percentage : 0;
   return (
     <div className="ha-controls-fan">
-      <button type="button" className={`ha-btn ha-btn-toggle ${isOn ? 'is-on' : ''}`} disabled={inFlight} onClick={() => sendAction({ domain: 'fan', service: 'toggle', entity_id: entityId })} data-action="toggle">{isOn ? 'Turn Off' : 'Turn On'}</button>
+      <button type="button" className={`ha-btn ha-btn-toggle ${isOn ? 'is-on' : ''}`} disabled={inFlight} onClick={() => { void sendAction({ domain: 'fan', service: 'toggle', entity_id: entityId }); }} data-action="toggle">{isOn ? 'Turn Off' : 'Turn On'}</button>
       {isOn && (
         <div className="ha-quick-speeds">
           {[33, 66, 100].map((spd) => (
-            <button key={spd} type="button" className={`ha-btn-sub ${pct >= spd - 15 && pct <= spd + 15 ? 'active' : ''}`} disabled={inFlight} onClick={() => sendAction({ domain: 'fan', service: 'set_percentage', entity_id: entityId, service_data: { percentage: spd } })}>{spd === 33 ? 'Low' : spd === 66 ? 'Med' : 'High'}</button>
+            <button key={spd} type="button" className={`ha-btn-sub ${pct >= spd - 15 && pct <= spd + 15 ? 'active' : ''}`} disabled={inFlight} onClick={() => { void sendAction({ domain: 'fan', service: 'set_percentage', entity_id: entityId, service_data: { percentage: spd } }); }}>{spd === 33 ? 'Low' : spd === 66 ? 'Med' : 'High'}</button>
           ))}
         </div>
       )}
@@ -378,7 +379,7 @@ function renderCover(entityId: string, inFlight: boolean, sendAction: (p: Action
   return (
     <div className="ha-btn-group">
       {(['open_cover', 'stop_cover', 'close_cover'] as const).map((s) => (
-        <button key={s} type="button" className="ha-btn ha-btn-cover" disabled={inFlight} onClick={() => sendAction({ domain: 'cover', service: s, entity_id: entityId })} data-action={s.split('_')[0]}>{s === 'open_cover' ? 'Open' : s === 'stop_cover' ? 'Stop' : 'Close'}</button>
+        <button key={s} type="button" className="ha-btn ha-btn-cover" disabled={inFlight} onClick={() => { void sendAction({ domain: 'cover', service: s, entity_id: entityId }); }} data-action={s.split('_')[0]}>{s === 'open_cover' ? 'Open' : s === 'stop_cover' ? 'Stop' : 'Close'}</button>
       ))}
     </div>
   );
@@ -387,11 +388,11 @@ function renderCover(entityId: string, inFlight: boolean, sendAction: (p: Action
 function renderMedia(entityId: string, isPlaying: boolean, inFlight: boolean, sendAction: (p: ActionPayload) => Promise<void>) {
   return (
     <div className="ha-btn-group ha-media-btn-group">
-      <button type="button" className="ha-btn ha-btn-icon" disabled={inFlight} onClick={() => sendAction({ domain: 'media_player', service: 'media_previous_track', entity_id: entityId })} data-action="prev" title="Previous Track">⏮</button>
-      <button type="button" className="ha-btn ha-btn-icon ha-btn-play" disabled={inFlight} onClick={() => sendAction({ domain: 'media_player', service: 'media_play_pause', entity_id: entityId })} data-action="play-pause" title={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? '⏸' : '▶'}</button>
-      <button type="button" className="ha-btn ha-btn-icon" disabled={inFlight} onClick={() => sendAction({ domain: 'media_player', service: 'media_next_track', entity_id: entityId })} data-action="next" title="Next Track">⏭</button>
-      <button type="button" className="ha-btn ha-btn-icon" disabled={inFlight} onClick={() => sendAction({ domain: 'media_player', service: 'volume_down', entity_id: entityId })} data-action="vol-down" title="Volume Down">🔉</button>
-      <button type="button" className="ha-btn ha-btn-icon" disabled={inFlight} onClick={() => sendAction({ domain: 'media_player', service: 'volume_up', entity_id: entityId })} data-action="vol-up" title="Volume Up">🔊</button>
+      <button type="button" className="ha-btn ha-btn-icon" disabled={inFlight} onClick={() => { void sendAction({ domain: 'media_player', service: 'media_previous_track', entity_id: entityId }); }} data-action="prev" title="Previous Track">⏮</button>
+      <button type="button" className="ha-btn ha-btn-icon ha-btn-play" disabled={inFlight} onClick={() => { void sendAction({ domain: 'media_player', service: 'media_play_pause', entity_id: entityId }); }} data-action="play-pause" title={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? '⏸' : '▶'}</button>
+      <button type="button" className="ha-btn ha-btn-icon" disabled={inFlight} onClick={() => { void sendAction({ domain: 'media_player', service: 'media_next_track', entity_id: entityId }); }} data-action="next" title="Next Track">⏭</button>
+      <button type="button" className="ha-btn ha-btn-icon" disabled={inFlight} onClick={() => { void sendAction({ domain: 'media_player', service: 'volume_down', entity_id: entityId }); }} data-action="vol-down" title="Volume Down">🔉</button>
+      <button type="button" className="ha-btn ha-btn-icon" disabled={inFlight} onClick={() => { void sendAction({ domain: 'media_player', service: 'volume_up', entity_id: entityId }); }} data-action="vol-up" title="Volume Up">🔊</button>
     </div>
   );
 }
@@ -404,27 +405,27 @@ function renderDomainTouchControls(domain: string, entityId: string, ctx: Ctx, e
 
   switch (domain) {
     case 'light': return renderLight(entityId, isOn, attrs, inFlight, ctx.sendAction);
-    case 'switch': return <button type="button" className={`ha-btn ha-btn-toggle ${isOn ? 'is-on' : ''}`} disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'switch', service: 'toggle', entity_id: entityId })} data-action="toggle">{isOn ? 'Turn Off' : 'Turn On'}</button>;
+    case 'switch': return <button type="button" className={`ha-btn ha-btn-toggle ${isOn ? 'is-on' : ''}`} disabled={inFlight} onClick={() => { void ctx.sendAction({ domain: 'switch', service: 'toggle', entity_id: entityId }); }} data-action="toggle">{isOn ? 'Turn Off' : 'Turn On'}</button>;
     case 'fan': return renderFan(entityId, isOn, attrs, inFlight, ctx.sendAction);
     case 'cover': return renderCover(entityId, inFlight, ctx.sendAction);
     case 'lock': {
       const isLocked = state === 'locked';
-      return <button type="button" className={`ha-btn ${isLocked ? 'ha-btn-locked' : 'ha-btn-unlocked'}`} disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'lock', service: isLocked ? 'unlock' : 'lock', entity_id: entityId })} data-action="toggle-lock">{isLocked ? 'Unlock' : 'Lock'}</button>;
+      return <button type="button" className={`ha-btn ${isLocked ? 'ha-btn-locked' : 'ha-btn-unlocked'}`} disabled={inFlight} onClick={() => { void ctx.sendAction({ domain: 'lock', service: isLocked ? 'unlock' : 'lock', entity_id: entityId }); }} data-action="toggle-lock">{isLocked ? 'Unlock' : 'Lock'}</button>;
     }
     case 'climate': {
       const targetTemp = (attrs.temperature as number | undefined) ?? 70;
       return (
         <div className="ha-btn-group">
-          <button type="button" className="ha-btn ha-btn-temp" disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'climate', service: 'set_temperature', entity_id: entityId, service_data: { temperature: targetTemp - 1 } })} data-action="temp-down">-</button>
+          <button type="button" className="ha-btn ha-btn-temp" disabled={inFlight} onClick={() => { void ctx.sendAction({ domain: 'climate', service: 'set_temperature', entity_id: entityId, service_data: { temperature: targetTemp - 1 } }); }} data-action="temp-down">-</button>
           <span className="ha-temp-inline">{targetTemp}°</span>
-          <button type="button" className="ha-btn ha-btn-temp" disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'climate', service: 'set_temperature', entity_id: entityId, service_data: { temperature: targetTemp + 1 } })} data-action="temp-up">+</button>
+          <button type="button" className="ha-btn ha-btn-temp" disabled={inFlight} onClick={() => { void ctx.sendAction({ domain: 'climate', service: 'set_temperature', entity_id: entityId, service_data: { temperature: targetTemp + 1 } }); }} data-action="temp-up">+</button>
         </div>
       );
     }
     case 'media_player': return renderMedia(entityId, state === 'playing', inFlight, ctx.sendAction);
-    case 'camera': return <button type="button" className="ha-btn ha-btn-camera" disabled={inFlight} onClick={() => ctx.refreshCamera(entityId)} data-action="refresh">Refresh</button>;
-    case 'scene': return <button type="button" className="ha-btn ha-btn-primary" disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'scene', service: 'turn_on', entity_id: entityId })} data-action="activate">Activate</button>;
-    case 'script': return <button type="button" className="ha-btn ha-btn-primary" disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'script', service: 'turn_on', entity_id: entityId })} data-action="run">Run</button>;
+    case 'camera': return <button type="button" className="ha-btn ha-btn-camera" disabled={inFlight} onClick={() => { ctx.refreshCamera(entityId); }} data-action="refresh">Refresh</button>;
+    case 'scene': return <button type="button" className="ha-btn ha-btn-primary" disabled={inFlight} onClick={() => { void ctx.sendAction({ domain: 'scene', service: 'turn_on', entity_id: entityId }); }} data-action="activate">Activate</button>;
+    case 'script': return <button type="button" className="ha-btn ha-btn-primary" disabled={inFlight} onClick={() => { void ctx.sendAction({ domain: 'script', service: 'turn_on', entity_id: entityId }); }} data-action="run">Run</button>;
     case 'sensor': return <div className="ha-sensor-pill" data-state={state}><span className="ha-sensor-val">{state}</span>{Boolean(attrs.unit_of_measurement) && <span className="ha-sensor-unit">{String(attrs.unit_of_measurement)}</span>}</div>;
     case 'binary_sensor': return <div className={`ha-binary-pill ${isOn ? 'is-active' : 'is-clear'}`} data-state={state}><span className="ha-pill-dot" /><span className="ha-pill-text">{getBinaryLabel(isOn, attrs.device_class as string | undefined)}</span></div>;
     default: return <div className="ha-generic-state">{state}</div>;

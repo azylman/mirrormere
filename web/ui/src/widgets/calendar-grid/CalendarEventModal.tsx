@@ -251,7 +251,7 @@ export function CalendarEventModal({
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => { window.removeEventListener('keydown', onKeyDown); };
   }, [event, onClose]);
 
   if (!event) return null;
@@ -269,7 +269,7 @@ export function CalendarEventModal({
 
   const modalTitle = stripMealiePrefix(event.title) || 'Untitled Event';
   const heroImg = resolveMealieEventImage(event);
-  const flair = !heroImg && eventFlair !== false ? detectEventFlair(event.title) : null;
+  const flair = !heroImg && eventFlair ? detectEventFlair(event.title) : null;
 
   return (
     <ViewTransition default="none">
@@ -284,7 +284,7 @@ export function CalendarEventModal({
           }
         }}
       >
-        <div className="cf-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="cf-modal-card" onClick={(e) => { e.stopPropagation(); }}>
           {flair && renderModalFlairBanner(flair)}
           <div className="cf-modal-header">
             <h3 className="cf-modal-title">{modalTitle}</h3>
@@ -344,7 +344,7 @@ export function CalendarEventModal({
                 </div>
               );
             }
-            if (event.location && event.location.trim() && !isMealieImageSource(event.location)) {
+            if (event.location?.trim() && !isMealieImageSource(event.location)) {
               return (
                 <div className="cf-modal-location">
                   <svg
@@ -395,10 +395,10 @@ export function CalendarEventModal({
           )}
 
           {/* Description */}
-          {event.description && event.description.trim() ? (() => {
+          {event.description?.trim() ? (() => {
             const isMealie =
               Boolean(resolveMealieEventImage(event)) ||
-              event.title?.includes('\u{1F37D}');
+              event.title.includes('\u{1F37D}');
             let desc = stripMealiePrefix(
               event.description
                 .trim()

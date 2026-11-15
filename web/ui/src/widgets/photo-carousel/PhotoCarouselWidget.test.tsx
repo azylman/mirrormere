@@ -28,7 +28,7 @@ function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
 }
 
 function setWidgetPhotos(
-  photos: Array<{ id?: string; url?: string; URL?: string; width?: number; height?: number; aspect_ratio?: number; timestamp?: string; location?: string; album_name?: string; media_type?: string }>,
+  photos: { id?: string; url?: string; URL?: string; width?: number; height?: number; aspect_ratio?: number; timestamp?: string; location?: string; album_name?: string; media_type?: string }[],
   cycleSeconds?: number, config: Record<string, unknown> = {},
 ) {
   useDisplayStore.setState({
@@ -391,6 +391,7 @@ describe('PhotoCarouselWidget component', () => {
       expect(nextFg.getAttribute('src')).toBeNull();
 
       // In JSDOM with fake timers, if setInterval didn't advance, advance 10000 more
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- assigned inside the mocked decode()
       if (!resolveDecode) {
         act(() => {
           vi.advanceTimersByTime(10000);
@@ -463,7 +464,7 @@ describe('PhotoCarouselWidget component', () => {
   });
 
   it('immediately commits in-flight transition and advances to next photo when tapped mid-crossfade', async () => {
-    const decodeResolvers: Array<() => void> = [];
+    const decodeResolvers: (() => void)[] = [];
     const originalImage = window.Image;
 
     class MockImage {
@@ -532,11 +533,11 @@ describe('PhotoCarouselWidget component', () => {
   });
 
   it('sizes photo URLs via ResizeObserver without synchronous getBoundingClientRect', () => {
-    let resizeCallback: ((entries: Array<{ contentRect: { width: number; height: number } }>) => void) | null = null;
+    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
     const originalResizeObserver = window.ResizeObserver;
 
     class MockResizeObserver {
-      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) {
+      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) {
         resizeCallback = cb;
       }
       observe = vi.fn();
@@ -576,11 +577,11 @@ describe('PhotoCarouselWidget component', () => {
   });
 
   it('tracks container size via ResizeObserver when transitioning from loading state to ready photos', () => {
-    let resizeCallback: ((entries: Array<{ contentRect: { width: number; height: number } }>) => void) | null = null;
+    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
     const originalResizeObserver = window.ResizeObserver;
 
     class MockResizeObserver {
-      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) {
+      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) {
         resizeCallback = cb;
       }
       observe = vi.fn();
@@ -659,9 +660,9 @@ describe('PhotoCarouselWidget component', () => {
  });
       let nextFg: HTMLImageElement | null = null;
       await vi.waitFor(() => {
-        nextFg = container.querySelector('.photo-layer.photo-next') as HTMLImageElement;
+        nextFg = container.querySelector('.photo-layer.photo-next');
         expect(nextFg).not.toBeNull();
-        expect(nextFg.getAttribute('src')).toContain('p2.jpg');
+        expect(nextFg!.getAttribute('src')).toContain('p2.jpg');
  });
 
       expect(nextFg!.classList.contains('dither')).toBe(true);
@@ -709,7 +710,7 @@ describe('PhotoCarouselWidget component', () => {
   });
 
   it('resets document.body.dataset.animating to 0 on early tap commit mid-crossfade', async () => {
-    const decodeResolvers: Array<() => void> = [];
+    const decodeResolvers: (() => void)[] = [];
     const originalImage = window.Image;
     class MockImage {
       src = '';
@@ -1334,9 +1335,9 @@ describe('PhotoCarouselWidget component', () => {
   });
 
   it('pairs two portrait photos side-by-side in a wide container and renders single landscape photo', async () => {
-    const decodeResolvers: Array<() => void> = [];
+    const decodeResolvers: (() => void)[] = [];
     const originalImage = window.Image;
-    let resizeCallback: ((entries: Array<{ contentRect: { width: number; height: number } }>) => void) | null = null;
+    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
     const originalResizeObserver = window.ResizeObserver;
 
     class MockImage {
@@ -1344,7 +1345,7 @@ describe('PhotoCarouselWidget component', () => {
       decode() { return new Promise<void>((res) => { decodeResolvers.push(res); }); }
     }
     class MockResizeObserver {
-      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) { resizeCallback = cb; }
+      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
       observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
     }
     // @ts-expect-error mock window.Image
@@ -1398,9 +1399,9 @@ describe('PhotoCarouselWidget component', () => {
   });
 
   it('keeps outgoing and committed companion portrait images stable across transitions in albums with 5+ portraits', async () => {
-    const decodeResolvers: Array<() => void> = [];
+    const decodeResolvers: (() => void)[] = [];
     const originalImage = window.Image;
-    let resizeCallback: ((entries: Array<{ contentRect: { width: number; height: number } }>) => void) | null = null;
+    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
     const originalResizeObserver = window.ResizeObserver;
 
     class MockImage {
@@ -1408,7 +1409,7 @@ describe('PhotoCarouselWidget component', () => {
       decode() { return new Promise<void>((res) => { decodeResolvers.push(res); }); }
     }
     class MockResizeObserver {
-      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) { resizeCallback = cb; }
+      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
       observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
     }
     // @ts-expect-error mock window.Image
@@ -1463,11 +1464,11 @@ describe('PhotoCarouselWidget component', () => {
   });
 
   it('renders single portrait photo when container is narrow (< 1.15 aspect ratio) and deduplicates same-day metadata when paired', () => {
-    let resizeCallback: ((entries: Array<{ contentRect: { width: number; height: number } }>) => void) | null = null;
+    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
     const originalResizeObserver = window.ResizeObserver;
 
     class MockResizeObserver {
-      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) { resizeCallback = cb; }
+      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
       observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
     }
     // @ts-expect-error mock window.ResizeObserver
@@ -1500,7 +1501,7 @@ describe('PhotoCarouselWidget component', () => {
 
   it('handles partial decode in triggerAdvance by falling back to single portrait when companion fails or keeping companion unseen when primary fails', async () => {
     const originalImage = window.Image;
-    let resizeCallback: ((entries: Array<{ contentRect: { width: number; height: number } }>) => void) | null = null;
+    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
     const originalResizeObserver = window.ResizeObserver;
 
     class MockImage {
@@ -1515,7 +1516,7 @@ describe('PhotoCarouselWidget component', () => {
       }
     }
     class MockResizeObserver {
-      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) { resizeCallback = cb; }
+      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
       observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
     }
     // @ts-expect-error mock window.Image
@@ -1626,10 +1627,10 @@ describe('PhotoCarouselWidget component', () => {
     });
 
     it('supports video playback in diptych slots', () => {
-      let resizeCallback: ((entries: Array<{ contentRect: { width: number; height: number } }>) => void) | null = null;
+      let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
       const originalResizeObserver = window.ResizeObserver;
       class MockResizeObserver {
-        constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) { resizeCallback = cb; }
+        constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
         observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
       }
       // @ts-expect-error mock window.ResizeObserver
@@ -1678,10 +1679,10 @@ describe('PhotoCarouselWidget component', () => {
     });
 
     it('clears secondary video playback when container narrows', () => {
-      let resizeCallback: ((entries: Array<{ contentRect: { width: number; height: number } }>) => void) | null = null;
+      let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
       const originalResizeObserver = window.ResizeObserver;
       class MockResizeObserver {
-        constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) { resizeCallback = cb; }
+        constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
         observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
       }
       // @ts-expect-error mock window.ResizeObserver
@@ -1706,7 +1707,7 @@ describe('PhotoCarouselWidget component', () => {
     });
 
     it('never auto-plays or leaks video playback across slides when stepping to or between video slides', async () => {
-      const decodeResolvers: Array<() => void> = [];
+      const decodeResolvers: (() => void)[] = [];
       const originalImage = window.Image;
       class MockImage {
         src = '';

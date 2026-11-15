@@ -133,7 +133,7 @@ export function useSharedYtMusicState(): SharedYtMusicState {
   );
 }
 
-export function isYtMusicLiveIslandActive(np?: NowPlaying | null): boolean {
+export function isYtMusicLiveIslandActive(np?: NowPlaying | null): np is NowPlaying {
   if (!np) return false;
   const st = (np.state ?? '').trim().toLowerCase();
   const hasTrack = Boolean(np.title?.trim() || np.video_id?.trim());
@@ -278,7 +278,7 @@ export function useMusicStatePolling(
         const param = activeAccountId ? `?account_id=${encodeURIComponent(activeAccountId)}` : '';
         const r = await fetch(`${apiBase}/music/state${param}`);
         if (!r.ok) return;
-        const data = (await r.json()) as MusicState;
+        const data = (await r.json()) as MusicState | null;
         if (!cancelled && data && typeof data === 'object') {
           setStateData((prev) => (JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
         }
@@ -316,7 +316,7 @@ export async function postMusicApi(
       body: JSON.stringify(body),
     });
     const res = (await r.json().catch(() => ({}))) as { state?: MusicState };
-    return res?.state;
+    return res.state;
   } catch {
     return undefined;
   }
@@ -343,7 +343,7 @@ export function resolveAccounts(
           id: String(a.id ?? `acc_${idx}`),
           name: String(a.name ?? a.id ?? `Account ${idx + 1}`),
           handle: a.handle ? String(a.handle) : undefined,
-          type: (a.type === 'brand' ? 'brand' : 'email') as 'email' | 'brand',
+          type: (a.type === 'brand' ? 'brand' : 'email'),
         };
       }
       return {
@@ -376,7 +376,7 @@ export function resolveAccounts(
           id,
           name: String(a.name ?? a.email ?? id),
           handle: a.handle ? String(a.handle) : (a.email ? String(a.email) : undefined),
-          type: (a.type === 'brand' ? 'brand' : 'email') as 'email' | 'brand',
+          type: (a.type === 'brand' ? 'brand' : 'email'),
         };
       } else {
         continue;
@@ -421,7 +421,7 @@ export function resolveSuggestions(stateData?: MusicState | null): SuggestedItem
 
   if (Array.isArray(stateData?.queue)) {
     for (const item of stateData.queue) {
-      const artist = item.artist?.trim();
+      const artist = item.artist.trim();
       if (artist && !seenArtists.has(artist.toLowerCase())) {
         seenArtists.add(artist.toLowerCase());
         derived.push({

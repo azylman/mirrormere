@@ -7,7 +7,7 @@ export function StatusDot() {
   let title = 'System Status: Healthy';
   let visible = false;
 
-  if (system.online === false) {
+  if (!system.online) {
     statusClass = 'status-error';
     title = 'System Status: Offline';
     visible = true;

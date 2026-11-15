@@ -23,7 +23,7 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
   const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const dataset = typeof document !== 'undefined' ? document.body?.dataset : undefined;
+  const dataset = typeof document !== 'undefined' ? document.body.dataset : undefined;
   const isEnabled = props.enabled ?? (dataset?.headerVideo === 'true');
   const streamId = props.streamId ?? dataset?.streamId ?? 'chromecast';
   const streamUrl = props.streamUrl ?? dataset?.streamUrl ?? '';
@@ -41,15 +41,13 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
     setIsLoading(false);
   };
 
-  const mode = video?.mode || (video?.primary ? 'video' : 'widgets');
-  if (mode === 'video' && isLoading) {
+  if (video.mode === 'video' && isLoading) {
     setIsLoading(false);
   }
 
   // Clear safety timer when video switches to active video playback
   useEffect(() => {
-    const activeMode = video?.mode || (video?.primary ? 'video' : 'widgets');
-    if (activeMode === 'video' && safetyTimerRef.current !== null) {
+    if (video.mode === 'video' && safetyTimerRef.current !== null) {
       clearTimeout(safetyTimerRef.current);
       safetyTimerRef.current = null;
     }
@@ -93,8 +91,8 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
         videoManager?: { currentMode: string };
         videoHUD?: { showHUD: () => void };
       };
-      if (win.videoManager && win.videoManager.currentMode === 'video') {
-        win.videoHUD?.showHUD?.();
+      if (win.videoManager?.currentMode === 'video') {
+        win.videoHUD?.showHUD();
         return;
       }
     }
@@ -112,7 +110,7 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: streamId, action: 'wake' }),
-      }).catch((err) => {
+      }).catch((err: unknown) => {
         console.warn('[MirrormereDisplay] Header video wake failed:', err);
       });
     }
@@ -135,7 +133,7 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        if (resp && !resp.ok) {
+        if (!resp.ok) {
           throw new Error(`HTTP ${resp.status}`);
         }
       }

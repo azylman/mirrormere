@@ -264,7 +264,7 @@ export function CalendarHeader({
             data-view="week"
             role="tab"
             aria-selected={activeView === 'week' ? 'true' : 'false'}
-            onClick={() => onViewSwitch('week')}
+            onClick={() => { onViewSwitch('week'); }}
           >
             Week
           </button>
@@ -274,7 +274,7 @@ export function CalendarHeader({
             data-view="month"
             role="tab"
             aria-selected={activeView === 'month' ? 'true' : 'false'}
-            onClick={() => onViewSwitch('month')}
+            onClick={() => { onViewSwitch('month'); }}
           >
             Month
           </button>

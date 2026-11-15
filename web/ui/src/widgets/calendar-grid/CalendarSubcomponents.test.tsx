@@ -101,7 +101,7 @@ describe('CalendarEventModal', () => {
     expect(container.querySelector('.cf-modal-location')).toBeNull();
     // Description is treated as Mealie recipe (not truncated to 280 chars) even without plate emoji in title
     const descEl = container.querySelector('.cf-modal-description');
-    expect(descEl?.textContent?.length).toBe(320);
+    expect(descEl?.textContent.length).toBe(320);
 
     // Also supports data:image/... in location without rendering location pin
     const dataImgEvent: FamilyEvent = { id: 'mealie-3', title: 'Tacos', location: 'data:image/webp;base64,UklGRg==' };
@@ -149,8 +149,8 @@ describe('CalendarEventModal', () => {
     const descEl = container.querySelector('.cf-modal-description');
     expect(descEl).not.toBeNull();
     expect(descEl?.textContent).not.toContain('🍽️');
-    expect(descEl?.textContent?.endsWith('...')).toBe(false);
-    expect(descEl?.textContent?.length).toBeGreaterThan(280);
+    expect(descEl?.textContent.endsWith('...')).toBe(false);
+    expect(descEl?.textContent.length).toBeGreaterThan(280);
   });
 
   it('truncates standard event description exceeding 280 chars to 277 chars + ellipsis', () => {
@@ -162,8 +162,8 @@ describe('CalendarEventModal', () => {
 
     const descEl = container.querySelector('.cf-modal-description');
     expect(descEl).not.toBeNull();
-    expect(descEl?.textContent?.endsWith('...')).toBe(true);
-    expect(descEl?.textContent?.length).toBe(280);
+    expect(descEl?.textContent.endsWith('...')).toBe(true);
+    expect(descEl?.textContent.length).toBe(280);
   });
 });
 
@@ -320,10 +320,9 @@ describe('CalendarMonthView & CalendarWeekView', () => {
   });
 
   describe('batchFitDayColumnEvents', () => {
-    it('returns early when column element is invalid or empty', () => {
-      expect(() => batchFitDayColumnEvents(null as unknown as HTMLElement)).not.toThrow();
+    it('returns early when column element is empty', () => {
       const div = document.createElement('div');
-      expect(() => batchFitDayColumnEvents(div)).not.toThrow();
+      expect(() => { batchFitDayColumnEvents(div); }).not.toThrow();
     });
 
     it('toggles cf-event-compact based on height and width overflow', () => {
@@ -743,7 +742,7 @@ describe('CalendarMonthView & CalendarWeekView', () => {
         {
           date: '2026-10-27', day_of_month: 27, is_today: true, is_weekend: false,
           meals: [
-            { id: 'meal-1', title: '🍽️ Creamy Tuscan Chicken', location: 'Kitchen', image_url: '/hearth-api/mealie/image/tuscan.jpg', description: 'Recipe notes', color: '#10b981', text_color: '#ffffff', pattern: 'dots', owners: ['Alex'] } as FamilyEvent,
+            { id: 'meal-1', title: '🍽️ Creamy Tuscan Chicken', location: 'Kitchen', image_url: '/hearth-api/mealie/image/tuscan.jpg', description: 'Recipe notes', color: '#10b981', text_color: '#ffffff', pattern: 'dots', owners: ['Alex'] },
             { id: 'meal-2', title: 'Tacos Night', color: '#8b60ed', text_color: '#ffffff', owners: ['Sam'] },
           ],
         },
@@ -796,7 +795,7 @@ describe('CalendarMonthView & CalendarWeekView', () => {
           'cal-meal-filter': {
             meta: { type: 'calendar-grid', origin: [0, 0], dimensions: [6, 2], config: {}, assets_base: '' },
             state: 'healthy', data: {}, timestamp: '2026-10-27T10:00:00Z',
-            viewModel: { active_view: 'week', week: { range_start: '2026-10-27', range_end: '2026-10-27', range_label: 'Oct 27, 2026', today: '2026-10-27', members, days: daysToRender } } satisfies CalendarGridViewModel as unknown as Record<string, unknown>,
+            viewModel: { active_view: 'week', week: { range_start: '2026-10-27', range_end: '2026-10-27', range_label: 'Oct 27, 2026', today: '2026-10-27', members, days: daysToRender } } satisfies CalendarGridViewModel,
           },
         },
       });
@@ -816,7 +815,7 @@ describe('CalendarMonthView & CalendarWeekView', () => {
         observe = observe;
         disconnect = disconnect;
         unobserve = vi.fn();
-      } as unknown as typeof ResizeObserver;
+      };
 
       try {
         const daysToRender: FamilyDay[] = [
@@ -1530,7 +1529,7 @@ describe('useCalendarRangeData & useInactivityReset', () => {
       it('renders SVG watermarks for all flair types', () => {
         const flairs = ['birthday', 'party', 'dentist', 'movie', 'flight', 'sports', 'holiday'] as const;
         for (const flair of flairs) {
-          const { container } = render(renderEventFlairWatermark(flair)!);
+          const { container } = render(renderEventFlairWatermark(flair));
           expect(container.querySelector('.cf-event-flair-watermark')).not.toBeNull();
           expect(container.querySelector('svg')).not.toBeNull();
         }

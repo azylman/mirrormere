@@ -85,9 +85,7 @@ export function Header({ timezone: propTimezone }: HeaderProps = {}) {
 
   useEffect(() => {
     if (typeof document !== 'undefined' && timezone) {
-      if (document.body?.dataset) {
-        document.body.dataset.timezone = timezone;
-      }
+      document.body.dataset.timezone = timezone;
       const appEl = document.getElementById('mirrormere-app');
       if (appEl?.dataset) {
         appEl.dataset.timezone = timezone;

@@ -1089,6 +1089,63 @@ describe('Hud component and declarative decomposition', () => {
       );
     });
 
+    it('awaiting a controller action waits for its deferred request to finish', async () => {
+      let resolveFetch: (value: { ok: boolean }) => void = () => undefined;
+      const mockFetch = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveFetch = resolve; }))
+        .mockResolvedValue({ ok: true });
+      let ctrl: VideoHUDController | null = null;
+      const ref = {
+        get current() {
+          return ctrl;
+        },
+        set current(val: VideoHUDController | null) {
+          ctrl = val;
+        },
+      };
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 's_slow', stream_url: 'http://test/stream', type: 'webrtc', controllable: true },
+            pip: null,
+          },
+        });
+      });
+      render(
+        <Hud controllerRef={ref} remoteUrl="http://remote-host" fetch={mockFetch as unknown as typeof fetch} />,
+      );
+
+      let settled = false;
+      let rewind: Promise<void> = Promise.resolve();
+      act(() => {
+        rewind = Promise.resolve(ctrl?.handleRewind?.()).then(() => { settled = true; });
+      });
+
+      // The request outlives the 300 ms pending window; the awaited action must still be pending.
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+        await Promise.resolve();
+      });
+      expect(settled).toBe(false);
+
+      resolveFetch({ ok: true });
+      await act(async () => {
+        await rewind;
+      });
+
+      // Once the awaited action completes, the next action is not discarded by the pending guard.
+      await act(async () => {
+        await ctrl?.handleNext?.();
+      });
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'http://remote-host/key',
+        expect.objectContaining({ body: JSON.stringify({ key: 'next' }) }),
+      );
+    });
+
     it('supports callback function for controllerRef with mount and unmount', () => {
       let callbackCtrl: VideoHUDController | null = null;
       const refFn = (c: VideoHUDController | null) => {
@@ -1117,14 +1174,14 @@ describe('Hud component and declarative decomposition', () => {
 
       // syncStream with no currentStream calls hideHUD
       act(() => {
-        (ctrl as unknown as VideoHUDController)?.syncStream();
+        (ctrl as unknown as VideoHUDController).syncStream();
       });
-      expect((ctrl as unknown as VideoHUDController)?.isVisible).toBe(false);
+      expect((ctrl as unknown as VideoHUDController).isVisible).toBe(false);
 
       // handleAudioState(null) and handleVideoState(null) safe fallbacks
       act(() => {
-        (ctrl as unknown as VideoHUDController)?.handleAudioState(null);
-        (ctrl as unknown as VideoHUDController)?.handleVideoState(null);
+        (ctrl as unknown as VideoHUDController).handleAudioState(null);
+        (ctrl as unknown as VideoHUDController).handleVideoState(null);
       });
       expect(useDisplayStore.getState().video.mode).toBe('widgets');
     });

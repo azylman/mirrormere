@@ -45,7 +45,7 @@ export function getNormalizedVideoCoordinates(
   let clientX: number | null = null;
   let clientY: number | null = null;
   const touch =
-    ('touches' in e && e.touches?.[0]) || ('changedTouches' in e && e.changedTouches?.[0]) || null;
+    ('touches' in e && e.touches[0]) || ('changedTouches' in e && e.changedTouches[0]) || null;
   if (touch) {
     clientX = touch.clientX;
     clientY = touch.clientY;

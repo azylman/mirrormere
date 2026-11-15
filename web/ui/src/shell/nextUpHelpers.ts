@@ -53,12 +53,12 @@ export function formatRelativeCountdown(ms: number, isEnding = false): string {
   return mins === 0 ? `${prefix}${hours}h` : `${prefix}${hours}h ${mins}m`;
 }
 
-export function parseEventDates(raw: RawCalendarEvent, referenceNow: Date, tz?: string): ParsedEventDates | null {
-  if (!raw || typeof raw !== 'object') return null;
+export function parseEventDates(input: unknown, referenceNow: Date, tz?: string): ParsedEventDates | null {
+  // Calendar events arrive as loosely typed widget JSON; skip null or non-object entries.
+  if (!input || typeof input !== 'object') return null;
+  const raw = input as RawCalendarEvent;
   const offsetStr = getTimezoneOffsetString(referenceNow, tz);
-  const isAllDay = Boolean(
-    raw.allDay || raw.all_day || (typeof raw.start === 'string' && raw.start.length === 10 && !raw.start.includes(':'))
-  );
+  const isAllDay = (raw.allDay || raw.all_day || (typeof raw.start === 'string' && raw.start.length === 10 && !raw.start.includes(':')));
   const { startDate, endDate } = isAllDay
     ? parseAllDayDates(raw, offsetStr)
     : parseTimedDates(raw, referenceNow, tz, offsetStr);
@@ -155,7 +155,7 @@ function pushGridDayEvent(ev: unknown, dayDate: string, out: RawCalendarEvent[],
   const start = (typeof rawStart === 'string' && rawStart !== '') || rawStart instanceof Date ? rawStart : dayDate;
   const end = (typeof rawEnd === 'string' && rawEnd !== '') || rawEnd instanceof Date ? rawEnd : dayDate;
   const rawId = typeof rec.id === 'string' ? rec.id.trim() : '';
-  const id = rawId ? (dayDate && !rawId.endsWith(`-${dayDate}`) ? `${rawId}-${dayDate}` : rawId) : `grid-${dayDate}-${start || 'allday'}-${title}`;
+  const id = rawId ? (dayDate && !rawId.endsWith(`-${dayDate}`) ? `${rawId}-${dayDate}` : rawId) : `grid-${dayDate}-${String(start || 'allday')}-${title}`;
   out.push({
     ...rec, id, title, start, end, allDay: isAllDay,
     date: dayDate || (typeof rec.date === 'string' ? rec.date : undefined),
@@ -218,7 +218,7 @@ function extractWidgetCalendarEvents(entry: WidgetEntry, rawList: RawCalendarEve
     if (Array.isArray(dataObj.events)) processArray(dataObj.events, rawList);
     if (Array.isArray(dataObj.days)) processArray(dataObj.days, rawList);
   }
-  if (entry.viewModel && typeof entry.viewModel === 'object') extractFromViewModel(entry.viewModel as Record<string, unknown>, rawList);
+  if (entry.viewModel && typeof entry.viewModel === 'object') extractFromViewModel(entry.viewModel, rawList);
 }
 
 export function selectCalendarEvents(widgets: Record<string, WidgetEntry | undefined>): RawCalendarEvent[] {
@@ -226,7 +226,7 @@ export function selectCalendarEvents(widgets: Record<string, WidgetEntry | undef
   for (const entry of Object.values(widgets)) if (entry) extractWidgetCalendarEvents(entry, rawList);
   const deduped = new Map<string, RawCalendarEvent>();
   for (const ev of rawList) {
-    if (!ev || !ev.title) continue;
+    if (!ev.title) continue;
     const key = ev.id || `${ev.title}-${String(ev.start)}`;
     if (!deduped.has(key)) deduped.set(key, ev);
   }
@@ -273,7 +273,7 @@ export function useSharedPlexSession(): PlexNowPlayingSession | null {
 }
 
 export function isPlexLiveIslandActive(session?: PlexNowPlayingSession | null): boolean {
-  return Boolean(session && session.title && session.state !== 'stopped');
+  return Boolean(session?.title && session.state !== 'stopped');
 }
 
 export function resolveScreenIndexForWidgetType(widgetType: string): number | null {
@@ -329,14 +329,14 @@ export function formatTimerCountdown(attributes: Record<string, unknown> | undef
 }
 
 function parseSportsAllowlist(entry: WidgetEntry): string[] {
-  const cfg = entry.meta?.config as Record<string, unknown> | undefined;
+  const cfg = entry.meta?.config;
   const data = entry.data as Record<string, unknown> | undefined;
   const raw = cfg?.live_island_teams ?? cfg?.sports_teams ?? data?.live_island_teams ?? data?.sports_teams;
   const items = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : [];
   return items.map((item) => String(item ?? '').trim().toUpperCase()).filter(Boolean);
 }
 
-const SPORT_ICONS: Array<[RegExp, string]> = [
+const SPORT_ICONS: [RegExp, string][] = [
   [/MLB|BASEBALL/, '⚾'],
   [/NFL|NCAAF|FOOTBALL/, '🏈'],
   [/NBA|NCAAB|WNBA|BASKETBALL/, '🏀'],
@@ -373,7 +373,7 @@ function matchesSportsAllowlist(allowlist: string[], candidates: SportsCandidate
 function formatSportsTitleAndSub(ent: EntityState, entityId: string, attrs: Record<string, unknown>, team: string, opp: string, league: string): [string, string] {
   const tS = attrs.team_score ?? '';
   const oS = attrs.opponent_score ?? '';
-  const title = team && opp ? `${team}${tS !== '' ? ` ${tS}` : ''} · ${opp}${oS !== '' ? ` ${oS}` : ''}` : getEntityName(ent, entityId);
+  const title = team && opp ? `${team}${tS !== '' ? ` ${String(tS)}` : ''} · ${opp}${oS !== '' ? ` ${String(oS)}` : ''}` : getEntityName(ent, entityId);
   const period = String(attrs.clock ?? attrs.inning ?? attrs.quarter ?? attrs.period ?? 'Live').trim() || 'Live';
   const sub = league && !period.toUpperCase().includes(league.toUpperCase()) ? `${period} · ${league.toUpperCase()}` : period;
   return [title, sub];
@@ -381,7 +381,7 @@ function formatSportsTitleAndSub(ent: EntityState, entityId: string, attrs: Reco
 
 function tryBuildSportsActivity(widgetId: string, entityId: string, ent: EntityState, st: string, allowlist: string[]): HaLiveIslandActivity | null {
   if (!['in', 'in_progress', 'live'].includes(st)) return null;
-  const attrs = (ent.attributes ?? {}) as Record<string, unknown>;
+  const attrs = ent.attributes ?? {};
   const text = (v: unknown): string => String(v ?? '').trim();
   const [team, opp, league, sport] = [text(attrs.team_abbr), text(attrs.opponent_abbr), text(attrs.league), text(attrs.sport)];
   if (!entityId.toLowerCase().startsWith('sensor.team_tracker_') && !team && !opp && !league && !sport) return null;
@@ -409,7 +409,7 @@ export function selectHomeAssistantLiveActivities(
   const seenEntities = new Set<string>();
 
   for (const [widgetId, entry] of Object.entries(widgets)) {
-    if (!entry || !entry.data || typeof entry.data !== 'object') continue;
+    if (!entry?.data || typeof entry.data !== 'object') continue;
     const entities = (entry.data as Record<string, unknown>).entities as Record<string, EntityState | undefined> | undefined;
     if (!entities || typeof entities !== 'object') continue;
     const sportsAllowlist = parseSportsAllowlist(entry);
@@ -419,7 +419,7 @@ export function selectHomeAssistantLiveActivities(
       const entityId = ent.entity_id || key;
       if (!entityId || seenEntities.has(entityId)) continue;
       const domain = getDomain(entityId);
-      const st = (ent.state ?? '').trim().toLowerCase();
+      const st = ent.state.trim().toLowerCase();
 
       if (domain === 'lock' && st === 'unlocked') {
         seenEntities.add(entityId);
@@ -439,7 +439,7 @@ export function selectHomeAssistantLiveActivities(
         seenEntities.add(entityId);
         timers.push({
           kind: 'ha-timer', id: `ha-timer-${entityId}`, widgetId, entityId,
-          title: getEntityName(ent, entityId), subtitle: formatTimerCountdown(ent.attributes, now), icon: '⏱️',
+          title: getEntityName(ent, entityId), subtitle: formatTimerCountdown(ent.attributes ?? undefined, now), icon: '⏱️',
           actionLabel: 'Cancel', actionPayload: { domain: 'timer', service: 'cancel', entity_id: entityId },
         });
       } else if (domain === 'sensor') {

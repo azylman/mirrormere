@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as formatModule from '../format';
 import { useDisplayStore } from '../../store';
@@ -958,33 +957,6 @@ describe('WeatherHourlyGraph component', () => {
     expect(lastX).toBeLessThan(cardWidth);
   });
 
-  it('exercises React compiler memo hit/miss cycles on WeatherHourlyGraph via parent state toggle', () => {
-    function GraphParent({ hourly }: { hourly: unknown }) {
-      const [count, setCount] = useState(0);
-      return (
-        <div>
-          <button data-testid="rerender-btn" onClick={() => setCount((c) => c + 1)}>
-            Increment {count}
-          </button>
-          <WeatherHourlyGraph hourly={hourly} widgetId="memo-graph" />
-        </div>
-      );
-    }
-
-    const hourly = [
-      { time: '2026-10-31T12:00:00Z', temp: 65, precip_prob: 10, icon: 'weather-sunny' },
-      { time: '2026-10-31T13:00:00Z', temp: 68, precip_prob: 0, icon: 'weather-partly-cloudy' },
-    ];
-
-    const { getByTestId, container } = render(<GraphParent hourly={hourly} />);
-    expect(container.querySelector('svg.weather-hourly-graph')).not.toBeNull();
-
-    // Trigger parent rerender with identical hourly reference to hit memo cache branch
-    fireEvent.click(getByTestId('rerender-btn'));
-    expect(getByTestId('rerender-btn').textContent).toContain('Increment 1');
-    expect(container.querySelector('svg.weather-hourly-graph')).not.toBeNull();
-  });
-
   it('renders WeatherHourlyGraph when gridLinesPath, areaPath, curvePath are empty or present with precipitation', () => {
     // 1. All paths present with non-zero precipitation
     const spy1 = vi.spyOn(formatModule, 'computeHourlyGraphLayout').mockReturnValueOnce({
@@ -1494,7 +1466,7 @@ describe('WeatherHourlyGraph component', () => {
       <WeatherForecastWidget id="weather-school-shadow" type="weather-forecast" />,
     );
 
-    const strip = container.querySelector('.weather-school-day-strip') as HTMLElement | null;
+    const strip = container.querySelector<HTMLElement>('.weather-school-day-strip');
     expect(strip).not.toBeNull();
     expect(strip?.style.getPropertyValue('--weather-scrim-opacity')).toBe('0.9');
 
@@ -1525,7 +1497,7 @@ describe('WeatherHourlyGraph component', () => {
     });
 
     rerender(<WeatherForecastWidget id="weather-school-shadow" type="weather-forecast" />);
-    const stripInvalid = container.querySelector('.weather-school-day-strip') as HTMLElement | null;
+    const stripInvalid = container.querySelector<HTMLElement>('.weather-school-day-strip');
     expect(stripInvalid?.style.getPropertyValue('--weather-scrim-opacity')).toBe('');
   });
 });

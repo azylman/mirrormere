@@ -83,7 +83,7 @@ export function Carousel({ hidden }: CarouselProps = {}) {
   const layoutVersion = useDisplayStore((s) => s.layoutVersion);
   const paused = useDisplayStore((s) => s.carousel.paused);
   const videoMode = useDisplayStore(
-    (s) => (s.video?.mode || (s.video?.primary ? 'video' : 'widgets')) === 'video',
+    (s) => s.video.mode === 'video',
   );
   const isHidden = hidden ?? videoMode;
   const [shown, setShown] = useState(() => useDisplayStore.getState().screen.currentScreen);

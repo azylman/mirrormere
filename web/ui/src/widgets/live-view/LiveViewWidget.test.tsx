@@ -125,9 +125,9 @@ describe('LiveViewWidget component', () => {
       pressure: number;
       pointerType: string;
       isPrimary: boolean;
-      changedTouches?: Array<{ clientX: number; clientY: number }>;
+      changedTouches?: { clientX: number; clientY: number }[];
 
-      constructor(type: string, params: PointerEventInit & { changedTouches?: Array<{ clientX: number; clientY: number }> } = {}) {
+      constructor(type: string, params: PointerEventInit & { changedTouches?: { clientX: number; clientY: number }[] } = {}) {
         super(type, params);
         this.pointerId = params.pointerId ?? 0;
         this.width = params.width ?? 1;
@@ -141,12 +141,12 @@ describe('LiveViewWidget component', () => {
   }
 
   class MockRTCPeerConnection {
-    transceivers: Array<{ kind: string; init?: unknown }> = [];
+    transceivers: { kind: string; init?: unknown }[] = [];
     iceGatheringState = 'complete';
     localDescription: { sdp: string } | null = { sdp: 'v=0\r\no=mock\r\n' };
     closed = false;
     ontrack: ((evt: { streams?: MediaStream[]; track?: MediaStreamTrack }) => void) | null = null;
-    listeners: Record<string, Array<() => void>> = {};
+    listeners: Record<string, (() => void)[]> = {};
 
     addTransceiver(kind: string, init?: unknown) {
       this.transceivers.push({ kind, init });
@@ -969,19 +969,12 @@ describe('LiveViewWidget component', () => {
     expect(peerInstance!.closed).toBe(true);
   });
 
-  it('constructs MediaStream with track when streams array is empty, and falls back to addTrack if constructor throws', async () => {
+  it('constructs MediaStream with the track when the streams array is empty', async () => {
     const originalMediaStream = window.MediaStream;
-    let ctorThrows = false;
     class MockStream {
       tracks: unknown[] = [];
       constructor(tracks?: unknown[]) {
-        if (ctorThrows && tracks && tracks.length > 0) {
-          throw new Error('Constructor array not supported');
-        }
         if (tracks) this.tracks = [...tracks];
-      }
-      addTrack(track: unknown) {
-        this.tracks.push(track);
       }
     }
     // @ts-expect-error mock MediaStream
@@ -1015,23 +1008,12 @@ describe('LiveViewWidget component', () => {
       const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
       const fakeTrack = { id: 'track-1', kind: 'video' } as MediaStreamTrack;
 
-      // 1. Normal constructor with array
       act(() => {
-        lastPeerConnection?.ontrack?.({ track: fakeTrack });
+        lastPeerConnection?.ontrack?.({ streams: [], track: fakeTrack });
       });
 
       expect(video.srcObject).toBeInstanceOf(MockStream);
       expect((video.srcObject as unknown as MockStream).tracks).toContain(fakeTrack);
-
-      // 2. Constructor throws -> fallback to addTrack
-      ctorThrows = true;
-      const fakeTrack2 = { id: 'track-2', kind: 'video' } as MediaStreamTrack;
-      act(() => {
-        lastPeerConnection?.ontrack?.({ track: fakeTrack2 });
-      });
-
-      expect(video.srcObject).toBeInstanceOf(MockStream);
-      expect((video.srcObject as unknown as MockStream).tracks).toContain(fakeTrack2);
     } finally {
       window.MediaStream = originalMediaStream;
     }

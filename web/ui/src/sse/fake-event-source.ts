@@ -7,7 +7,7 @@ export class FakeEventSource implements EventSourceLike {
   onopen: ((ev: Event) => void) | null = null;
   onerror: ((ev: Event) => void) | null = null;
   closed = false;
-  private readonly listeners = new Map<string, Array<(ev: MessageEvent) => void>>();
+  private readonly listeners = new Map<string, ((ev: MessageEvent) => void)[]>();
 
   constructor(readonly url: string) {
     FakeEventSource.instances.push(this);

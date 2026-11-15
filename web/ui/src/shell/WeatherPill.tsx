@@ -33,17 +33,17 @@ const KNOWN_WEATHER_ICONS = new Set([
 
 export function WeatherPill() {
   const header = useHeader();
-  const weather = header?.weather;
+  const weather = header.weather;
 
   const tempText =
-    weather && weather.temperature !== undefined
+    weather?.temperature !== undefined
       ? `${Math.round(weather.temperature)}°${(weather.units || '°').replace('°', '')}`
       : '--°';
 
   const locationText = weather?.location || 'Oakland';
 
   const conditionToken = weather?.icon || weather?.condition || '';
-  const customDesc = (weather as { description?: string } | null | undefined)?.description;
+  const customDesc = weather?.description;
 
   let descText = 'Sunny & Mild';
   if (weather) {

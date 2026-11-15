@@ -9,8 +9,8 @@ import { formatTime } from '../format';
  */
 export function ChatLogWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
-  const config = entry?.meta?.config as Record<string, unknown> | undefined;
-  const data = entry?.data as Record<string, unknown> | undefined;
+  const config = entry.meta?.config;
+  const data = entry.data as Record<string, unknown> | undefined;
 
   const rawSession = data?.session ?? data?.Session;
   const session =
@@ -36,7 +36,7 @@ export function ChatLogWidget({ id }: WidgetComponentProps) {
     ? (formatTime('15:04', updatedAt) || updatedAt)
     : null;
 
-  const isError = entry?.state === 'error';
+  const isError = entry.state === 'error';
 
   const rawMessages = Array.isArray(data?.messages)
     ? data.messages

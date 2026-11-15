@@ -4,8 +4,6 @@ import type { VoiceState } from '../sse/types';
 import { Waveform } from './Waveform';
 import { DUCK_STATES, useVoiceHudState } from './useVoiceHudState';
 
-export { DUCK_STATES } from './useVoiceHudState';
-
 /**
  * VoiceHud renders the voice toast dock and Waveform mouth visualizer declaratively,
  * sharing state with HeaderVoice via useVoiceHudState().
@@ -80,11 +78,11 @@ export function VoiceHud() {
       if (typeof window !== 'undefined') {
         delete window.voiceHUD;
         delete window.MirrormereVoice;
-        window.audioManager?.setDucked?.(false);
+        window.audioManager?.setDucked(false);
       }
       if (createdFallback && typeof window !== 'undefined' && window.audioManager === fallbackController) {
         delete window.audioManager;
-        fallbackController?.destroy();
+        fallbackController.destroy();
       }
     };
   }, []);
@@ -93,11 +91,11 @@ export function VoiceHud() {
   useEffect(() => {
     const shouldDuck = DUCK_STATES.has(hud.activeState);
     if (typeof window !== 'undefined') {
-      window.audioManager?.setDucked?.(shouldDuck);
+      window.audioManager?.setDucked(shouldDuck);
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null;
-    if (hud.voice && (shouldDuck || Boolean(hud.statusText))) {
+    if (shouldDuck || Boolean(hud.statusText)) {
       timer = setTimeout(() => {
         handleReset();
       }, 30000);

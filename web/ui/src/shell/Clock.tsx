@@ -92,7 +92,7 @@ export function resolveActiveTimezone(
   propTimezone?: string,
   header?: { timestamp?: string | null; timezone?: string } | null
 ): string | undefined {
-  const bodyTz = typeof document !== 'undefined' ? document.body?.dataset?.timezone : undefined;
+  const bodyTz = typeof document !== 'undefined' ? document.body.dataset.timezone : undefined;
   // If an SSE header.update has arrived (indicated by non-null timestamp), prefer header.timezone.
   // Prior to initial SSE event, prefer document.body data-timezone rendered by the server template
   // over the store's default fallback timezone ('UTC').
@@ -118,9 +118,7 @@ export function Clock({ timezone: propTimezone, locale: propLocale }: ClockProps
   // Sync data-timezone attribute across DOM anchors
   useEffect(() => {
     if (typeof document !== 'undefined' && activeTz) {
-      if (document.body?.dataset) {
-        document.body.dataset.timezone = activeTz;
-      }
+      document.body.dataset.timezone = activeTz;
       const appEl = document.getElementById('mirrormere-app');
       if (appEl?.dataset) {
         appEl.dataset.timezone = activeTz;

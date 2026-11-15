@@ -59,7 +59,7 @@ function extractWindAndHumidity(current?: Record<string, unknown>): {
   humidity: string; windSpeed: number; windUnit: string;
 } {
   const rawHumidity = current?.humidity ?? current?.Humidity;
-  const humidity = rawHumidity !== undefined ? `${rawHumidity}%` : '--%';
+  const humidity = rawHumidity !== undefined ? `${String(rawHumidity)}%` : '--%';
   const rawWind = current?.wind_speed ?? current?.WindSpeed ?? current?.wind ?? current?.Wind;
   const windSpeed = Math.sign(Number(rawWind) || 0) * Math.round(Math.abs(Number(rawWind) || 0)) || 0;
   const units = (current?.units ?? current?.Units) as Record<string, unknown> | undefined;
@@ -115,7 +115,7 @@ function findBestHourlySlot(slot: DaypartSlot, hourly: unknown[], targetDateStr?
   for (const item of pool) {
     if (!item || typeof item !== 'object') continue;
     const h = item as Record<string, unknown>;
-    const hourDigits = String(h.time ?? h.Time ?? '').match(/(?:T|\s|^)(\d{1,2}):/)?.[1];
+    const hourDigits = (/(?:T|\s|^)(\d{1,2}):/.exec(String(h.time ?? h.Time ?? '')))?.[1];
     if (hourDigits) {
       const diff = Math.abs(parseInt(hourDigits, 10) - targetHour);
       if (diff < bestDiff) {
@@ -335,9 +335,9 @@ function renderMicroStats({ humidity, windSpeed, windUnit, precipProb }: Weather
  */
 export function WeatherForecastWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
-  const config = entry?.meta?.config as Record<string, unknown> | undefined;
-  const data = entry?.data as Record<string, unknown> | undefined;
-  const isError = entry?.state === 'error';
+  const config = entry.meta?.config;
+  const data = entry.data as Record<string, unknown> | undefined;
+  const isError = entry.state === 'error';
 
   const current = extractCurrentCandidate(data);
   const hasCurrent = Boolean(current);
@@ -360,7 +360,7 @@ export function WeatherForecastWidget({ id }: WidgetComponentProps) {
   const shadowOpacity =
     typeof rawShadow === 'number' && rawShadow >= 0 && rawShadow <= 1 ? rawShadow : undefined;
   const schoolDaySlots = isSchoolDay
-    ? buildSchoolDaySlots(data, current, daily, hourly, config, entry?.timestamp)
+    ? buildSchoolDaySlots(data, current, daily, hourly, config, entry.timestamp)
     : [];
 
   return (

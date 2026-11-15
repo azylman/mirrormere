@@ -101,9 +101,9 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
     fetchLayoutEditor(fetchImpl)
       .then((data) => {
         if (!active) return;
-        setGrid(data.grid && data.grid.length === 2 ? [data.grid[0], data.grid[1]] : [6, 2]);
-        setWidgets(data.widgets || []);
-        setHasOverride(Boolean(data.has_override));
+        setGrid(data.grid);
+        setWidgets(data.widgets);
+        setHasOverride(data.has_override);
         setActiveScreen(0);
         setLoading(false);
       })
@@ -128,8 +128,8 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
     setError(null);
     try {
       const res = await resetLayoutEditor(fetchImpl);
-      setWidgets(res.widgets || []);
-      setHasOverride(Boolean(res.has_override));
+      setWidgets(res.widgets);
+      setHasOverride(res.has_override);
       setActiveScreen(0);
       await useDisplayStore.getState().loadScreens();
       useDisplayStore.getState().setLayoutEditorOpen(false);
@@ -153,8 +153,8 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
         pinned: w.pinned ? true : undefined,
       }));
       const res = await saveLayoutEditor(placements, fetchImpl);
-      setWidgets(res.widgets || []);
-      setHasOverride(Boolean(res.has_override));
+      setWidgets(res.widgets);
+      setHasOverride(res.has_override);
       await useDisplayStore.getState().loadScreens();
       useDisplayStore.getState().setLayoutEditorOpen(false);
     } catch (err: unknown) {
@@ -181,6 +181,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     if ((e.target as HTMLElement).closest('button')) return;
     const currentTarget = e.currentTarget;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- jsdom does not implement pointer capture
     if (currentTarget.setPointerCapture) {
       try {
         currentTarget.setPointerCapture(e.pointerId);
@@ -212,7 +213,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
   };
 
   const handlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragStartRef.current || dragStartRef.current.pointerId !== e.pointerId) return;
+    if (dragStartRef.current?.pointerId !== e.pointerId) return;
 
     if (typeof document !== 'undefined' && typeof document.elementFromPoint === 'function') {
       const dockPill = document
@@ -249,8 +250,9 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
   };
 
   const handlePointerEnd = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragStartRef.current || dragStartRef.current.pointerId !== e.pointerId) return;
+    if (dragStartRef.current?.pointerId !== e.pointerId) return;
     const { widgetId } = dragStartRef.current;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- jsdom does not implement pointer capture
     if (e.currentTarget.releasePointerCapture) {
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
@@ -334,7 +336,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
             className="layout-editor-btn layout-editor-btn-cancel"
             type="button"
             aria-label="Cancel"
-            onClick={() => useDisplayStore.getState().setLayoutEditorOpen(false)}
+            onClick={() => { useDisplayStore.getState().setLayoutEditorOpen(false); }}
             disabled={saving}
           >
             Cancel
@@ -398,7 +400,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
                     gridRow: `${w.origin[1] + 1} / span ${w.dimensions[1]}`,
                     touchAction: 'none',
                   }}
-                  onPointerDown={(e) => handlePointerDown(e, w)}
+                  onPointerDown={(e) => { handlePointerDown(e, w); }}
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerEnd}
                   onPointerCancel={handlePointerEnd}
@@ -466,7 +468,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
             type="button"
             data-screen-index={s}
             aria-label={`Screen ${s + 1}`}
-            onClick={() => setActiveScreen(s)}
+            onClick={() => { setActiveScreen(s); }}
           >
             Screen {s + 1}
           </button>
@@ -477,7 +479,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
           type="button"
           data-screen-index={totalScreens}
           aria-label="Add New Screen"
-          onClick={() => setActiveScreen(totalScreens)}
+          onClick={() => { setActiveScreen(totalScreens); }}
         >
           + New Screen
         </button>

@@ -64,6 +64,8 @@ export function Hud(props: HudProps = {}) {
     onTrackPointerCancel,
   } = useHudController(props);
 
+  // Button clicks fire and forget: the controller actions track their own pending state,
+  // and the returned promises exist for programmatic callers that need to await them.
   return (
     <div
       id="video-hud-overlay"
@@ -76,8 +78,8 @@ export function Hud(props: HudProps = {}) {
         isMedia={isMedia}
         volume={volume}
         isMuted={isMuted}
-        onBack={handleBack}
-        onHome={handleHome}
+        onBack={() => { void handleBack(); }}
+        onHome={() => { void handleHome(); }}
         onDismiss={handleDismiss}
         onVolumeInput={handleSliderInput}
         onVolumeCommit={handleSliderCommit}
@@ -93,7 +95,7 @@ export function Hud(props: HudProps = {}) {
           display: isPlaybackActive ? '' : 'none',
           pointerEvents: isPlaybackActive ? undefined : 'none',
         }}
-        onPointerDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => { e.stopPropagation(); }}
         onClick={(e) => {
           e.stopPropagation();
           resetAutoFade();
@@ -116,11 +118,11 @@ export function Hud(props: HudProps = {}) {
         currentTimeStr={currentTimeStr}
         totalTimeStr={totalTimeStr}
         progressPercent={progressPercent}
-        onCaptions={handleCaptions}
-        onPrevious={handlePrevious}
-        onRewind={handleRewind}
-        onFastForward={handleFastForward}
-        onNext={handleNext}
+        onCaptions={() => { void handleCaptions(); }}
+        onPrevious={() => { void handlePrevious(); }}
+        onRewind={() => { void handleRewind(); }}
+        onFastForward={() => { void handleFastForward(); }}
+        onNext={() => { void handleNext(); }}
         onTrackPointerDown={onTrackPointerDown}
         onTrackPointerMove={onTrackPointerMove}
         onTrackPointerUp={onTrackPointerUp}

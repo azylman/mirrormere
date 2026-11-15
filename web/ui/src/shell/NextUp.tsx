@@ -88,7 +88,7 @@ export interface NextUpProps {
 
 type ActiveIslandItem =
   | { kind: 'ha-alert' | 'ha-timer' | 'ha-sports'; id: string; ha: HaLiveIslandActivity }
-  | { kind: 'yt-music'; id: 'yt-music' }
+  | { kind: 'yt-music'; id: 'yt-music'; nowPlaying: NowPlaying }
   | { kind: 'plex'; id: string; plex: PlexNowPlayingSession };
 
 type LiveIslandKind = ActiveIslandItem['kind'];
@@ -103,7 +103,7 @@ function navigateToScreenOrWidget(widgetType: string, selector: string, onPillCl
   const alreadyOnTarget = targetScreen === null || store.screen.currentScreen === targetScreen;
   if (targetScreen !== null && !alreadyOnTarget) {
     const hasCarouselViewport = typeof document !== 'undefined' && Boolean(document.querySelector('.carousel-viewport'));
-    if (hasCarouselViewport && typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null') {
+    if (hasCarouselViewport && typeof window !== 'undefined' && window.location.origin && window.location.origin !== 'null') {
       window.postMessage({ type: 'hearth-screen-select', screen_index: targetScreen }, window.location.origin);
     } else {
       store.setCurrentScreen(targetScreen);
@@ -111,7 +111,7 @@ function navigateToScreenOrWidget(widgetType: string, selector: string, onPillCl
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ screen_index: targetScreen }),
-      }).catch(() => {});
+      }).catch(() => { /* best-effort: the local screen change already happened */ });
     }
     return;
   }
@@ -147,7 +147,7 @@ async function dispatchYtMusicControl(action: 'play_pause' | 'next', ytmState: S
 async function executeHaQuickAction(ha: HaLiveIslandActivity): Promise<void> {
   const store = useDisplayStore.getState();
   const entry = store.widgets[ha.widgetId];
-  if (entry && entry.data && typeof entry.data === 'object') {
+  if (entry?.data && typeof entry.data === 'object') {
     const dataObj = entry.data as Record<string, unknown>;
     const entities = dataObj.entities as Record<string, EntityState | undefined> | undefined;
     const curr = entities?.[ha.entityId];
@@ -286,7 +286,7 @@ async function dispatchPlexControl(action: 'play_pause' | 'stop', plex: PlexNowP
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'stop', rating_key: plex.id }),
-    }).catch(() => {});
+    }).catch(() => { /* best-effort: the optimistic UI state stands */ });
     return;
   }
   const nextState = plex.state === 'paused' ? 'playing' : 'paused';
@@ -295,7 +295,7 @@ async function dispatchPlexControl(action: 'play_pause' | 'stop', plex: PlexNowP
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: nextState === 'paused' ? 'pause' : 'play', rating_key: plex.id }),
-  }).catch(() => {});
+  }).catch(() => { /* best-effort: the optimistic UI state stands */ });
 }
 
 function renderPlexIsland(
@@ -395,7 +395,7 @@ export function NextUp(props: NextUpProps = {}) {
 
   const activities: ActiveIslandItem[] = haActivities.map((ha) => ({ kind: ha.kind, id: ha.id, ha }));
   if (isYtMusicLiveIslandActive(ytmState.now_playing)) {
-    activities.push({ kind: 'yt-music', id: 'yt-music' });
+    activities.push({ kind: 'yt-music', id: 'yt-music', nowPlaying: ytmState.now_playing });
   }
   if (isPlexLiveIslandActive(plexSession) && plexSession) {
     activities.push({ kind: 'plex', id: `plex-${plexSession.id}`, plex: plexSession });
@@ -457,7 +457,7 @@ export function NextUp(props: NextUpProps = {}) {
     ) : null;
 
   if (activeItem?.kind === 'yt-music') {
-    return renderYtMusicIsland(ytmState.now_playing!, ytmState, handlePillClick, handleKeyDown, cycleButton);
+    return renderYtMusicIsland(activeItem.nowPlaying, ytmState, handlePillClick, handleKeyDown, cycleButton);
   }
   if (activeItem?.kind === 'ha-alert' || activeItem?.kind === 'ha-timer' || activeItem?.kind === 'ha-sports') {
     return renderHaIsland(activeItem.ha, handlePillClick, handleKeyDown, cycleButton);

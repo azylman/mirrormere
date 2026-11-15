@@ -246,7 +246,7 @@ export class CarouselController {
       return;
     }
     this.settleTarget = index;
-    this.animator.settle(direction, () => this.commit(index, select));
+    this.animator.settle(direction, () => { this.commit(index, select); });
   }
 
   private commit(index: number, select: boolean): void {
@@ -272,13 +272,13 @@ export class CarouselController {
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
-    if (event.isPrimary === false || this.pointerId !== null) return;
+    if (!event.isPrimary || this.pointerId !== null) return;
     if (isExcludedTarget(event.target)) {
       this.recordActivity();
     }
     const allowed = this.canSwipe() && !this.isBusy() && !isExcludedTarget(event.target);
     if (!this.gesture.begin(this.sample(event), allowed)) return;
-    this.pointerId = event.pointerId ?? 0;
+    this.pointerId = event.pointerId;
     this.gestureWidth = this.options.viewport.clientWidth;
     // The pointer can be released outside the viewport; the window hears that release.
     window.addEventListener('pointerup', this.onPointerUp);
@@ -286,7 +286,7 @@ export class CarouselController {
   };
 
   private readonly onPointerMove = (event: PointerEvent): void => {
-    if (this.pointerId === null || (event.pointerId ?? 0) !== this.pointerId) return;
+    if (this.pointerId === null || event.pointerId !== this.pointerId) return;
     const dx = this.gesture.move(this.sample(event));
     if (dx === null) {
       if (!this.gesture.active) {
@@ -299,13 +299,14 @@ export class CarouselController {
     }
     if (!this.animator.gesturing) {
       this.animator.beginGesture();
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- jsdom does not implement pointer capture
       this.options.viewport.setPointerCapture?.(this.pointerId);
     }
     this.animator.drag(dx);
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
-    if (this.pointerId === null || (event.pointerId ?? 0) !== this.pointerId) return;
+    if (this.pointerId === null || event.pointerId !== this.pointerId) return;
     this.pointerId = null;
     this.releaseWindowListeners();
     const release = this.gesture.end(this.sample(event));
@@ -313,36 +314,31 @@ export class CarouselController {
   };
 
   private readonly onPointerCancel = (event: PointerEvent): void => {
-    if (this.pointerId === null || (event.pointerId ?? 0) !== this.pointerId) return;
+    if (this.pointerId === null || event.pointerId !== this.pointerId) return;
     this.pointerId = null;
     this.releaseWindowListeners();
     if (this.gesture.cancel()) {
       this.animator.endGesture();
-      this.animator.settle('rest', () => this.afterRest());
+      this.animator.settle('rest', () => { this.afterRest(); });
     } else {
       this.drainQueue();
     }
   };
 
-  private readonly onMessage = (event: MessageEvent): void => {
-    if (!window.location?.origin || window.location.origin === 'null' || event.origin !== window.location.origin) {
+  private readonly onMessage = (event: MessageEvent<unknown>): void => {
+    if (!window.location.origin || window.location.origin === 'null' || event.origin !== window.location.origin) {
       return;
     }
     if (!event.data || typeof event.data !== 'object') {
       return;
     }
-    if (
-      event.data.type === 'hearth-swipe' &&
-      (event.data.direction === 'next' || event.data.direction === 'prev')
-    ) {
-      this.goTo(neighbourOf(this.shown, this.total(), event.data.direction), event.data.direction);
+    const data = event.data as { type?: unknown; direction?: unknown; screen_index?: unknown };
+    if (data.type === 'hearth-swipe' && (data.direction === 'next' || data.direction === 'prev')) {
+      this.goTo(neighbourOf(this.shown, this.total(), data.direction), data.direction);
       return;
     }
-    if (
-      event.data.type === 'hearth-screen-select' &&
-      typeof event.data.screen_index === 'number'
-    ) {
-      this.goTo(event.data.screen_index);
+    if (data.type === 'hearth-screen-select' && typeof data.screen_index === 'number') {
+      this.goTo(data.screen_index);
     }
   };
 
@@ -355,13 +351,13 @@ export class CarouselController {
     this.animator.endGesture();
     if (!this.canSwipe()) {
       // The layout shrank to one screen, or the carousel paused, mid-drag.
-      this.animator.settle('rest', () => this.afterRest());
+      this.animator.settle('rest', () => { this.afterRest(); });
       return;
     }
     const direction = releaseDirection(release, this.gestureWidth);
     const target = direction === null ? null : neighbourOf(this.shown, this.total(), direction);
     if (target === null || direction === null) {
-      this.animator.settle('rest', () => this.afterRest());
+      this.animator.settle('rest', () => { this.afterRest(); });
       return;
     }
     this.go(target, true, direction);

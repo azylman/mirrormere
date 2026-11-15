@@ -103,7 +103,7 @@ export function CalendarMonthView({
               const { specialStatus, specialClass, bdayPillText } = resolveMonthDaySpecial(
                 day,
                 members,
-                celebrateSpecialDays !== false,
+                celebrateSpecialDays,
                 birthdays,
                 specialDays,
               );
@@ -299,7 +299,7 @@ export function CalendarMonthView({
                       title={day.event_title}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onOpenModal({ id: day.date, title: day.event_title! }, day.date);
+                        onOpenModal({ id: day.date, title: day.event_title ?? '' }, day.date);
                       }}
                       style={{
                         fontSize: '0.60rem',

@@ -24,7 +24,7 @@ function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
 }
 
 function setWidgetPhotos(
-  photos: Array<{ id?: string; url?: string; URL?: string; timestamp?: string; location?: string; album_name?: string; dominant_color?: string }>,
+  photos: { id?: string; url?: string; URL?: string; timestamp?: string; location?: string; album_name?: string; dominant_color?: string }[],
   cycleSeconds?: number,
   config: Record<string, unknown> = {},
 ) {
@@ -163,6 +163,7 @@ describe('PhotoCarouselWidget transport controls', () => {
       { id: '2', url: 'https://example.com/p2.jpg' },
     ], 10);
 
+    const baselineTimers = vi.getTimerCount();
     const { container, unmount } = render(
       <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
         <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
@@ -172,8 +173,10 @@ describe('PhotoCarouselWidget transport controls', () => {
     const pausePill = container.querySelector('.photo-pause-pill') as HTMLButtonElement;
     act(() => { fireEvent.click(pausePill); });
     expect(pausePill.getAttribute('data-paused')).toBe('true');
+    expect(vi.getTimerCount()).toBeGreaterThan(baselineTimers);
 
-    expect(() => unmount()).not.toThrow();
+    unmount();
+    expect(vi.getTimerCount()).toBe(baselineTimers);
   });
 
   it('saves deck.remainingMs when entering video mode while cycling', () => {

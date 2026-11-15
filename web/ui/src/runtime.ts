@@ -40,7 +40,7 @@ let current: Runtime | null = null;
 export function startRuntime(options: RuntimeOptions = {}): Runtime {
   if (current) return current;
 
-  const { url = 'api/events', reload = () => window.location.reload(), ...clientOptions } = options;
+  const { url = 'api/events', reload = () => { window.location.reload(); }, ...clientOptions } = options;
   const store = useDisplayStore;
   const client = new EventStreamClient(url, clientOptions);
 
@@ -53,12 +53,12 @@ export function startRuntime(options: RuntimeOptions = {}): Runtime {
   const reloads = createReloadController({
     now: () => Date.now(),
     setTimer: (fn, ms) => setTimeout(fn, ms),
-    clearTimer: (t) => clearTimeout(t),
+    clearTimer: (t) => { clearTimeout(t); },
     reload,
-    storage: typeof window !== 'undefined' && window.sessionStorage ? window.sessionStorage : null,
+    storage: typeof window !== 'undefined' ? window.sessionStorage : null,
   });
 
-  const unsubscribers: Array<() => void> = [];
+  const unsubscribers: (() => void)[] = [];
 
   unsubscribers.push(
     client.on('connection', (payload) => {

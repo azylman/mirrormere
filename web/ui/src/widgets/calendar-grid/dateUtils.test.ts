@@ -267,8 +267,7 @@ describe('dateUtils', () => {
       expect(pct).toBeCloseTo(25, 1);
 
       // Fallback for invalid timezone: does not throw, uses local time
-      const fallbackPct = computeNowIndicatorPct(baseVM, now, 'Invalid/Timezone');
-      expect(typeof fallbackPct === 'number' || fallbackPct === null).toBe(true);
+      expect(() => computeNowIndicatorPct(baseVM, now, 'Invalid/Timezone')).not.toThrow();
     });
   });
 

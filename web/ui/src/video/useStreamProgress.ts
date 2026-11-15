@@ -132,7 +132,7 @@ export function useStreamProgress({
   };
 
   const onTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e && typeof e.stopPropagation === 'function') {
+    if (typeof e.stopPropagation === 'function') {
       e.stopPropagation();
     }
     onUserActivity?.();
@@ -142,7 +142,7 @@ export function useStreamProgress({
 
     const trackEl = e.currentTarget;
     trackElementRef.current = trackEl;
-    if (typeof trackEl.setPointerCapture === 'function' && e.pointerId !== undefined) {
+    if (typeof trackEl.setPointerCapture === 'function') {
       try {
         trackEl.setPointerCapture(e.pointerId);
       } catch {
@@ -157,7 +157,7 @@ export function useStreamProgress({
 
   const onTrackPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isScrubbing) return;
-    if (e && typeof e.stopPropagation === 'function') {
+    if (typeof e.stopPropagation === 'function') {
       e.stopPropagation();
     }
     onUserActivity?.();
@@ -166,13 +166,13 @@ export function useStreamProgress({
 
   const onTrackPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isScrubbing) return;
-    if (e && typeof e.stopPropagation === 'function') {
+    if (typeof e.stopPropagation === 'function') {
       e.stopPropagation();
     }
     onUserActivity?.();
 
     const trackEl = trackElementRef.current || e.currentTarget;
-    if (trackEl && typeof trackEl.releasePointerCapture === 'function' && e.pointerId !== undefined) {
+    if (typeof trackEl.releasePointerCapture === 'function') {
       try {
         trackEl.releasePointerCapture(e.pointerId);
       } catch {
@@ -192,13 +192,13 @@ export function useStreamProgress({
 
   const onTrackPointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isScrubbing) return;
-    if (e && typeof e.stopPropagation === 'function') {
+    if (typeof e.stopPropagation === 'function') {
       e.stopPropagation();
     }
     onUserActivity?.();
 
     const trackEl = trackElementRef.current || e.currentTarget;
-    if (trackEl && typeof trackEl.releasePointerCapture === 'function' && e.pointerId !== undefined) {
+    if (typeof trackEl.releasePointerCapture === 'function') {
       try {
         trackEl.releasePointerCapture(e.pointerId);
       } catch {

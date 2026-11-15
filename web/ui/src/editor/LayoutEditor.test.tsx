@@ -318,7 +318,7 @@ describe('LayoutEditor component', () => {
     const clockCard = container.querySelector('[data-widget-id="clock-1"]') as HTMLElement;
     const pinBtn = clockCard.querySelector('.layout-editor-pin-btn') as HTMLButtonElement;
     expect(pinBtn.getAttribute('aria-label')).toBe('Pin Widget');
-    expect(pinBtn.textContent?.trim()).toBe('Pin');
+    expect(pinBtn.textContent.trim()).toBe('Pin');
     expect(pinBtn.querySelector('svg')).not.toBeNull();
 
     // Unpinned -> Pinned (at [0, 0] it collides with tasks-1 on screen 1, so toggle fails!)
@@ -326,21 +326,21 @@ describe('LayoutEditor component', () => {
       fireEvent.click(pinBtn);
     });
     expect(pinBtn.getAttribute('aria-label')).toBe('Pin Widget');
-    expect(pinBtn.textContent?.trim()).toBe('Pin'); // Collided, stays unpinned
+    expect(pinBtn.textContent.trim()).toBe('Pin'); // Collided, stays unpinned
     expect(pinBtn.querySelector('svg')).not.toBeNull();
 
     // Pinned widget: pinned-1
     const pinnedCard = container.querySelector('[data-widget-id="pinned-1"]') as HTMLElement;
     const unpinBtn = pinnedCard.querySelector('.layout-editor-pin-btn') as HTMLButtonElement;
     expect(unpinBtn.getAttribute('aria-label')).toBe('Unpin Widget');
-    expect(unpinBtn.textContent?.trim()).toBe('Pinned');
+    expect(unpinBtn.textContent.trim()).toBe('Pinned');
     expect(unpinBtn.querySelector('svg')).not.toBeNull();
 
     act(() => {
       fireEvent.click(unpinBtn);
     });
     expect(unpinBtn.getAttribute('aria-label')).toBe('Pin Widget');
-    expect(unpinBtn.textContent?.trim()).toBe('Pin');
+    expect(unpinBtn.textContent.trim()).toBe('Pin');
     expect(unpinBtn.querySelector('svg')).not.toBeNull();
   });
 

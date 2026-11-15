@@ -53,8 +53,7 @@ describe('startRuntime', () => {
     const reload = vi.fn();
     runtime = startRuntime({ createEventSource: (url) => new FakeEventSource(url), reload });
     const source = itemAt(FakeEventSource.instances, 0);
-    const status = (boot_id: string) =>
-      source.message('system.status', { online: true, time: 't', config_status: 'ok', config_error: null, boot_id });
+    const status = (boot_id: string) => { source.message('system.status', { online: true, time: 't', config_status: 'ok', config_error: null, boot_id }); };
 
     status('a');
     expect(reload).not.toHaveBeenCalled();

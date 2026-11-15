@@ -25,9 +25,10 @@ export function smoothValues(values: number[]): number[] {
   const last = values.length - 1;
   const out = new Array<number>(values.length);
   for (let i = 0; i <= last; i += 1) {
-    const left = values[i > 0 ? i - 1 : 0]!;
-    const right = values[i < last ? i + 1 : last]!;
-    out[i] = (left + 2 * values[i]! + right) / 4;
+    const mid = values[i] ?? 0;
+    const left = values[i > 0 ? i - 1 : 0] ?? mid;
+    const right = values[i < last ? i + 1 : last] ?? mid;
+    out[i] = (left + 2 * mid + right) / 4;
   }
   return out;
 }
@@ -36,11 +37,11 @@ export function smoothValues(values: number[]): number[] {
  * Maps 33 waveform levels (-100..100) to mouth points.
  * Values are smoothed first; gain scales the level before clamping to the mouth span.
  */
-export function framePoints(values: number[], gain: number = LEVEL_GAIN): Array<[number, number]> {
+export function framePoints(values: number[], gain: number = LEVEL_GAIN): [number, number][] {
   const smoothed = smoothValues(values);
-  const points: Array<[number, number]> = [];
+  const points: [number, number][] = [];
   for (let i = 0; i < MOUTH_POINTS; i += 1) {
-    const level = clamp((smoothed[i]! / 100) * gain, -1, 1);
+    const level = clamp(((smoothed[i] ?? 0) / 100) * gain, -1, 1);
     points.push([MOUTH_X0 + i * MOUTH_STEP, 50 - level * LEVEL_SPAN]);
   }
   return points;
@@ -59,7 +60,10 @@ export function easeToward(
   if (!Array.isArray(current) || current.length !== target.length) return target.slice();
   const dt = Number.isFinite(dtMs) ? clamp(dtMs, 0, EASE_MAX_DT_MS) : 0;
   const k = 1 - Math.exp(-dt / tauMs);
-  return target.map((t, i) => current[i]! + (t - current[i]!) * k);
+  return target.map((t, i) => {
+    const from = current[i] ?? t;
+    return from + (t - from) * k;
+  });
 }
 
 export function isLevelFrame(values: unknown): values is number[] {
@@ -81,16 +85,12 @@ export function defaultEventSourceFactory(): ((url: string) => EventSource) | nu
 }
 
 export function defaultReducedMotion(): boolean {
-  try {
-    return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      : false;
-  } catch {
-    return false;
-  }
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false;
 }
 
-export function formatPoints(points: Array<[number, number]>): string {
+export function formatPoints(points: [number, number][]): string {
   return points.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
 }
 
@@ -146,16 +146,14 @@ export class WaveformMouth {
       ? options.eventSourceFactory
       : defaultEventSourceFactory();
     this.clock = options.clock || defaultClock;
-    this.raf = options.raf || (typeof window !== 'undefined' && window.requestAnimationFrame
-      ? window.requestAnimationFrame.bind(window) : null);
-    this.caf = options.caf || (typeof window !== 'undefined' && window.cancelAnimationFrame
-      ? window.cancelAnimationFrame.bind(window) : null);
+    this.raf = options.raf || (typeof window !== 'undefined' ? window.requestAnimationFrame.bind(window) : null);
+    this.caf = options.caf || (typeof window !== 'undefined' ? window.cancelAnimationFrame.bind(window) : null);
     this.reducedMotion = options.reducedMotion !== undefined
-      ? !!options.reducedMotion
+      ? options.reducedMotion
       : defaultReducedMotion();
 
-    this.element = options.svgElement || null;
-    this.polyline = options.polylineElement || null;
+    this.element = options.svgElement;
+    this.polyline = options.polylineElement;
     this.voiceState = 'idle';
     this.levelFrame = null;
     this.levelAt = null;
@@ -166,15 +164,15 @@ export class WaveformMouth {
     this.lastTick = null;
     this.destroyed = false;
 
-    if (!this.levelsUrl || !this.element || !this.polyline) return;
+    if (!this.levelsUrl) return;
 
-    this.drawMouth(framePoints(new Array(MOUTH_POINTS).fill(0), this.gain));
+    this.drawMouth(framePoints(new Array<number>(MOUTH_POINTS).fill(0), this.gain));
     this.openLevels();
 
     if (this.sseClient && typeof this.sseClient.on === 'function') {
       this.sseClient.on('voice.state', (data: unknown) => {
         const state = typeof data === 'object' && data !== null && 'state' in data
-          ? (data as { state: unknown }).state
+          ? (data).state
           : undefined;
         this.setVoiceState(state);
       });
@@ -188,8 +186,8 @@ export class WaveformMouth {
     if (!this.eventSourceFactory) return;
     try {
       const source = this.eventSourceFactory(this.levelsUrl);
-      if (!source || typeof source.addEventListener !== 'function') return;
-      source.addEventListener('frame', (e) => this.onLevelFrame(e));
+      if (typeof source.addEventListener !== 'function') return;
+      source.addEventListener('frame', (e) => { this.onLevelFrame(e); });
       this.levelSource = source;
     } catch {
       return;
@@ -225,14 +223,14 @@ export class WaveformMouth {
   /** Shows the mouth only while speaking with fresh levels. Returns the visibility. */
   refresh(): boolean {
     const active = this.voiceState === 'speaking' && this.hasFreshLevels();
-    if (this.element && this.element.classList) {
+    if (this.element?.classList) {
       this.element.classList.toggle('is-active', active);
     }
     return active;
   }
 
   /** Sets the mouth points from a point list. */
-  drawMouth(points: Array<[number, number]>): void {
+  drawMouth(points: [number, number][]): void {
     if (this.polyline) {
       this.polyline.setAttribute('points', formatPoints(points));
     }
@@ -247,7 +245,7 @@ export class WaveformMouth {
       const targetY = framePoints(this.levelFrame, this.gain).map(([, y]) => y);
       this.shownY = this.reducedMotion ? targetY : easeToward(this.shownY, targetY, dt);
     } else {
-      const flat = new Array(MOUTH_POINTS).fill(50);
+      const flat = new Array<number>(MOUTH_POINTS).fill(50);
       this.shownY = easeToward(this.shownY, flat, dt, DECAY_TAU_MS);
     }
     this.drawMouth(this.shownY.map((y, i) => [MOUTH_X0 + i * MOUTH_STEP, y]));
@@ -270,7 +268,7 @@ export class WaveformMouth {
         this.stopLoop();
         return;
       }
-      this.rafId = this.raf!(tick);
+      this.rafId = this.raf ? this.raf(tick) : null;
       if (this.lastTick !== null && now - this.lastTick < DRAW_MIN_MS) return;
       const dt = this.lastTick === null ? 0 : now - this.lastTick;
       this.lastTick = now;
@@ -321,7 +319,7 @@ export class WaveformMouth {
       this.stopLoop();
       this.levelAt = null;
       this.shownY = null;
-      this.drawMouth(framePoints(new Array(MOUTH_POINTS).fill(0), this.gain));
+      this.drawMouth(framePoints(new Array<number>(MOUTH_POINTS).fill(0), this.gain));
     }
     this.refresh();
   }
@@ -391,10 +389,10 @@ function WaveformRenderer({ levelsUrl, gain }: WaveformRendererProps) {
 export function Waveform(props: WaveformProps) {
   const levelsUrl =
     props.levelsUrl ??
-    (typeof document !== 'undefined' ? document.body?.dataset?.voiceWaveformUrl ?? '' : '');
+    (typeof document !== 'undefined' ? document.body.dataset.voiceWaveformUrl ?? '' : '');
   const docGain =
     typeof document !== 'undefined'
-      ? parseFloat(document.body?.dataset?.voiceWaveformGain ?? '') || LEVEL_GAIN
+      ? parseFloat(document.body.dataset.voiceWaveformGain ?? '') || LEVEL_GAIN
       : LEVEL_GAIN;
   const gain = props.gain ?? docGain;
 
