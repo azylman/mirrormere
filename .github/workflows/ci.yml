@@ -201,6 +201,34 @@ jobs:
           ruff check --output-format=github
           ruff format --check
 
+      - name: Install ShellCheck (pinned by requirements-lint.txt)
+        run: |
+          set -eu
+          # shellcheck-py==X.Y.Z.N wraps upstream ShellCheck vX.Y.Z; install that
+          # exact upstream release binary and fail closed if the pin is missing.
+          # Use the .tar.gz asset: the self-hosted runner image has no xz.
+          version=$(sed -n 's/^shellcheck-py==\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' requirements-lint.txt)
+          if [ -z "$version" ]; then
+            echo "🚨 shellcheck-py pin missing from requirements-lint.txt" >&2
+            exit 1
+          fi
+          dest="$RUNNER_TEMP/shellcheck"
+          mkdir -p "$dest"
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${version}/shellcheck-v${version}.linux.$(uname -m).tar.gz" \
+            | tar -xz -C "$dest" --strip-components=1 "shellcheck-v${version}/shellcheck"
+          echo "$dest" >> "$GITHUB_PATH"
+
+      - name: Lint Shell Scripts (shellcheck)
+        run: |
+          set -e
+          pinned=$(sed -n 's/^shellcheck-py==\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' requirements-lint.txt)
+          installed=$(shellcheck --version | sed -n 's/^version: //p')
+          if [ -z "$pinned" ] || [ "$installed" != "$pinned" ]; then
+            echo "🚨 shellcheck $installed does not match the requirements-lint.txt pin (${pinned:-missing})" >&2
+            exit 1
+          fi
+          git ls-files -z '*.sh' | xargs -0 shellcheck --severity=style --format=gcc
+
       - name: Run Go Unit Tests & Coverage Gate
         if: needs.changes.outputs.go_core == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
         run: |

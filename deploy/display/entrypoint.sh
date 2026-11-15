@@ -32,7 +32,8 @@ chmod 0755 /run/kiosk /run/kiosk/pulse
 # Auto-resolve WLR_DRM_DEVICES if unset or missing
 if [[ -z "${WLR_DRM_DEVICES:-}" || ! -e "$WLR_DRM_DEVICES" ]]; then
     if [[ -e /dev/dri/by-path/pci-0000:00:02.0-card ]]; then
-        export WLR_DRM_DEVICES="$(readlink -f /dev/dri/by-path/pci-0000:00:02.0-card 2>/dev/null || echo /dev/dri/by-path/pci-0000:00:02.0-card)"
+        WLR_DRM_DEVICES="$(readlink -f /dev/dri/by-path/pci-0000:00:02.0-card 2>/dev/null || echo /dev/dri/by-path/pci-0000:00:02.0-card)"
+        export WLR_DRM_DEVICES
     elif [[ -e /dev/dri/card1 ]]; then
         export WLR_DRM_DEVICES=/dev/dri/card1
     elif [[ -e /dev/dri/card0 ]]; then
@@ -53,6 +54,7 @@ for _ in $(seq 1 30); do
 done
 
 # Drop privileges to kiosk user and launch session
+# shellcheck disable=SC2016 # the session script is single-quoted on purpose: it expands in the kiosk user's bash, not here
 exec runuser -u kiosk -- env \
     HOME=/home/kiosk \
     USER=kiosk \
