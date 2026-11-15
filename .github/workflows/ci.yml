@@ -171,7 +171,15 @@ jobs:
         with:
           node-version-file: web/ui/.nvmrc
           cache: npm
-          cache-dependency-path: web/ui/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            web/ui/package-lock.json
+
+      - name: Lint Vanilla JS (root ESLint)
+        run: |
+          set -e
+          npm ci --no-audit --no-fund
+          npm run lint
 
       - name: Run Go Unit Tests & Coverage Gate
         if: needs.changes.outputs.go_core == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true

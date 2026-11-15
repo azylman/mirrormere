@@ -396,7 +396,7 @@
       container.innerHTML = '';
 
       const type = (stream.type || 'webrtc').toLowerCase();
-      let session = null;
+      let session;
 
       if (type === 'mjpeg') {
         session = this.mountMJPEG(stream, container, isPip);
@@ -599,7 +599,7 @@
           pc.oniceconnectionstatechange = onConnChange;
           pc.onconnectionstatechange = onConnChange;
 
-          this.negotiateWebRTC(session, stream.stream_url, video);
+          this.negotiateWebRTC(session, stream.stream_url);
         } catch (err) {
           console.warn('[MirrormereVideo] RTCPeerConnection initialization error:', err);
           if (!session.cancelled) {
@@ -632,7 +632,7 @@
     /**
      * Performs async WebRTC offer/answer SDP negotiation with go2rtc endpoint.
      */
-    async negotiateWebRTC(session, streamUrl, video) {
+    async negotiateWebRTC(session, streamUrl) {
       const pc = session ? session.pc : null;
       if (!pc) return;
 
@@ -735,7 +735,6 @@
       } catch (err) {
         if (timeoutId) {
           clearTimeout(timeoutId);
-          timeoutId = null;
         }
         if (!session.cancelled) {
           console.warn('[MirrormereVideo] WebRTC SDP negotiation failed:', err);
@@ -910,7 +909,7 @@
         pc.oniceconnectionstatechange = onConnChange;
         pc.onconnectionstatechange = onConnChange;
 
-        await this.negotiateWebRTC(session, session.stream.stream_url, session.element);
+        await this.negotiateWebRTC(session, session.stream.stream_url);
       } catch (err) {
         console.warn('[MirrormereVideo] WebRTC reconnection cycle error:', err);
         if (!session.cancelled) {
@@ -967,7 +966,7 @@
             console.warn('[MirrormereVideo] Playback prevented by browser autoplay policy:', err);
           });
         }
-      } catch (e) {
+      } catch {
         // Ignored
       }
     }
@@ -1103,7 +1102,7 @@
      * @param {Object} session - Active video stream session.
      */
     bindTouchForwarding(session) {
-      if (!this.touchForwardingEnabled || !Boolean(this.remoteUrl) || !Boolean(session?.element) || !Boolean(session?.stream?.controllable)) return;
+      if (!this.touchForwardingEnabled || !this.remoteUrl || !session?.element || !session?.stream?.controllable) return;
       const videoEl = session.element;
 
       let isDown = false;

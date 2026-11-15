@@ -2,8 +2,11 @@ module github.com/azylman/mirrormere
 
 go 1.27.3
 
-// web/ui/node_modules ships third-party Go sources (e.g. flatted); keep them out of ./...
-ignore ./web/ui/node_modules
+// node_modules ships third-party Go sources (e.g. flatted); keep them out of ./...
+ignore (
+	./node_modules
+	./web/ui/node_modules
+)
 
 require (
 	github.com/arran4/golang-ical v0.3.8

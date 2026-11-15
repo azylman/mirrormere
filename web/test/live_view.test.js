@@ -292,7 +292,7 @@ test('Live View Client Controller', async (t) => {
       on(evt, cb) {
         if (evt === 'video.state') sseCallback = cb;
       },
-      off(evt, cb) {
+      off(evt) {
         if (evt === 'video.state') sseOffCalled = true;
       }
     };
@@ -412,7 +412,7 @@ test('Live View Client Controller', async (t) => {
       control_url: 'http://device-control.lan/wake',
     });
 
-    const inst = global.window.MirrormereLiveView.mount(el, {
+    global.window.MirrormereLiveView.mount(el, {
       fetch: mockFetch,
       RTCPeerConnection: MockPeerConnection,
     });
@@ -450,7 +450,7 @@ test('Live View Client Controller', async (t) => {
       control_url: 'http://device-control.lan/wake',
     });
 
-    const inst = global.window.MirrormereLiveView.mount(el, {
+    global.window.MirrormereLiveView.mount(el, {
       fetch: mockFetch,
       RTCPeerConnection: MockPeerConnection,
     });

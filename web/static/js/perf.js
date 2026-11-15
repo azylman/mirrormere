@@ -236,7 +236,7 @@
 
     const nativeFetch = window.fetch;
     if (typeof nativeFetch === 'function') {
-      window.fetch = function (input, init) {
+      window.fetch = function (input, _init) {
         const url = typeof input === 'string' ? input : (input && input.url) || '';
         if (touchEndAt !== null && performance.now() - touchEndAt < SWIPE_TOUCH_WINDOW_MS && isScreenNavigation(url) && !isReact()) {
           swipeStart = touchEndAt;

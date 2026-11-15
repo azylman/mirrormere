@@ -1,0 +1,13 @@
+{
+  "name": "mirrormere-lint",
+  "private": true,
+  "description": "Lint tooling for Mirrormere vanilla JS outside web/ui (web/static/js, web/test, sidecars/eink-renderer, scripts/perf)",
+  "scripts": {
+    "lint": "eslint --max-warnings=0 ."
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.14.0",
+    "globals": "17.14.0"
+  }
+}

@@ -93,7 +93,7 @@
       return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
         ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
         : false;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -185,10 +185,10 @@
      */
     openLevels() {
       if (!this.eventSourceFactory) return;
-      let source = null;
+      let source;
       try {
         source = this.eventSourceFactory(this.levelsUrl);
-      } catch (e) {
+      } catch {
         return;
       }
       if (!source || typeof source.addEventListener !== 'function') return;
@@ -198,10 +198,10 @@
 
     /** Stores a valid 33-value frame; malformed payloads are ignored. */
     onLevelFrame(e) {
-      let values = null;
+      let values;
       try {
         values = JSON.parse(e ? e.data : undefined);
-      } catch (err) {
+      } catch {
         return;
       }
       if (!isLevelFrame(values)) return;

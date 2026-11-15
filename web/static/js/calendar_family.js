@@ -58,7 +58,7 @@
   }
 
   function matchCustomEntryObject(entry, targetMonthDay, fallbackKey) {
-    let entryMonthDay = normalizeCustomMonthDay(entry.date != null ? entry.date : entry.month_day);
+    let entryMonthDay = normalizeCustomMonthDay(entry.date ?? entry.month_day);
     if (!entryMonthDay && typeof entry.month === 'number' && typeof entry.day === 'number') {
       entryMonthDay = `${String(entry.month).padStart(2, '0')}-${String(entry.day).padStart(2, '0')}`;
     }

@@ -61,6 +61,7 @@ updates:
 
   - package-ecosystem: "npm"
     directories:
+      - "/"
       - "/sidecars/eink-renderer"
       - "/web/ui"
     schedule:

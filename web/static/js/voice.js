@@ -95,7 +95,7 @@
           try {
             const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
             handleEvent(data);
-          } catch (e) {
+          } catch {
             // Ignore malformed payload
           }
         });

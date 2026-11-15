@@ -122,7 +122,7 @@ describe('Display Stylesheet Freshness Heartbeat', () => {
     let currentModified = 'Sun, 27 Sep 2026 05:11:04 GMT';
     let currentETag = '"v1"';
 
-    global.fetch = async (url, options) => {
+    global.fetch = async () => {
       return {
         status: 200,
         headers: {

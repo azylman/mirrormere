@@ -5,7 +5,6 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const zlib = require('zlib');
-const http = require('http');
 
 const {
   luminance,
@@ -242,7 +241,7 @@ describe('E-Ink Dithering & 1-Bit PNG Engine', () => {
       mockRgba[i * 4 + 3] = 255;
     }
 
-    const { server, captureService } = createServer({
+    const { server } = createServer({
       port: 0,
       screenshotProvider: async () => ({
         rgbaBuffer: mockRgba,

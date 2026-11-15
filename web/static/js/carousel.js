@@ -399,7 +399,7 @@ class MirrormereCarousel {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const html = await res.text();
         return { widget, html };
-      } catch (err) {
+      } catch {
         const fallbackHTML = `<div class="widget-card" data-widget-id="${widget.widget_id}"><div style="font-size:0.9rem;">Widget ${widget.widget_id} unavailable</div></div>`;
         return { widget, html: fallbackHTML };
       }

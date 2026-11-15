@@ -40,7 +40,7 @@ describe('Tasks Widget Touch Completion & Optimistic UI', () => {
     const ring = {
       className: done ? 'task-checkbox-done' : 'task-checkbox-ring',
       innerHTML: done ? '<svg>done</svg>' : '',
-      setAttribute: (k, v) => {},
+      setAttribute: () => {},
     };
 
     const dataset = {

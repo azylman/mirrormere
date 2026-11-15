@@ -1233,7 +1233,6 @@ test('Calendar Family Client Controller', async (t) => {
       fetchCalls.push({ url, signal: opts && opts.signal });
       const parsedUrl = new URL('http://localhost/' + url);
       const date = parsedUrl.searchParams.get('date');
-      const view = parsedUrl.searchParams.get('view');
       const html = `
         <div class="cf-view-panel cf-view-week">
           <div class="cf-event cf-timed cf-event-clickable" data-event-id="ev-fresh-${date}-week">
@@ -1366,9 +1365,7 @@ test('Calendar Family Client Controller', async (t) => {
   });
 
   await t.test('tapping .cf-today-badge resets date back to base date', async () => {
-    let fetchCount = 0;
-    const mockFetch = async (url) => {
-      fetchCount++;
+    const mockFetch = async () => {
       return { ok: true, text: async () => `<div class="cf-view-panel cf-view-week"></div>` };
     };
 
