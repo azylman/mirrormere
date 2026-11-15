@@ -49,15 +49,16 @@ export function releaseDirection(release: SwipeRelease, width: number): Directio
 
 /** Signed velocity over the last VELOCITY_WINDOW_MS. A finger that stopped before lifting gives ~0. */
 export function velocityOf(samples: readonly PointerSample[]): number {
-  if (samples.length < 2) return 0;
-  const last = samples[samples.length - 1];
+  const last = samples.at(-1);
+  let first = samples[0];
+  if (samples.length < 2 || !last || !first) return 0;
   const cutoff = last.t - VELOCITY_WINDOW_MS;
   // Reference point: the newest sample at or before the window start, so the span
   // is at least the window even when samples are sparse. Falls back to the first sample.
-  let first = samples[0];
   for (let i = samples.length - 1; i >= 0; i--) {
-    if (samples[i].t <= cutoff) {
-      first = samples[i];
+    const sample = samples[i];
+    if (sample && sample.t <= cutoff) {
+      first = sample;
       break;
     }
   }

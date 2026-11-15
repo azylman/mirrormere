@@ -15,11 +15,10 @@ export function getTimezoneOffsetString(date: Date, tz?: string): string {
       tzOffsetFormatters.set(tz, formatter);
     }
     const parts = formatter.formatToParts(date);
-    for (let i = 0; i < parts.length; i++) {
-      const p = parts[i];
+    for (const p of parts) {
       if (p.type === 'timeZoneName' && p.value) {
-        const m = p.value.match(/GMT([+-]\d{2}:\d{2})/);
-        if (m) return m[1];
+        const offset = p.value.match(/GMT([+-]\d{2}:\d{2})/)?.[1];
+        if (offset) return offset;
         if (p.value === 'GMT' || p.value === 'UTC') return 'Z';
       }
     }
@@ -57,8 +56,7 @@ export function getDatePartsInTimezone(
     let year = date.getFullYear();
     let month = date.getMonth() + 1;
     let day = date.getDate();
-    for (let i = 0; i < parts.length; i++) {
-      const p = parts[i];
+    for (const p of parts) {
       if (p.type === 'year') year = parseInt(p.value, 10);
       else if (p.type === 'month') month = parseInt(p.value, 10);
       else if (p.type === 'day') day = parseInt(p.value, 10);

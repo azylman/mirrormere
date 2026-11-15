@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PaneContext } from '../../carousel/PaneContext';
 import { useDisplayStore } from '../../store';
 import { PlexRecentWidget, type PlexItem, type SeerrResultItem } from './PlexRecentWidget';
+import { itemAt } from '../../test-utils/lookup';
 
 const initialStore = useDisplayStore.getState();
 
@@ -201,7 +202,7 @@ describe('PlexRecentWidget', () => {
       expect(container.querySelectorAll('#poster-grid .item-card').length).toBe(3);
     });
 
-    const duneCard = container.querySelectorAll('#poster-grid .item-card')[0];
+    const duneCard = itemAt(container.querySelectorAll('#poster-grid .item-card'), 0);
     fireEvent.click(duneCard);
 
     // Detail modal opens
@@ -232,7 +233,7 @@ describe('PlexRecentWidget', () => {
     // Verify POST payload to /hearth-api/plex/play
     const playCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/plex/play'));
     expect(playCalls.length).toBe(1);
-    expect(playCalls[0][1]).toEqual({
+    expect(itemAt(playCalls, 0)[1]).toEqual({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -256,7 +257,7 @@ describe('PlexRecentWidget', () => {
     });
 
     // Click Audiobook card
-    const audioCard = container.querySelectorAll('#poster-grid .item-card')[2];
+    const audioCard = itemAt(container.querySelectorAll('#poster-grid .item-card'), 2);
     fireEvent.click(audioCard);
 
     const modal = container.querySelector('#detail-modal');
@@ -301,7 +302,7 @@ describe('PlexRecentWidget', () => {
     await waitFor(() => {
       const searchCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/seerr/search'));
       expect(searchCalls.length).toBe(1);
-      expect(String(searchCalls[0][0])).toContain('/seerr/search?q=Batman');
+      expect(String(itemAt(searchCalls, 0)[0])).toContain('/seerr/search?q=Batman');
     });
 
     await waitFor(() => {
@@ -313,29 +314,29 @@ describe('PlexRecentWidget', () => {
     expect(resultButtons.length).toBe(3);
 
     // Item 101: available -> "✓ In Plex", disabled
-    expect(resultButtons[0].textContent).toBe('✓ In Plex');
-    expect(resultButtons[0].disabled).toBe(true);
+    expect(itemAt(resultButtons, 0).textContent).toBe('✓ In Plex');
+    expect(itemAt(resultButtons, 0).disabled).toBe(true);
 
     // Item 102: requested -> "✓ Requested", disabled
-    expect(resultButtons[1].textContent).toBe('✓ Requested');
-    expect(resultButtons[1].disabled).toBe(true);
+    expect(itemAt(resultButtons, 1).textContent).toBe('✓ Requested');
+    expect(itemAt(resultButtons, 1).disabled).toBe(true);
 
     // Item 103: pending -> "+ Request", enabled
-    expect(resultButtons[2].textContent).toBe('+ Request');
-    expect(resultButtons[2].disabled).toBe(false);
+    expect(itemAt(resultButtons, 2).textContent).toBe('+ Request');
+    expect(itemAt(resultButtons, 2).disabled).toBe(false);
 
     // Click request button on item 103
-    fireEvent.click(resultButtons[2]);
+    fireEvent.click(itemAt(resultButtons, 2));
 
     await waitFor(() => {
-      expect(resultButtons[2].textContent).toBe('✓ Requested');
-      expect(resultButtons[2].disabled).toBe(true);
+      expect(itemAt(resultButtons, 2).textContent).toBe('✓ Requested');
+      expect(itemAt(resultButtons, 2).disabled).toBe(true);
     });
 
     // Verify request POST payload
     const reqCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/seerr/request'));
     expect(reqCalls.length).toBe(1);
-    expect(reqCalls[0][1]).toEqual({
+    expect(itemAt(reqCalls, 0)[1]).toEqual({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -44,12 +44,11 @@ export function getNormalizedVideoCoordinates(
 
   let clientX: number | null = null;
   let clientY: number | null = null;
-  if ('touches' in e && e.touches && e.touches.length > 0) {
-    clientX = e.touches[0].clientX;
-    clientY = e.touches[0].clientY;
-  } else if ('changedTouches' in e && e.changedTouches && e.changedTouches.length > 0) {
-    clientX = e.changedTouches[0].clientX;
-    clientY = e.changedTouches[0].clientY;
+  const touch =
+    ('touches' in e && e.touches?.[0]) || ('changedTouches' in e && e.changedTouches?.[0]) || null;
+  if (touch) {
+    clientX = touch.clientX;
+    clientY = touch.clientY;
   } else if (
     'clientX' in e &&
     typeof e.clientX === 'number' &&

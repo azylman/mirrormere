@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
 import { CalendarFeedWidget } from './CalendarFeedWidget';
+import { itemAt } from '../../test-utils/lookup';
 
 const initialStore = useDisplayStore.getState();
 
@@ -190,8 +191,8 @@ describe('CalendarFeedWidget', () => {
 
     const dots = chips?.querySelectorAll('.calendar-avatar-dot');
     expect(dots?.length).toBe(2);
-    expect(dots?.[0].getAttribute('title')).toBe('Personal');
-    expect(dots?.[1].getAttribute('title')).toBe('Work');
+    expect(itemAt(dots, 0).getAttribute('title')).toBe('Personal');
+    expect(itemAt(dots, 1).getAttribute('title')).toBe('Work');
 
     const badge = chips?.querySelector('.calendar-count-badge');
     expect(badge?.textContent).toBe('2 Calendars');
@@ -260,36 +261,36 @@ describe('CalendarFeedWidget', () => {
     expect(groups.length).toBe(2);
 
     // Group 0: Today
-    const todayPill = groups[0].querySelector('.day-pill-badge');
+    const todayPill = itemAt(groups, 0).querySelector('.day-pill-badge');
     expect(todayPill?.classList.contains('day-pill-today')).toBe(true);
     expect(todayPill?.textContent).toContain('TODAY •');
 
-    const todayEvents = groups[0].querySelectorAll('.calendar-event-item');
+    const todayEvents = itemAt(groups, 0).querySelectorAll('.calendar-event-item');
     expect(todayEvents.length).toBe(2);
 
     // All-day item
-    expect(todayEvents[0].getAttribute('data-event-id')).toBe('ev-allday');
-    expect(todayEvents[0].getAttribute('data-event-allday')).toBe('true');
-    expect(todayEvents[0].querySelector('.event-time-allday')?.textContent).toBe('All Day');
-    expect(todayEvents[0].querySelector('.event-title')?.textContent).toBe('All Day Hackathon');
-    expect(todayEvents[0].querySelector('.event-calendar-pill')?.textContent).toBe('Events');
+    expect(itemAt(todayEvents, 0).getAttribute('data-event-id')).toBe('ev-allday');
+    expect(itemAt(todayEvents, 0).getAttribute('data-event-allday')).toBe('true');
+    expect(itemAt(todayEvents, 0).querySelector('.event-time-allday')?.textContent).toBe('All Day');
+    expect(itemAt(todayEvents, 0).querySelector('.event-title')?.textContent).toBe('All Day Hackathon');
+    expect(itemAt(todayEvents, 0).querySelector('.event-calendar-pill')?.textContent).toBe('Events');
 
     // Timed item with location and color
-    expect(todayEvents[1].getAttribute('data-event-id')).toBe('ev-timed');
-    expect(todayEvents[1].getAttribute('data-event-allday')).toBe('false');
-    expect(todayEvents[1].querySelector('.event-time-val')).not.toBeNull();
-    expect(todayEvents[1].querySelector('.event-time-ampm')).not.toBeNull();
-    expect(todayEvents[1].querySelector('.event-location-text')?.textContent).toBe('Room A');
-    expect(todayEvents[1].querySelector('.event-calendar-pill')?.textContent).toBe('Work');
+    expect(itemAt(todayEvents, 1).getAttribute('data-event-id')).toBe('ev-timed');
+    expect(itemAt(todayEvents, 1).getAttribute('data-event-allday')).toBe('false');
+    expect(itemAt(todayEvents, 1).querySelector('.event-time-val')).not.toBeNull();
+    expect(itemAt(todayEvents, 1).querySelector('.event-time-ampm')).not.toBeNull();
+    expect(itemAt(todayEvents, 1).querySelector('.event-location-text')?.textContent).toBe('Room A');
+    expect(itemAt(todayEvents, 1).querySelector('.event-calendar-pill')?.textContent).toBe('Work');
 
     // Group 1: Tomorrow
-    const tomorrowPill = groups[1].querySelector('.day-pill-badge');
+    const tomorrowPill = itemAt(groups, 1).querySelector('.day-pill-badge');
     expect(tomorrowPill?.classList.contains('day-pill-tomorrow')).toBe(true);
     expect(tomorrowPill?.textContent).toContain('TOMORROW •');
 
-    const tomorrowEvents = groups[1].querySelectorAll('.calendar-event-item');
+    const tomorrowEvents = itemAt(groups, 1).querySelectorAll('.calendar-event-item');
     expect(tomorrowEvents.length).toBe(1);
-    expect(tomorrowEvents[0].querySelector('.event-title')?.textContent).toBe('Morning Flight');
+    expect(itemAt(tomorrowEvents, 0).querySelector('.event-title')?.textContent).toBe('Morning Flight');
   });
 
   it('handles PascalCase Events payload and invalid timestamp without crashing', () => {
@@ -570,7 +571,7 @@ describe('CalendarFeedWidget', () => {
     const items = container.querySelectorAll('.calendar-event-item');
     expect(items.length).toBe(2);
 
-    fireEvent.keyDown(items[0], { key: ' ' });
+    fireEvent.keyDown(itemAt(items, 0), { key: ' ' });
     expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
     expect(container.querySelector('.cf-modal-title')?.textContent).toBe('Tomorrow Standup');
 
@@ -578,11 +579,11 @@ describe('CalendarFeedWidget', () => {
     fireEvent.click(closeBtn);
     expect(container.querySelector('.cf-modal-overlay')).toBeNull();
 
-    fireEvent.keyDown(items[1], { key: 'Spacebar' });
+    fireEvent.keyDown(itemAt(items, 1), { key: 'Spacebar' });
     expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
     expect(container.querySelector('.cf-modal-title')?.textContent).toBe('Future Workshop');
 
-    fireEvent.keyDown(items[1], { key: 'Tab' });
+    fireEvent.keyDown(itemAt(items, 1), { key: 'Tab' });
     expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
   });
 });

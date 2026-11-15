@@ -22,7 +22,7 @@ import {
 } from './editorMath';
 
 export interface LayoutEditorProps {
-  fetchImpl?: typeof fetch;
+  fetchImpl?: typeof fetch | undefined;
 }
 
 function PinFilledIcon() {

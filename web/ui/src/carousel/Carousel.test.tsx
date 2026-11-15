@@ -10,6 +10,7 @@ import { SETTLE_FALLBACK_MS } from './track';
 import { PaneContext } from './PaneContext';
 import { scheduleIdleStep } from './Screen';
 import { WIDGET_COMPONENTS } from '../widgets/registry';
+import { itemAt } from '../test-utils/lookup';
 
 /**
  * jsdom has no requestIdleCallback, so scheduleIdleStep uses its 16 ms timer there. Tests that
@@ -235,7 +236,7 @@ describe('Carousel', () => {
             current_screen: 1,
             total_screens: 3,
             interval_seconds: 30,
-            widgets: layout[1].widgets.map((w) => ({ widget_id: w.widget_id, origin: w.origin, dimensions: w.dimensions })),
+            widgets: itemAt(layout, 1).widgets.map((w) => ({ widget_id: w.widget_id, origin: w.origin, dimensions: w.dimensions })),
           },
         },
       ]);
@@ -406,7 +407,7 @@ describe('Carousel', () => {
               current_screen: 0,
               total_screens: 3,
               interval_seconds: 30,
-              widgets: layout[0].widgets.map((w) => ({ widget_id: w.widget_id, origin: w.origin, dimensions: w.dimensions })),
+              widgets: itemAt(layout, 0).widgets.map((w) => ({ widget_id: w.widget_id, origin: w.origin, dimensions: w.dimensions })),
             },
           },
         ]);
@@ -782,7 +783,7 @@ describe('Carousel', () => {
       const parkedPanes = panes.filter((pane) => pane.getAttribute('aria-hidden') === 'true');
       expect(parkedPanes).toHaveLength(1);
 
-      const parked = parkedPanes[0];
+      const parked = itemAt(parkedPanes, 0);
       expect(parked.getAttribute('aria-hidden')).toBe('true');
       expect(parked.style.visibility).toBe('hidden');
       expect(parked.style.pointerEvents).toBe('none');
@@ -1040,7 +1041,7 @@ describe('Carousel', () => {
         const twoScreens: ScreensResponse = {
           current_screen: 0,
           interval_seconds: 30,
-          screens: [layout[0], layout[1]],
+          screens: [itemAt(layout, 0), itemAt(layout, 1)],
         };
         stubApi(twoScreens);
         useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 2 } });

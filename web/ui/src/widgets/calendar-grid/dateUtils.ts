@@ -19,10 +19,10 @@ const FULL_MONTHS = [
 ];
 
 export function parseISODate(s: string): Date {
-  const parts = s.split('T')[0].split('-');
-  const y = parseInt(parts[0], 10);
-  const m = parseInt(parts[1], 10);
-  const d = parseInt(parts[2], 10);
+  const [ys = '', ms = '', ds = ''] = (s.split('T')[0] ?? '').split('-');
+  const y = parseInt(ys, 10);
+  const m = parseInt(ms, 10);
+  const d = parseInt(ds, 10);
   return new Date(y, m - 1, d, 12, 0, 0);
 }
 
@@ -115,7 +115,7 @@ export function sliceWeekWindow(
   if (days.length === 0) return [];
   if (activeView === 'day') {
     const match = days.find((d) => d.date === currentDateISO);
-    return match ? [match] : [days[0]];
+    return match ? [match] : days.slice(0, 1);
   }
   return days;
 }
@@ -249,9 +249,10 @@ export function parseTimeMinutes(label?: string): number | null {
 
   const m12 = s.match(/^(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i);
   if (m12) {
-    let hours = parseInt(m12[1], 10);
-    const minutes = m12[2] !== undefined ? parseInt(m12[2], 10) : 0;
-    const meridiem = m12[3].toLowerCase();
+    const [, h = '', mm, ap = ''] = m12;
+    let hours = parseInt(h, 10);
+    const minutes = mm !== undefined ? parseInt(mm, 10) : 0;
+    const meridiem = ap.toLowerCase();
 
     if (hours < 1 || hours > 12 || minutes < 0 || minutes > 59) return null;
     if (meridiem === 'am') {
@@ -265,8 +266,9 @@ export function parseTimeMinutes(label?: string): number | null {
 
   const m24 = s.match(/^(\d{1,2}):(\d{2})$/);
   if (m24) {
-    const hours = parseInt(m24[1], 10);
-    const minutes = parseInt(m24[2], 10);
+    const [, h = '', mm = ''] = m24;
+    const hours = parseInt(h, 10);
+    const minutes = parseInt(mm, 10);
 
     if (hours === 24 && minutes === 0) return 1440;
     if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
@@ -352,13 +354,13 @@ interface CustomBirthdayEntry {
 function normalizeCustomMonthDay(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
-  const fullMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed);
-  if (fullMatch) {
-    return `${fullMatch[2].padStart(2, '0')}-${fullMatch[3].padStart(2, '0')}`;
+  const [, , fullMonth, fullDay] = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed) ?? [];
+  if (fullMonth && fullDay) {
+    return `${fullMonth.padStart(2, '0')}-${fullDay.padStart(2, '0')}`;
   }
-  const mdMatch = /^(\d{1,2})[-/](\d{1,2})$/.exec(trimmed);
-  if (mdMatch) {
-    return `${mdMatch[1].padStart(2, '0')}-${mdMatch[2].padStart(2, '0')}`;
+  const [, month, day] = /^(\d{1,2})[-/](\d{1,2})$/.exec(trimmed) ?? [];
+  if (month && day) {
+    return `${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
   }
   return undefined;
 }

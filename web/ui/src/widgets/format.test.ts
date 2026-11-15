@@ -11,6 +11,7 @@ import {
   tasksStats,
   todayPrecipProb,
 } from './format';
+import { itemAt } from '../test-utils/lookup';
 
 describe('format helpers', () => {
   describe('escapeHtml', () => {
@@ -324,18 +325,18 @@ describe('format helpers', () => {
 
       const groups = calendarFeedDayGroups(data, refTime, 'UTC');
       expect(groups.length).toBe(2);
-      expect(groups[0].date).toBe('2026-10-10');
-      expect(groups[0].rel).toBe('Today');
-      expect(groups[0].events.map((e) => e.title)).toEqual([
+      expect(itemAt(groups, 0).date).toBe('2026-10-10');
+      expect(itemAt(groups, 0).rel).toBe('Today');
+      expect(itemAt(groups, 0).events.map((e) => e.title)).toEqual([
         'Currently Ongoing',
         'Later Today',
         'Today All-Day',
         'Ongoing No End',
       ]);
 
-      expect(groups[1].date).toBe('2026-10-11');
-      expect(groups[1].rel).toBe('Tomorrow');
-      expect(groups[1].events.map((e) => e.title)).toEqual(['Tomorrow All-Day']);
+      expect(itemAt(groups, 1).date).toBe('2026-10-11');
+      expect(itemAt(groups, 1).rel).toBe('Tomorrow');
+      expect(itemAt(groups, 1).events.map((e) => e.title)).toEqual(['Tomorrow All-Day']);
     });
 
     it('normalizes description on both all-day and timed events from camelCase or PascalCase', () => {
@@ -366,10 +367,10 @@ describe('format helpers', () => {
 
       const groups = calendarFeedDayGroups(data, refTime, 'UTC');
       expect(groups).toHaveLength(1);
-      expect(groups[0].events).toHaveLength(3);
-      expect(groups[0].events[0].description).toBe('Important details');
-      expect(groups[0].events[1].description).toBe('Meeting agenda and notes');
-      expect(groups[0].events[2].description).toBeUndefined();
+      expect(itemAt(groups, 0).events).toHaveLength(3);
+      expect(itemAt(itemAt(groups, 0).events, 0).description).toBe('Important details');
+      expect(itemAt(itemAt(groups, 0).events, 1).description).toBe('Meeting agenda and notes');
+      expect(itemAt(itemAt(groups, 0).events, 2).description).toBeUndefined();
     });
   });
 
@@ -425,12 +426,12 @@ describe('format helpers', () => {
       expect(layout?.curvePath).toBe('');
       expect(layout?.areaPath).toBe('');
       expect(layout?.points).toHaveLength(1);
-      expect(layout?.points[0].tempRound).toBe(72);
-      expect(layout?.points[0].timeLabel).toBe('Now');
-      expect(layout?.points[0].icon).toBe('weather-sunny');
+      expect(itemAt(layout?.points, 0).tempRound).toBe(72);
+      expect(itemAt(layout?.points, 0).timeLabel).toBe('Now');
+      expect(itemAt(layout?.points, 0).icon).toBe('weather-sunny');
 
       const invalidTempLayout = computeHourlyGraphLayout([{ time: '2026-09-26T14:00', temp: NaN }]);
-      expect(invalidTempLayout?.points[0].tempRound).toBe(0);
+      expect(itemAt(invalidTempLayout?.points, 0).tempRound).toBe(0);
     });
 
     it('computes layout for multiple points with cubic Bezier paths and 270px default height', () => {
@@ -451,12 +452,12 @@ describe('format helpers', () => {
       expect(layout?.areaPath).toContain('M 18.0 238.0 L 18.0 144.0');
       expect(layout?.gridLinesPath).toContain('M 18.0 150.0 L 18.0 238.0');
       expect(layout?.points).toHaveLength(3);
-      expect(layout?.points[0].timeLabel).toBe('Now');
-      expect(layout?.points[1].timeLabel).toBe('3 PM');
-      expect(layout?.points[2].timeLabel).toBe('4 PM');
-      expect(layout?.points[0].precipProb).toBe(10);
-      expect(layout?.points[1].precipProb).toBe(20);
-      expect(layout?.points[2].precipProb).toBe(0);
+      expect(itemAt(layout?.points, 0).timeLabel).toBe('Now');
+      expect(itemAt(layout?.points, 1).timeLabel).toBe('3 PM');
+      expect(itemAt(layout?.points, 2).timeLabel).toBe('4 PM');
+      expect(itemAt(layout?.points, 0).precipProb).toBe(10);
+      expect(itemAt(layout?.points, 1).precipProb).toBe(20);
+      expect(itemAt(layout?.points, 2).precipProb).toBe(0);
     });
 
     it('computes layout for 24 hourly points capped to 10 points by default, and preserves 24 points when maxPoints is 24', () => {
@@ -469,15 +470,15 @@ describe('format helpers', () => {
       expect(layout).not.toBeNull();
       expect(layout?.totalWidth).toBe(560.0);
       expect(layout?.points).toHaveLength(10);
-      expect(layout?.points[0].timeLabel).toBe('Now');
-      expect(layout?.points[9].timeLabel).toBe('9 AM');
+      expect(itemAt(layout?.points, 0).timeLabel).toBe('Now');
+      expect(itemAt(layout?.points, 9).timeLabel).toBe('9 AM');
 
       const customLayout = computeHourlyGraphLayout(pts, undefined, { maxPoints: 24 });
       expect(customLayout).not.toBeNull();
       expect(customLayout?.totalWidth).toBe(1344.0);
       expect(customLayout?.points).toHaveLength(24);
-      expect(customLayout?.points[0].timeLabel).toBe('Now');
-      expect(customLayout?.points[23].timeLabel).toBe('11 PM');
+      expect(itemAt(customLayout?.points, 0).timeLabel).toBe('Now');
+      expect(itemAt(customLayout?.points, 23).timeLabel).toBe('11 PM');
     });
 
     it('supports compact 108px height mode when passed via options', () => {
@@ -495,9 +496,9 @@ describe('format helpers', () => {
       expect(layout?.svgHeight).toBe(108.0);
       expect(layout?.baseY).toBe(90.0);
       expect(layout?.isTall).toBe(false);
-      expect(layout?.points[0].tempFontSize).toBe(12);
-      expect(layout?.points[0].circleR).toBe(3.5);
-      expect(layout?.points[0].timeY).toBe(102);
+      expect(itemAt(layout?.points, 0).tempFontSize).toBe(12);
+      expect(itemAt(layout?.points, 0).circleR).toBe(3.5);
+      expect(itemAt(layout?.points, 0).timeY).toBe(102);
     });
   });
 
@@ -553,7 +554,7 @@ describe('format helpers', () => {
         'UTC',
       );
       expect(arrResult).toHaveLength(1);
-      expect(arrResult[0].events[0].title).toBe('Array Event');
+      expect(itemAt(itemAt(arrResult, 0).events, 0).title).toBe('Array Event');
 
       // PascalCase fields
       const pascalResult = calendarFeedDayGroups(
@@ -574,12 +575,12 @@ describe('format helpers', () => {
         new Date('2026-10-27T08:00:00Z'),
         'UTC',
       );
-      expect(pascalResult[0].events[0].title).toBe('Pascal Title');
-      expect(pascalResult[0].events[0].id).toBe('pascal-id-1');
-      expect(pascalResult[0].events[0].location).toBe('Meeting Room A');
-      expect(pascalResult[0].events[0].description).toBe('Sync demo');
-      expect(pascalResult[0].events[0].calendarName).toBe('Work');
-      expect(pascalResult[0].events[0].color).toBe('#3b82f6');
+      expect(itemAt(itemAt(pascalResult, 0).events, 0).title).toBe('Pascal Title');
+      expect(itemAt(itemAt(pascalResult, 0).events, 0).id).toBe('pascal-id-1');
+      expect(itemAt(itemAt(pascalResult, 0).events, 0).location).toBe('Meeting Room A');
+      expect(itemAt(itemAt(pascalResult, 0).events, 0).description).toBe('Sync demo');
+      expect(itemAt(itemAt(pascalResult, 0).events, 0).calendarName).toBe('Work');
+      expect(itemAt(itemAt(pascalResult, 0).events, 0).color).toBe('#3b82f6');
 
       // Active calendars with nullish fields and non-object items
       const calendars = calendarFeedActiveCalendars([
@@ -589,10 +590,10 @@ describe('format helpers', () => {
         { name: 'Bob', enabled: true },
       ]);
       expect(calendars).toHaveLength(3);
-      expect(calendars[0].name).toBe('');
-      expect(calendars[0].color).toBeUndefined();
-      expect(calendars[1].name).toBe('Alice');
-      expect(calendars[2].color).toBeUndefined();
+      expect(itemAt(calendars, 0).name).toBe('');
+      expect(itemAt(calendars, 0).color).toBeUndefined();
+      expect(itemAt(calendars, 1).name).toBe('Alice');
+      expect(itemAt(calendars, 2).color).toBeUndefined();
 
       // computeHourlyGraphLayout custom baseY option
       const pts = [{ time: '2026-09-26T14:00', temp: 70, icon: 'weather-sunny' }];
@@ -631,8 +632,8 @@ describe('format helpers', () => {
       };
       const groups = calendarFeedDayGroups(pastData, refTime, 'UTC');
       expect(groups).toHaveLength(1);
-      expect(groups[0].events).toHaveLength(2);
-      expect(groups[0].events[0].location).toBe('Main Room');
+      expect(itemAt(groups, 0).events).toHaveLength(2);
+      expect(itemAt(itemAt(groups, 0).events, 0).location).toBe('Main Room');
     });
 
     it('covers todayPrecipProb variations: daily, hourly, and current', () => {

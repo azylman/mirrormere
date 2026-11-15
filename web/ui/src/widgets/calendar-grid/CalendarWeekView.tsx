@@ -77,17 +77,15 @@ export function batchFitDayColumnEvents(columnEl: HTMLElement): void {
   const dayEvents = columnEl.querySelectorAll<HTMLElement>('.cf-day-event');
   if (dayEvents.length === 0) return;
 
-  for (let i = 0; i < dayEvents.length; i++) dayEvents[i].classList.remove('cf-event-compact');
+  for (const evEl of dayEvents) evEl.classList.remove('cf-event-compact');
 
   const measurements: Array<{ el: HTMLElement; fits: boolean }> = [];
-  for (let i = 0; i < dayEvents.length; i++) {
-    const evEl = dayEvents[i];
+  for (const evEl of dayEvents) {
     if (!evEl.querySelector('.cf-event-time') || !evEl.querySelector('.cf-event-title')) continue;
     measurements.push({ el: evEl, fits: measureDayEventFit(evEl) });
   }
 
-  for (let i = 0; i < measurements.length; i++) {
-    const { el, fits } = measurements[i];
+  for (const { el, fits } of measurements) {
     if (fits) el.classList.remove('cf-event-compact');
     else el.classList.add('cf-event-compact');
   }
@@ -106,7 +104,7 @@ function inferTimeFormat(weekVM?: FamilyViewModel): string | undefined {
 
 export interface CalendarWeekViewProps {
   activeView: ViewMode;
-  weekVM?: FamilyViewModel;
+  weekVM?: FamilyViewModel | undefined;
   daysToRender: FamilyDay[];
   visibleAllDayEvents: FamilySpanEvent[];
   members: FamilyMember[];

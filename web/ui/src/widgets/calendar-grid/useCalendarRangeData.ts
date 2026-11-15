@@ -10,11 +10,11 @@ export interface UseCalendarRangeDataProps {
   activeView: ViewMode;
   setActiveView: React.Dispatch<React.SetStateAction<ViewMode>>;
   entryTimestamp?: string;
-  entryViewModel?: Record<string, unknown>;
-  cachedRangeStartConfig?: string;
-  cachedRangeEndConfig?: string;
-  dataCachedRangeStart?: string;
-  dataCachedRangeEnd?: string;
+  entryViewModel?: Record<string, unknown> | undefined;
+  cachedRangeStartConfig?: string | undefined;
+  cachedRangeEndConfig?: string | undefined;
+  dataCachedRangeStart?: string | undefined;
+  dataCachedRangeEnd?: string | undefined;
   onActivity?: () => void;
 }
 

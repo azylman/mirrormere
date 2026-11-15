@@ -20,6 +20,7 @@ import type {
   FamilyViewModel,
   ViewMode,
 } from './types';
+import { itemAt } from '../../test-utils/lookup';
 
 const members: FamilyMember[] = [
   { name: 'Alex', initial: 'A', color: '#ff6f59', text_color: '#ffffff', pattern: 'solid' },
@@ -130,12 +131,12 @@ describe('CalendarEventModal', () => {
 
     const chips = container.querySelectorAll('.cf-modal-owner-chip');
     expect(chips.length).toBe(2);
-    expect(chips[0].classList.contains('cf-pattern-solid')).toBe(true);
-    expect(chips[1].classList.contains('cf-pattern-striped')).toBe(true);
+    expect(itemAt(chips, 0).classList.contains('cf-pattern-solid')).toBe(true);
+    expect(itemAt(chips, 1).classList.contains('cf-pattern-striped')).toBe(true);
 
     const badges = container.querySelectorAll('.cf-modal-owner-badge');
-    expect(badges[0].textContent).toBe('A');
-    expect(badges[1].textContent).toBe('S');
+    expect(itemAt(badges, 0).textContent).toBe('A');
+    expect(itemAt(badges, 1).textContent).toBe('S');
   });
 
   it('handles Mealie emoji description stripping and preserves long text without truncation', () => {
@@ -546,9 +547,9 @@ describe('CalendarMonthView & CalendarWeekView', () => {
 
       const dots = container.querySelectorAll('.cf-month-dot');
       expect(dots.length).toBe(2);
-      expect(dots[0].classList.contains('cf-pattern-solid')).toBe(true);
-      expect(dots[0].classList.contains('cf-member-0')).toBe(true);
-      expect(dots[1].classList.contains('cf-dot-shared')).toBe(true);
+      expect(itemAt(dots, 0).classList.contains('cf-pattern-solid')).toBe(true);
+      expect(itemAt(dots, 0).classList.contains('cf-member-0')).toBe(true);
+      expect(itemAt(dots, 1).classList.contains('cf-dot-shared')).toBe(true);
     });
   });
 
@@ -581,13 +582,13 @@ describe('CalendarMonthView & CalendarWeekView', () => {
 
       const spanEvents = container.querySelectorAll('.cf-event.cf-allday');
       expect(spanEvents.length).toBe(2);
-      fireEvent.click(spanEvents[0]);
+      fireEvent.click(itemAt(spanEvents, 0));
       expect(onOpenModal).toHaveBeenCalled();
-      fireEvent.keyDown(spanEvents[0], { key: 'Enter' });
+      fireEvent.keyDown(itemAt(spanEvents, 0), { key: 'Enter' });
       expect(onOpenModal).toHaveBeenCalledTimes(2);
-      fireEvent.keyDown(spanEvents[0], { key: ' ' });
+      fireEvent.keyDown(itemAt(spanEvents, 0), { key: ' ' });
       expect(onOpenModal).toHaveBeenCalledTimes(3);
-      fireEvent.keyDown(spanEvents[0], { key: 'Tab' });
+      fireEvent.keyDown(itemAt(spanEvents, 0), { key: 'Tab' });
     });
 
     it('renders early and late edge events and handles onOpenModal', () => {
@@ -672,7 +673,7 @@ describe('CalendarMonthView & CalendarWeekView', () => {
 
       let markers = container.querySelectorAll('.cf-hour-marker');
       expect(markers.length).toBe(2);
-      expect(markers[0].textContent).toBe('09:00');
+      expect(itemAt(markers, 0).textContent).toBe('09:00');
 
       const weekVMHourMarkers: FamilyViewModel = { range_start: '2026-10-25', range_end: '2026-10-31', range_label: 'Oct 25 – 31', today: '2026-10-27', hour_markers: ['08:00', '12:00', '16:00'] };
 
@@ -682,7 +683,7 @@ describe('CalendarMonthView & CalendarWeekView', () => {
 
       markers = container.querySelectorAll('.cf-hour-marker');
       expect(markers.length).toBe(3);
-      expect(markers[0].textContent).toBe('08:00');
+      expect(itemAt(markers, 0).textContent).toBe('08:00');
     });
 
     it('triggers onSelectDay on day header click and keyboard navigation in week view', () => {
@@ -727,13 +728,13 @@ describe('CalendarMonthView & CalendarWeekView', () => {
 
       const items = container.querySelectorAll('.cf-day-allday-col .cf-event.cf-allday');
       expect(items.length).toBe(2);
-      fireEvent.click(items[0]);
+      fireEvent.click(itemAt(items, 0));
       expect(onOpenModal).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'col-allday-1' }),
         '2026-10-27'
       );
-      fireEvent.keyDown(items[0], { key: 'Enter' });
-      fireEvent.keyDown(items[0], { key: ' ' });
+      fireEvent.keyDown(itemAt(items, 0), { key: 'Enter' });
+      fireEvent.keyDown(itemAt(items, 0), { key: ' ' });
     });
 
     it('renders .cf-week-meal-row, .cf-day-meal-bar, and 128px full-bleed .cf-mealie-bar photo card with Dinner pill, gradient scrim, click/keyboard modal triggers, and filters meals by member', () => {
@@ -781,7 +782,7 @@ describe('CalendarMonthView & CalendarWeekView', () => {
       expect(thumb.style.objectFit).toBe('cover');
       expect((mealPills[1] as HTMLElement).querySelector('img')).toBeNull();
       expect((mealPills[1] as HTMLElement).style.backgroundColor).toBe('rgb(217, 119, 87)');
-      expect(mealPills[1].querySelector('.cf-mealie-title')?.textContent).toBe('Tacos Night');
+      expect(itemAt(mealPills, 1).querySelector('.cf-mealie-title')?.textContent).toBe('Tacos Night');
 
       fireEvent.click(firstPill);
       expect(onOpenModal).toHaveBeenCalledWith(expect.objectContaining({ id: 'meal-1' }), '2026-10-27');
@@ -804,7 +805,7 @@ describe('CalendarMonthView & CalendarWeekView', () => {
       fireEvent.click(gridContainer.querySelector('.cf-member-chip[data-member="Alex"]')!);
       const filteredMeals = gridContainer.querySelectorAll('.cf-mealie-bar');
       expect(filteredMeals.length).toBe(1);
-      expect(filteredMeals[0].getAttribute('data-event-id')).toBe('meal-1');
+      expect(itemAt(filteredMeals, 0).getAttribute('data-event-id')).toBe('meal-1');
     });
 
     it('attaches ResizeObserver to day canvas elements and disconnects on unmount', () => {
@@ -896,7 +897,7 @@ describe('useCalendarRangeData & useInactivityReset', () => {
       }
 
       expect(fetchMock).toHaveBeenCalled();
-      const lastCallUrl = fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0];
+      const lastCallUrl = itemAt(fetchMock.mock.calls, fetchMock.mock.calls.length - 1)[0];
       expect(lastCallUrl).toContain('&node=kiosk-1');
 
       // Reloading the 21st date should hit LRU cache without a new fetch

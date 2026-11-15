@@ -16,10 +16,10 @@ export type WidgetMeta = Pick<WidgetDetailResponse, 'assets_base' | 'config' | '
 
 /** Per-widget slice. Only `state`, `data` and `timestamp` come from widget.update. */
 export interface WidgetEntry {
-  meta?: WidgetMeta;
+  meta?: WidgetMeta | undefined;
   state: string;
   data: unknown;
-  viewModel?: Record<string, unknown>;
+  viewModel?: Record<string, unknown> | undefined;
   timestamp: string;
 }
 

@@ -15,7 +15,7 @@ export interface LiveViewConfig {
   expand_on_click: boolean;
   stream_id: string;
   priority: 'persistent' | 'temporary';
-  timeout_seconds?: number;
+  timeout_seconds?: number | undefined;
   controllable: boolean;
   control_url: string;
   expand_stream_url: string;
@@ -121,9 +121,8 @@ async function exchangeWhepSDP(streamUrl: string, sdpOffer: string, signal: Abor
 
 function getPointerCoords(e: React.PointerEvent | React.TouchEvent | React.MouseEvent): { x: number; y: number } | null {
   const touchEvt = e as unknown as React.TouchEvent;
-  if (touchEvt.changedTouches && touchEvt.changedTouches.length > 0) {
-    return { x: touchEvt.changedTouches[0].clientX, y: touchEvt.changedTouches[0].clientY };
-  }
+  const touch = touchEvt.changedTouches?.[0];
+  if (touch) return { x: touch.clientX, y: touch.clientY };
   const mouseEvt = e as unknown as React.MouseEvent;
   if (typeof mouseEvt.clientX === 'number' && !isNaN(mouseEvt.clientX) && typeof mouseEvt.clientY === 'number' && !isNaN(mouseEvt.clientY)) {
     return { x: mouseEvt.clientX, y: mouseEvt.clientY };

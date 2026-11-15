@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
 import { batchFitDayColumnEvents, CalendarGridWidget, type CalendarGridViewModel } from './CalendarGridWidget';
+import { itemAt } from '../../test-utils/lookup';
 
 const mockViewModel: CalendarGridViewModel = {
   active_view: 'week',
@@ -135,8 +136,8 @@ describe('CalendarGridWidget', () => {
 
     const chips = container.querySelectorAll('.cf-member-chip');
     expect(chips.length).toBe(2);
-    expect(chips[0].textContent).toContain('Alex');
-    expect(chips[1].textContent).toContain('Sam');
+    expect(itemAt(chips, 0).textContent).toContain('Alex');
+    expect(itemAt(chips, 1).textContent).toContain('Sam');
 
     expect(container.querySelector('.widget-calendar-grid')?.classList.contains('cf-view-week')).toBe(true);
     expect(container.querySelector('.cf-view-btn[data-view="week"]')?.classList.contains('active')).toBe(true);
@@ -169,7 +170,7 @@ describe('CalendarGridWidget', () => {
 
     const weekdayHeaders = container.querySelectorAll('.cf-weekday-header');
     expect(weekdayHeaders.length).toBe(7);
-    expect(weekdayHeaders[0].textContent).toBe('Sun');
+    expect(itemAt(weekdayHeaders, 0).textContent).toBe('Sun');
     expect(container.querySelectorAll('.cf-month-dot').length).toBeGreaterThan(0);
   });
 
@@ -180,7 +181,7 @@ describe('CalendarGridWidget', () => {
     expect(container.querySelector('.widget-calendar-grid')?.classList.contains('cf-view-day')).toBe(true);
     const days = container.querySelectorAll('.cf-day');
     expect(days.length).toBe(1);
-    expect(days[0].getAttribute('data-date')).toBe('2026-10-27');
+    expect(itemAt(days, 0).getAttribute('data-date')).toBe('2026-10-27');
     expect(container.querySelector('.cf-range-label.cf-label-day')?.textContent).toBe('Tuesday, Oct 27');
   });
 
@@ -1030,7 +1031,7 @@ describe('CalendarGridWidget', () => {
       // Only Alex's dot remains
       const dotsAfterAlex = container.querySelectorAll('.cf-month-dot');
       expect(dotsAfterAlex.length).toBe(1);
-      expect(dotsAfterAlex[0].getAttribute('title')).toBe('Alex');
+      expect(itemAt(dotsAfterAlex, 0).getAttribute('title')).toBe('Alex');
 
       // Toggle off -> both dots return
       fireEvent.click(alexChip);

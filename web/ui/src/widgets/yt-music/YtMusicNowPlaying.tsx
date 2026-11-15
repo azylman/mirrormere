@@ -15,8 +15,8 @@ import {
 } from './ytMusicTypes';
 
 export interface YtMusicNowPlayingProps {
-  nowPlaying?: NowPlaying;
-  queue?: QueueItem[];
+  nowPlaying?: NowPlaying | undefined;
+  queue?: QueueItem[] | undefined;
   activeSpeaker?: string;
   speakers?: Speaker[];
   startingPlayback?: boolean;
@@ -25,7 +25,7 @@ export interface YtMusicNowPlayingProps {
   onNext: () => void;
   onStop: () => void;
   onVolumeChange: (e: ChangeEvent<HTMLInputElement>) => void;
-  onPlayQueueIndex?: (index: number) => void;
+  onPlayQueueIndex?: ((index: number) => void) | undefined;
   onBrowseLibrary: () => void;
 }
 

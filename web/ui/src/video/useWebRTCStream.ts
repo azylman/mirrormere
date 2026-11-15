@@ -38,8 +38,8 @@ export interface UseWebRTCStreamOptions {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   stream: VideoSource | null;
   enabled?: boolean;
-  fetchFn?: typeof fetch;
-  RTCPeerConnectionClass?: typeof RTCPeerConnection;
+  fetchFn?: typeof fetch | undefined;
+  RTCPeerConnectionClass?: typeof RTCPeerConnection | undefined;
   negotiationTimeout?: number;
   disconnectTimeout?: number;
   maxReconnectAttempts?: number;
@@ -287,8 +287,8 @@ export function useWebRTCStream({
         const res = await effectiveFetch(streamUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/sdp' },
-          body: sdpPayload,
-          signal: controller ? controller.signal : undefined,
+          body: sdpPayload ?? null,
+          signal: controller ? controller.signal : null,
         });
 
         if (timeoutId) {

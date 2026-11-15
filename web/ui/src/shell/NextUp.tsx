@@ -81,7 +81,7 @@ export function resolveYtMusicScreenIndex(): number | null {
 
 export interface NextUpProps {
   now?: Date;
-  timezone?: string;
+  timezone?: string | undefined;
   events?: readonly RawCalendarEvent[];
   onPillClick?: () => void;
 }

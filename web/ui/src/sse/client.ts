@@ -96,7 +96,7 @@ export class EventStreamClient {
   /** URL used for the next connection, carrying lastEventId when known. */
   getConnectionURL(): string {
     if (!this.lastEventId) return this.url;
-    const [pathAndQuery, hash] = this.url.split('#');
+    const [pathAndQuery = '', hash] = this.url.split('#');
     const sep = pathAndQuery.includes('?') ? '&' : '?';
     const suffix = hash === undefined ? '' : `#${hash}`;
     return `${pathAndQuery}${sep}lastEventId=${encodeURIComponent(this.lastEventId)}${suffix}`;

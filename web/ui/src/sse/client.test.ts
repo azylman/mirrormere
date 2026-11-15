@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventStreamClient } from './client';
 import { FakeEventSource } from './fake-event-source';
+import { itemAt } from '../test-utils/lookup';
 
 function makeClient(options: ConstructorParameters<typeof EventStreamClient>[1] = {}) {
   return new EventStreamClient('api/events', {
@@ -39,7 +40,7 @@ describe('EventStreamClient', () => {
     it('reconnects on the schedule after repeated errors and resets after open', () => {
       const client = makeClient();
       client.connect();
-      const first = FakeEventSource.instances[0];
+      const first = itemAt(FakeEventSource.instances, 0);
 
       first.error();
       expect(first.closed).toBe(true);
@@ -48,14 +49,14 @@ describe('EventStreamClient', () => {
       vi.advanceTimersByTime(1);
       expect(FakeEventSource.instances).toHaveLength(2);
 
-      FakeEventSource.instances[1].error();
+      itemAt(FakeEventSource.instances, 1).error();
       vi.advanceTimersByTime(1499);
       expect(FakeEventSource.instances).toHaveLength(2);
       vi.advanceTimersByTime(1);
       expect(FakeEventSource.instances).toHaveLength(3);
 
-      FakeEventSource.instances[2].open();
-      FakeEventSource.instances[2].error();
+      itemAt(FakeEventSource.instances, 2).open();
+      itemAt(FakeEventSource.instances, 2).error();
       vi.advanceTimersByTime(1000);
       expect(FakeEventSource.instances).toHaveLength(4);
     });
@@ -65,11 +66,11 @@ describe('EventStreamClient', () => {
     it('re-sends the last event id as a query parameter', () => {
       const client = makeClient();
       client.connect();
-      FakeEventSource.instances[0].message('widget.update', { widget_id: 'w' }, 'evt_42');
-      FakeEventSource.instances[0].error();
+      itemAt(FakeEventSource.instances, 0).message('widget.update', { widget_id: 'w' }, 'evt_42');
+      itemAt(FakeEventSource.instances, 0).error();
 
       vi.advanceTimersByTime(1000);
-      expect(FakeEventSource.instances[1].url).toBe('api/events?lastEventId=evt_42');
+      expect(itemAt(FakeEventSource.instances, 1).url).toBe('api/events?lastEventId=evt_42');
       expect(client.getLastEventId()).toBe('evt_42');
     });
 
@@ -110,7 +111,7 @@ describe('EventStreamClient', () => {
     it('omits the parameter when no event id is known', () => {
       const client = makeClient();
       client.connect();
-      expect(FakeEventSource.instances[0].url).toBe('api/events');
+      expect(itemAt(FakeEventSource.instances, 0).url).toBe('api/events');
     });
 
     it('reset forgets the resume point', () => {
@@ -127,8 +128,8 @@ describe('EventStreamClient', () => {
       client.on('connection', (payload) => seen.push(payload));
       client.connect();
 
-      FakeEventSource.instances[0].open();
-      FakeEventSource.instances[0].error();
+      itemAt(FakeEventSource.instances, 0).open();
+      itemAt(FakeEventSource.instances, 0).error();
 
       expect(seen).toEqual([
         { status: 'connected', lastEventId: null },
@@ -140,7 +141,7 @@ describe('EventStreamClient', () => {
       const client = makeClient();
       client.connect();
       client.disconnect();
-      expect(FakeEventSource.instances[0].closed).toBe(true);
+      expect(itemAt(FakeEventSource.instances, 0).closed).toBe(true);
 
       vi.advanceTimersByTime(60_000);
       expect(FakeEventSource.instances).toHaveLength(1);
@@ -150,8 +151,8 @@ describe('EventStreamClient', () => {
       const client = makeClient();
       client.connect();
       client.connect();
-      expect(FakeEventSource.instances[0].closed).toBe(true);
-      expect(FakeEventSource.instances[1].closed).toBe(false);
+      expect(itemAt(FakeEventSource.instances, 0).closed).toBe(true);
+      expect(itemAt(FakeEventSource.instances, 1).closed).toBe(false);
     });
   });
 
@@ -162,9 +163,9 @@ describe('EventStreamClient', () => {
       const off = client.on('header.update', spy);
       client.connect();
 
-      FakeEventSource.instances[0].message('header.update', { timestamp: 't', timezone: 'UTC' });
+      itemAt(FakeEventSource.instances, 0).message('header.update', { timestamp: 't', timezone: 'UTC' });
       off();
-      FakeEventSource.instances[0].message('header.update', { timestamp: 't2', timezone: 'UTC' });
+      itemAt(FakeEventSource.instances, 0).message('header.update', { timestamp: 't2', timezone: 'UTC' });
 
       expect(spy).toHaveBeenCalledTimes(1);
       expect(spy).toHaveBeenCalledWith({ timestamp: 't', timezone: 'UTC' });
@@ -180,7 +181,7 @@ describe('EventStreamClient', () => {
       client.on('theme.update', good);
       client.connect();
 
-      FakeEventSource.instances[0].message('theme.update', { theme: 'night' });
+      itemAt(FakeEventSource.instances, 0).message('theme.update', { theme: 'night' });
       expect(good).toHaveBeenCalledWith({ theme: 'night' });
     });
 
@@ -190,7 +191,7 @@ describe('EventStreamClient', () => {
       const spy = vi.fn();
       client.on('voice.state', spy);
 
-      FakeEventSource.instances[0].message('voice.state', { state: 'listening' });
+      itemAt(FakeEventSource.instances, 0).message('voice.state', { state: 'listening' });
       expect(spy).toHaveBeenCalledWith({ state: 'listening' });
     });
 

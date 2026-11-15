@@ -21,6 +21,7 @@ import { useDisplayStore } from '../../store';
 import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
 import { endAnimation } from '../../perf/animating';
+import { itemAt } from '../../test-utils/lookup';
 
 function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
   return { type: 'photo-carousel', config, origin: [0, 0], dimensions: [2, 2], assets_base: '' };
@@ -482,7 +483,7 @@ describe('PhotoCarouselWidget component', () => {
       const root = container.querySelector('.widget-photo-carousel')!;
       act(() => { fireEvent.click(root); });
       expect(decodeResolvers.length).toBe(1);
-      act(() => { decodeResolvers[0](); });
+      act(() => { itemAt(decodeResolvers, 0)(); });
 
       let nextFg = container.querySelector('.photo-layer.photo-next') as HTMLImageElement;
       await vi.waitFor(() => {
@@ -493,7 +494,7 @@ describe('PhotoCarouselWidget component', () => {
       // While crossfade is active (before 850ms timeout), click again!
       act(() => { fireEvent.click(root); });
       expect(decodeResolvers.length).toBe(2);
-      act(() => { decodeResolvers[1](); });
+      act(() => { itemAt(decodeResolvers, 1)(); });
 
       await vi.waitFor(() => {
         nextFg = container.querySelector('.photo-layer.photo-next') as HTMLImageElement;
@@ -726,14 +727,14 @@ describe('PhotoCarouselWidget component', () => {
       const root = container.querySelector('.widget-photo-carousel')!;
       act(() => { fireEvent.click(root); });
       expect(decodeResolvers.length).toBe(1);
-      act(() => { decodeResolvers[0](); });
+      act(() => { itemAt(decodeResolvers, 0)(); });
       await vi.waitFor(() => { expect(document.body.dataset.animating).toBe('1'); });
 
       // Tap mid-crossfade: should commit p2 and reset animating to 0 immediately
       act(() => { fireEvent.click(root); });
       expect(document.body.dataset.animating).toBe('0');
       expect(decodeResolvers.length).toBe(2);
-      act(() => { decodeResolvers[1](); });
+      act(() => { itemAt(decodeResolvers, 1)(); });
       await vi.waitFor(() => { expect(document.body.dataset.animating).toBe('1'); });
       act(() => { vi.advanceTimersByTime(850); });
       expect(document.body.dataset.animating).toBe('0');
@@ -1369,8 +1370,8 @@ describe('PhotoCarouselWidget component', () => {
       expect(diptych).not.toBeNull();
       const diptychImgs = diptych!.querySelectorAll('img.photo-diptych-item');
       expect(diptychImgs.length).toBe(2);
-      expect(diptychImgs[0].getAttribute('src')).toBe('https://example.com/portrait1.jpg=w1400-h900');
-      expect(diptychImgs[1].getAttribute('src')).toBe('https://example.com/portrait2.jpg=w1400-h900');
+      expect(itemAt(diptychImgs, 0).getAttribute('src')).toBe('https://example.com/portrait1.jpg=w1400-h900');
+      expect(itemAt(diptychImgs, 1).getAttribute('src')).toBe('https://example.com/portrait2.jpg=w1400-h900');
       expect(container.querySelector('.photo-metadata-overlay')?.textContent).toBe('Oct 10, 2026 • Oct 12, 2026\nChicago • Seattle');
 
       act(() => { vi.advanceTimersByTime(10000); });
@@ -1433,8 +1434,8 @@ describe('PhotoCarouselWidget component', () => {
 
       let curImgs = container.querySelectorAll('.photo-layer.photo-current img.photo-diptych-item');
       expect(curImgs.length).toBe(2);
-      expect(curImgs[0].getAttribute('src')).toBe('https://example.com/p1.jpg=w1400-h900');
-      expect(curImgs[1].getAttribute('src')).toBe('https://example.com/p2.jpg=w1400-h900');
+      expect(itemAt(curImgs, 0).getAttribute('src')).toBe('https://example.com/p1.jpg=w1400-h900');
+      expect(itemAt(curImgs, 1).getAttribute('src')).toBe('https://example.com/p2.jpg=w1400-h900');
 
       act(() => { vi.advanceTimersByTime(10000); });
       act(() => { while (decodeResolvers.length > 0) decodeResolvers.shift()?.(); });
@@ -1442,19 +1443,19 @@ describe('PhotoCarouselWidget component', () => {
       await vi.waitFor(() => {
         const nextImgs = container.querySelectorAll('.photo-layer.photo-next img.photo-diptych-item');
         expect(nextImgs.length).toBe(2);
-        expect(nextImgs[0].getAttribute('src')).toBe('https://example.com/p3.jpg=w1400-h900');
-        expect(nextImgs[1].getAttribute('src')).toBe('https://example.com/p4.jpg=w1400-h900');
+        expect(itemAt(nextImgs, 0).getAttribute('src')).toBe('https://example.com/p3.jpg=w1400-h900');
+        expect(itemAt(nextImgs, 1).getAttribute('src')).toBe('https://example.com/p4.jpg=w1400-h900');
       });
 
       curImgs = container.querySelectorAll('.photo-layer.photo-current img.photo-diptych-item');
-      expect(curImgs[0].getAttribute('src')).toBe('https://example.com/p1.jpg=w1400-h900');
-      expect(curImgs[1].getAttribute('src')).toBe('https://example.com/p2.jpg=w1400-h900');
+      expect(itemAt(curImgs, 0).getAttribute('src')).toBe('https://example.com/p1.jpg=w1400-h900');
+      expect(itemAt(curImgs, 1).getAttribute('src')).toBe('https://example.com/p2.jpg=w1400-h900');
 
       act(() => { vi.advanceTimersByTime(850); });
 
       curImgs = container.querySelectorAll('.photo-layer.photo-current img.photo-diptych-item');
-      expect(curImgs[0].getAttribute('src')).toBe('https://example.com/p3.jpg=w1400-h900');
-      expect(curImgs[1].getAttribute('src')).toBe('https://example.com/p4.jpg=w1400-h900');
+      expect(itemAt(curImgs, 0).getAttribute('src')).toBe('https://example.com/p3.jpg=w1400-h900');
+      expect(itemAt(curImgs, 1).getAttribute('src')).toBe('https://example.com/p4.jpg=w1400-h900');
     } finally {
       window.Image = originalImage;
       window.ResizeObserver = originalResizeObserver;
@@ -1552,8 +1553,8 @@ describe('PhotoCarouselWidget component', () => {
       await vi.waitFor(() => {
         const nextImgs = container.querySelectorAll('.photo-layer.photo-next img.photo-diptych-item');
         expect(nextImgs.length).toBe(2);
-        expect(nextImgs[0].getAttribute('src')).toBe('https://example.com/p4.jpg=w1400-h900');
-        expect(nextImgs[1].getAttribute('src')).toBe('https://example.com/p5.jpg=w1400-h900');
+        expect(itemAt(nextImgs, 0).getAttribute('src')).toBe('https://example.com/p4.jpg=w1400-h900');
+        expect(itemAt(nextImgs, 1).getAttribute('src')).toBe('https://example.com/p5.jpg=w1400-h900');
       });
       act(() => { vi.advanceTimersByTime(850); });
 
@@ -1645,11 +1646,11 @@ describe('PhotoCarouselWidget component', () => {
         expect(diptychSlots.length).toBe(2);
         const playBtns = container.querySelectorAll('.photo-diptych-slot .photo-video-play-btn');
         expect(playBtns.length).toBe(2);
-        fireEvent.click(playBtns[1]);
+        fireEvent.click(itemAt(playBtns, 1));
         const videoInSlot2 = container.querySelector('.photo-diptych-slot video.photo-video-player');
         expect(videoInSlot2?.getAttribute('src')).toBe('https://example.com/v_portrait2=m22');
-        expect(diptychSlots[0].querySelector('img.photo-diptych-item')).not.toBeNull();
-        expect(diptychSlots[0].querySelector('.photo-video-play-btn')).not.toBeNull();
+        expect(itemAt(diptychSlots, 0).querySelector('img.photo-diptych-item')).not.toBeNull();
+        expect(itemAt(diptychSlots, 0).querySelector('.photo-video-play-btn')).not.toBeNull();
         fireEvent.ended(videoInSlot2!);
         expect(container.querySelector('.photo-diptych-slot video.photo-video-player')).toBeNull();
         expect(container.querySelectorAll('.photo-diptych-slot .photo-video-play-btn').length).toBe(2);
@@ -1694,7 +1695,7 @@ describe('PhotoCarouselWidget component', () => {
         const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
         act(() => { resizeCallback?.([{ contentRect: { width: 1400, height: 900 } }]); });
         const playBtns = container.querySelectorAll('.photo-diptych-slot .photo-video-play-btn');
-        fireEvent.click(playBtns[1]);
+        fireEvent.click(itemAt(playBtns, 1));
         expect(container.querySelector('.photo-diptych-slot video.photo-video-player')).not.toBeNull();
         act(() => { resizeCallback?.([{ contentRect: { width: 500, height: 800 } }]); });
         expect(container.querySelector('video.photo-video-player')).toBeNull();

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BufferedEvent } from '../sse/batch';
 import type { WidgetDetailResponse } from '../sse/types';
 import { needsHydrate, reduceEvents, useDisplayStore } from './index';
+import { entryAt, itemAt } from '../test-utils/lookup';
 
 const initial = useDisplayStore.getState();
 
@@ -68,7 +69,7 @@ describe('display store', () => {
 
       useDisplayStore.getState().applyEvents([widgetUpdate('w1', { n: 2 }, 'healthy', 'new')]);
 
-      const entry = useDisplayStore.getState().widgets.w1;
+      const entry = entryAt(useDisplayStore.getState().widgets, 'w1');
       expect(entry.data).toEqual({ n: 2 });
       expect(entry.timestamp).toBe('new');
       expect(entry.meta?.type).toBe('weather-forecast');
@@ -90,11 +91,11 @@ describe('display store', () => {
 
     it('keeps the data reference when only the state changes', () => {
       useDisplayStore.getState().applyEvents([widgetUpdate('w1', { list: [1] }, 'healthy')]);
-      const data = useDisplayStore.getState().widgets.w1.data;
+      const data = entryAt(useDisplayStore.getState().widgets, 'w1').data;
 
       useDisplayStore.getState().applyEvents([widgetUpdate('w1', { list: [1] }, 'degraded')]);
 
-      const entry = useDisplayStore.getState().widgets.w1;
+      const entry = entryAt(useDisplayStore.getState().widgets, 'w1');
       expect(entry.state).toBe('degraded');
       expect(entry.data).toBe(data);
     });
@@ -126,7 +127,7 @@ describe('display store', () => {
       expect(listener).toHaveBeenCalledTimes(1);
       const state = useDisplayStore.getState();
       expect(state.screen.totalScreens).toBe(2);
-      expect(state.widgets.b.data).toBe(2);
+      expect(entryAt(state.widgets, 'b').data).toBe(2);
       expect(state.header.timezone).toBe('America/New_York');
       expect(state.audio).toEqual({ volume: 40, muted: true });
       expect(state.theme.theme).toBe('night');
@@ -232,12 +233,12 @@ describe('display store', () => {
       // A reload between the calls makes the second a separate fetch rather than a shared one.
       useDisplayStore.setState({ widgetReloads: { 'weather-forecast': 1 } });
       const second = useDisplayStore.getState().hydrateWidget('w');
-      resolvers[1](new Response(JSON.stringify(detail({ widget_id: 'w', data: 'new' })), { status: 200 }));
+      itemAt(resolvers, 1)(new Response(JSON.stringify(detail({ widget_id: 'w', data: 'new' })), { status: 200 }));
       await second;
-      resolvers[0](new Response(JSON.stringify(detail({ widget_id: 'w', data: 'old' })), { status: 200 }));
+      itemAt(resolvers, 0)(new Response(JSON.stringify(detail({ widget_id: 'w', data: 'old' })), { status: 200 }));
       await first;
 
-      expect(useDisplayStore.getState().widgets.w.data).toBe('new');
+      expect(entryAt(useDisplayStore.getState().widgets, 'w').data).toBe('new');
     });
 
     it('shares one fetch between concurrent calls while widgetReloads is unchanged', async () => {
@@ -249,7 +250,7 @@ describe('display store', () => {
 
       expect(first).toBe(second);
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(useDisplayStore.getState().widgets.w.meta?.type).toBe('weather-forecast');
+      expect(entryAt(useDisplayStore.getState().widgets, 'w').meta?.type).toBe('weather-forecast');
 
       // The entry is gone once settled: a later call fetches again.
       await useDisplayStore.getState().hydrateWidget('w');
@@ -289,7 +290,7 @@ describe('display store', () => {
       resolveFetch(new Response(JSON.stringify(detail({ widget_id: 'w', data: { stale: true }, state: 'healthy', timestamp: 'fetch-t' })), { status: 200 }));
       await pending;
 
-      const entry = useDisplayStore.getState().widgets.w;
+      const entry = entryAt(useDisplayStore.getState().widgets, 'w');
       expect(entry.data).toEqual({ live: true });
       expect(entry.state).toBe('degraded');
       expect(entry.timestamp).toBe('stream-t');
@@ -312,8 +313,8 @@ describe('display store', () => {
 
       useDisplayStore.getState().applyEvents([widgetUpdate('cal', { events: 2 })]);
       await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-      await vi.waitFor(() => expect(useDisplayStore.getState().widgets.cal.viewModel).toEqual({ week: 'new' }));
-      expect(useDisplayStore.getState().widgets.cal.data).toEqual({ events: 2 });
+      await vi.waitFor(() => expect(entryAt(useDisplayStore.getState().widgets, 'cal').viewModel).toEqual({ week: 'new' }));
+      expect(entryAt(useDisplayStore.getState().widgets, 'cal').data).toEqual({ events: 2 });
     });
 
     it('starts a fresh fetch when a calendar-grid widget.update lands while a hydrate is in flight', async () => {
@@ -344,12 +345,12 @@ describe('display store', () => {
       expect(fetchMock).toHaveBeenLastCalledWith('api/widgets/cal', expect.anything());
 
       // The newer fetch resolves first, then the older one lands and must be dropped.
-      resolvers[1](calendarDetail({ week: 'second' }));
-      await vi.waitFor(() => expect(useDisplayStore.getState().widgets.cal.viewModel).toEqual({ week: 'second' }));
-      resolvers[0](calendarDetail({ week: 'first' }));
+      itemAt(resolvers, 1)(calendarDetail({ week: 'second' }));
+      await vi.waitFor(() => expect(entryAt(useDisplayStore.getState().widgets, 'cal').viewModel).toEqual({ week: 'second' }));
+      itemAt(resolvers, 0)(calendarDetail({ week: 'first' }));
       await pending;
 
-      expect(useDisplayStore.getState().widgets.cal.viewModel).toEqual({ week: 'second' });
+      expect(entryAt(useDisplayStore.getState().widgets, 'cal').viewModel).toEqual({ week: 'second' });
     });
 
     it('does not refetch widget types outside REFETCH_ON_UPDATE', async () => {

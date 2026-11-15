@@ -19,8 +19,8 @@ export interface RawCalendarEvent {
   end?: string | Date;
   allDay?: boolean;
   all_day?: boolean;
-  date?: string;
-  dayDate?: string;
+  date?: string | undefined;
+  dayDate?: string | undefined;
   location?: string;
   [key: string]: unknown;
 }
@@ -88,8 +88,9 @@ export function resolveNextUpEvent(events: readonly RawCalendarEvent[], now: Dat
   allDayToday.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
   upcomingAllDay.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
 
-  if (ongoingTimed.length > 0) {
-    const ev = ongoingTimed[0];
+  const ongoingTimedFirst = ongoingTimed[0];
+  if (ongoingTimedFirst) {
+    const ev = ongoingTimedFirst;
     return {
       event: ev.raw, title: ev.title, label: 'NOW',
       timeStr: formatTime(ev.startDate, tz),
@@ -104,8 +105,9 @@ export function resolveNextUpEvent(events: readonly RawCalendarEvent[], now: Dat
     return ep.year === nowParts.year && ep.month === nowParts.month && ep.day === nowParts.day;
   });
 
-  if (todayUpcoming.length > 0) {
-    const ev = todayUpcoming[0];
+  const todayUpcomingFirst = todayUpcoming[0];
+  if (todayUpcomingFirst) {
+    const ev = todayUpcomingFirst;
     return {
       event: ev.raw, title: ev.title, label: 'NEXT',
       timeStr: formatTime(ev.startDate, tz),
@@ -114,13 +116,15 @@ export function resolveNextUpEvent(events: readonly RawCalendarEvent[], now: Dat
     };
   }
 
-  if (allDayToday.length > 0) {
-    const ev = allDayToday[0];
+  const allDayTodayFirst = allDayToday[0];
+  if (allDayTodayFirst) {
+    const ev = allDayTodayFirst;
     return { event: ev.raw, title: ev.title, label: 'TODAY', timeStr: 'All Day', countdown: '', isNow: false };
   }
 
-  if (upcomingTimed.length > 0) {
-    const ev = upcomingTimed[0];
+  const upcomingTimedFirst = upcomingTimed[0];
+  if (upcomingTimedFirst) {
+    const ev = upcomingTimedFirst;
     return {
       event: ev.raw, title: ev.title, label: 'NEXT',
       timeStr: `${formatWeekday(ev.startDate, tz)} ${formatTime(ev.startDate, tz)}`,
@@ -129,8 +133,9 @@ export function resolveNextUpEvent(events: readonly RawCalendarEvent[], now: Dat
     };
   }
 
-  if (upcomingAllDay.length > 0) {
-    const ev = upcomingAllDay[0];
+  const upcomingAllDayFirst = upcomingAllDay[0];
+  if (upcomingAllDayFirst) {
+    const ev = upcomingAllDayFirst;
     return {
       event: ev.raw, title: ev.title, label: formatWeekday(ev.startDate, tz).toUpperCase(),
       timeStr: 'All Day', countdown: '', isNow: false,
@@ -232,9 +237,9 @@ export interface PlexNowPlayingSession {
   id: string | number;
   title: string;
   subtitle?: string;
-  thumb?: string;
+  thumb?: string | undefined;
   state?: 'playing' | 'paused' | 'stopped';
-  type?: string;
+  type?: string | undefined;
   apiBase?: string;
 }
 
@@ -293,6 +298,11 @@ export interface HaLiveIslandActivity {
   actionPayload: ActionPayload;
 }
 
+/** Drops any fractional-seconds suffix ("05.123" -> "05"). */
+function wholeSeconds(value: string): string {
+  return value.split('.', 1)[0] ?? value;
+}
+
 export function formatTimerCountdown(attributes: Record<string, unknown> | undefined, now: Date): string {
   if (attributes && typeof attributes.finishes_at === 'string' && attributes.finishes_at.trim()) {
     const finishMs = Date.parse(attributes.finishes_at);
@@ -309,10 +319,11 @@ export function formatTimerCountdown(attributes: Record<string, unknown> | undef
   if (attributes && typeof attributes.remaining === 'string' && attributes.remaining.trim()) {
     const raw = attributes.remaining.trim();
     const parts = raw.split(':');
-    if (parts.length === 3 && (parts[0] === '0' || parts[0] === '00')) {
-      return `${Number(parts[1])}:${parts[2].split('.')[0].padStart(2, '0')} left`;
+    const [h, m, s] = parts;
+    if (parts.length === 3 && (h === '0' || h === '00') && m !== undefined && s !== undefined) {
+      return `${Number(m)}:${wholeSeconds(s).padStart(2, '0')} left`;
     }
-    return `${raw.split('.')[0]} left`;
+    return `${wholeSeconds(raw)} left`;
   }
   return 'Timer active';
 }
@@ -338,10 +349,13 @@ function pickSportIcon(league: string, sport: string): string {
   return SPORT_ICONS.find(([re]) => re.test(key))?.[1] ?? '🏆';
 }
 
-function matchesSportsAllowlist(allowlist: string[], candidates: string[], entityId: string): boolean {
+/** [league, sport, team, opponent, teamName, opponentName] */
+type SportsCandidates = [string, string, string, string, string, string];
+
+function matchesSportsAllowlist(allowlist: string[], candidates: SportsCandidates, entityId: string): boolean {
   if (allowlist.length === 0) return true;
   const uEntity = entityId.toUpperCase();
-  const [uLeague, uSport, uTeam, uOpp, uTeamName, uOppName] = candidates.map((c) => c.toUpperCase());
+  const [uLeague, uSport, uTeam, uOpp, uTeamName, uOppName] = candidates.map((c) => c.toUpperCase()) as SportsCandidates; // map preserves the tuple length
   return allowlist.some((token) => {
     if (token === '*') return true;
     if (token.includes(':')) {
@@ -368,9 +382,10 @@ function formatSportsTitleAndSub(ent: EntityState, entityId: string, attrs: Reco
 function tryBuildSportsActivity(widgetId: string, entityId: string, ent: EntityState, st: string, allowlist: string[]): HaLiveIslandActivity | null {
   if (!['in', 'in_progress', 'live'].includes(st)) return null;
   const attrs = (ent.attributes ?? {}) as Record<string, unknown>;
-  const [team, opp, league, sport] = [attrs.team_abbr, attrs.opponent_abbr, attrs.league, attrs.sport].map((v) => String(v ?? '').trim());
+  const text = (v: unknown): string => String(v ?? '').trim();
+  const [team, opp, league, sport] = [text(attrs.team_abbr), text(attrs.opponent_abbr), text(attrs.league), text(attrs.sport)];
   if (!entityId.toLowerCase().startsWith('sensor.team_tracker_') && !team && !opp && !league && !sport) return null;
-  const [tName, oName] = [attrs.team_name ?? attrs.friendly_name, attrs.opponent_name].map((v) => String(v ?? '').trim());
+  const [tName, oName] = [text(attrs.team_name ?? attrs.friendly_name), text(attrs.opponent_name)];
   if (!matchesSportsAllowlist(allowlist, [league, sport, team, opp, tName, oName], entityId)) return null;
   const [title, subtitle] = formatSportsTitleAndSub(ent, entityId, attrs, team, opp, league);
   const watchEntity = String(attrs.watch_entity_id || 'script.watch_live_sports').trim();

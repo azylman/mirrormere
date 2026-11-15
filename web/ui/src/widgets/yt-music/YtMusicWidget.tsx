@@ -22,7 +22,7 @@ export type { MusicState };
 function MediaTile({
   title, sub, badge, thumb, isArtist, isPlaying, dataAttrs, onClick,
 }: {
-  title: string; sub?: string; badge?: string; thumb?: string; isArtist?: boolean;
+  title: string; sub?: string; badge?: string; thumb?: string | undefined; isArtist?: boolean;
   isPlaying?: boolean; dataAttrs?: Record<string, string | number | undefined>; onClick: () => void;
 }) {
   'use no memo';
@@ -54,7 +54,7 @@ function MediaTile({
 }
 
 function YtMusicHeader({ accounts, activeAccountId, isLocalSpeaker, onSelectAccount, onToggleSpeaker }: {
-  accounts: AccountProfile[]; activeAccountId?: string; isLocalSpeaker: boolean;
+  accounts: AccountProfile[]; activeAccountId?: string | undefined; isLocalSpeaker: boolean;
   onSelectAccount: (id: string) => void; onToggleSpeaker: () => void;
 }) {
   'use no memo';
@@ -160,7 +160,7 @@ function YtMusicDiscovery({
 function YtMusicMediaGrid({
   activeTab, searching, queue, queueIndex, searchResults, onPlayIndex, onPlayResult,
 }: {
-  activeTab: YtMusicTab; searching: boolean; queue: QueueItem[]; queueIndex?: number;
+  activeTab: YtMusicTab; searching: boolean; queue: QueueItem[]; queueIndex?: number | undefined;
   searchResults: SearchResultItem[]; onPlayIndex: (idx: number) => void; onPlayResult: (item: SearchResultItem) => void;
 }) {
   'use no memo';
@@ -366,14 +366,14 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
       return;
     }
 
-    if (stateData.playlists && stateData.playlists.length > 0) {
-      const pl = stateData.playlists[0];
+    const pl = stateData.playlists?.[0];
+    if (pl) {
       await postPlay({ playlist_id: pl.playlist_id, playlist_title: pl.title, shuffle: true });
       return;
     }
 
-    const sugList = resolveSuggestions(stateData);
-    await handlePlaySuggestion(sugList[0]);
+    const suggestion = resolveSuggestions(stateData)[0];
+    if (suggestion) await handlePlaySuggestion(suggestion);
   };
 
   const np = stateData.now_playing || {};

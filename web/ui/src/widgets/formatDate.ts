@@ -39,8 +39,7 @@ function extractHourMinute(dtf: Intl.DateTimeFormat, d: Date): { hour: number; m
   const parts = dtf.formatToParts(d);
   let hour = -1;
   let minute = 0;
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
+  for (const p of parts) {
     if (p.type === 'hour') hour = Number(p.value);
     else if (p.type === 'minute') minute = Number(p.value);
   }
@@ -183,8 +182,7 @@ function extractDateParts(
   let month = -1;
   let day = -1;
   let weekdayIdx = -1;
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
+  for (const p of parts) {
     if (p.type === 'year') year = Number(p.value);
     else if (p.type === 'month') month = Number(p.value);
     else if (p.type === 'day') day = Number(p.value);
@@ -343,8 +341,8 @@ export function relDate(refTime: Date, value: unknown, tz?: string): string {
   ) {
     return String(value);
   }
-  const [ry, rm, rd] = refDateStr.split('-').map(Number);
-  const [vy, vm, vd] = valDateStr.split('-').map(Number);
+  const [ry = NaN, rm = NaN, rd = NaN] = refDateStr.split('-').map(Number);
+  const [vy = NaN, vm = NaN, vd = NaN] = valDateStr.split('-').map(Number);
   const refUtc = Date.UTC(ry, rm - 1, rd);
   const valUtc = Date.UTC(vy, vm - 1, vd);
   const diffDays = Math.round((valUtc - refUtc) / (24 * 60 * 60 * 1000));

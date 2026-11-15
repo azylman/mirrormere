@@ -52,8 +52,9 @@ export const HomeAssistantWidget = memo(function HomeAssistantWidget({ id }: Wid
       setInFlight((prev) => ({ ...prev, [entId]: true }));
     }
     setActionError(null);
-    if (entId && entities[entId]) {
-      setOverrides((prev) => ({ ...prev, [entId]: applyOptimisticUpdate(entities[entId], payload.domain, payload.service, payload.service_data) }));
+    const entity = entId ? entities[entId] : undefined;
+    if (entId && entity) {
+      setOverrides((prev) => ({ ...prev, [entId]: applyOptimisticUpdate(entity, payload.domain, payload.service, payload.service_data) }));
     }
     try {
       await dispatchWidgetAction(id, payload);
@@ -262,7 +263,7 @@ function renderButtonCard(card: LovelaceCard, entityId: string, ctx: Ctx, key?: 
     if (act?.action) {
       if (act.action === 'call-service' || act.action === 'call_service') {
         const full = String(act.service || '');
-        const [dom, srv] = full.includes('.') ? full.split('.') : [domain, full];
+        const [dom, srv = ''] = full.includes('.') ? full.split('.') : [domain, full];
         void ctx.sendAction({ domain: dom || domain, service: srv, entity_id: resolvedEntityId, service_data: (svc || dat || {}) as Record<string, unknown> });
         return;
       }

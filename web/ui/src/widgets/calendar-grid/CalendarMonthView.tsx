@@ -4,7 +4,7 @@ import type { FamilyEvent, FamilyMember, FamilyMonthViewModel, ViewMode } from '
 
 export interface CalendarMonthViewProps {
   activeView: ViewMode;
-  monthVM?: FamilyMonthViewModel;
+  monthVM?: FamilyMonthViewModel | undefined;
   members: FamilyMember[];
   onOpenModal: (ev: FamilyEvent, date: string) => void;
   onSelectDay?: (date: string) => void;
@@ -14,7 +14,7 @@ export interface CalendarMonthViewProps {
 }
 
 function resolveMonthDaySpecial(
-  day: { date: string; events?: FamilyEvent[]; event_title?: string; special_label?: string },
+  day: { date: string; events?: FamilyEvent[] | undefined; event_title?: string | undefined; special_label?: string | undefined },
   members: FamilyMember[],
   celebrateSpecialDays: boolean,
   birthdays?: unknown,
@@ -117,10 +117,11 @@ export function CalendarMonthView({
                 }${specialClass}`}
                 data-date={day.date}
                 data-special-day={specialStatus || undefined}
-                data-event-id={day.events && day.events.length > 0 ? day.events[0].id : undefined}
+                data-event-id={day.events?.[0]?.id}
                 onClick={() => {
-                  if (day.events && day.events.length > 0) {
-                    onOpenModal(day.events[0], day.date);
+                  const firstEvent = day.events?.[0];
+                  if (firstEvent) {
+                    onOpenModal(firstEvent, day.date);
                   } else if (day.event_title) {
                     onOpenModal({ id: day.date, title: day.event_title }, day.date);
                   }

@@ -5,9 +5,9 @@ import { postTouchEvent } from './api';
 
 export interface UseTouchForwardingOptions {
   enabled?: boolean;
-  remoteUrl?: string;
+  remoteUrl?: string | undefined;
   mediaRef: React.RefObject<HTMLElement | null>;
-  customFetch?: typeof fetch;
+  customFetch?: typeof fetch | undefined;
   throttleMs?: number;
 }
 

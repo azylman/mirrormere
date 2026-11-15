@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createEventBatcher, type BufferedEvent } from './batch';
+import { itemAt } from '../test-utils/lookup';
 
 const widget = (id: string, value: number): BufferedEvent => ({
   type: 'widget.update',
@@ -21,7 +22,7 @@ describe('createEventBatcher', () => {
 
     timer.run?.();
     expect(apply).toHaveBeenCalledTimes(1);
-    expect(apply.mock.calls[0][0]).toHaveLength(3);
+    expect(itemAt(apply.mock.calls, 0)[0]).toHaveLength(3);
   });
 
   it('flushes immediately on theme.update, the last event of a hydration batch', () => {
@@ -32,7 +33,7 @@ describe('createEventBatcher', () => {
     batcher.push({ type: 'theme.update', data: { theme: 'day' } });
 
     expect(apply).toHaveBeenCalledTimes(1);
-    expect(apply.mock.calls[0][0].map((e: BufferedEvent) => e.type)).toEqual(['widget.update', 'theme.update']);
+    expect(itemAt(apply.mock.calls, 0)[0].map((e: BufferedEvent) => e.type)).toEqual(['widget.update', 'theme.update']);
   });
 
   it('does nothing when the scheduled flush finds an empty buffer', () => {

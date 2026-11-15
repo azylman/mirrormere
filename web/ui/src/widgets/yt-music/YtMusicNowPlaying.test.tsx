@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { YtMusicNowPlaying } from './YtMusicNowPlaying';
+import { itemAt } from '../../test-utils/lookup';
 
 describe('YtMusicNowPlaying', () => {
   afterEach(() => {
@@ -52,8 +53,8 @@ describe('YtMusicNowPlaying', () => {
 
     const queueRows = container.querySelectorAll('.np-queue-row');
     expect(queueRows.length).toBe(2);
-    expect(queueRows[0].classList.contains('active')).toBe(true);
-    expect(queueRows[0].querySelector('.np-queue-playing-indicator')).not.toBeNull();
+    expect(itemAt(queueRows, 0).classList.contains('active')).toBe(true);
+    expect(itemAt(queueRows, 0).querySelector('.np-queue-playing-indicator')).not.toBeNull();
   });
 
   it('calls transport control callbacks and browse library callback', () => {
@@ -82,7 +83,7 @@ describe('YtMusicNowPlaying', () => {
   it('handles queue item selection via click and keyboard (Enter / Space)', () => {
     const { container } = render(<YtMusicNowPlaying {...baseProps} />);
 
-    const secondRow = container.querySelectorAll('.np-queue-row')[1];
+    const secondRow = itemAt(container.querySelectorAll('.np-queue-row'), 1);
     fireEvent.click(secondRow);
     expect(baseProps.onPlayQueueIndex).toHaveBeenCalledWith(1);
 

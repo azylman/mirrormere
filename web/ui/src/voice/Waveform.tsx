@@ -100,7 +100,7 @@ export interface LevelSourceLike {
 }
 
 export interface WaveformMouthOptions {
-  sseClient?: { on?: (eventType: string, callback: (data: unknown) => void) => void } | null;
+  sseClient?: { on?: (eventType: string, callback: (data: unknown) => void) => void } | null | undefined;
   levelsUrl?: string;
   gain?: number;
   eventSourceFactory?: ((url: string) => LevelSourceLike | EventSource) | null;
