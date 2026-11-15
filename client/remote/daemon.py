@@ -9,13 +9,14 @@ Manages:
 """
 
 import asyncio
+import contextlib
 import glob
 import logging
 import os
 import signal
 import struct
 import sys
-from typing import Callable, List, Optional, Set
+from collections.abc import Callable
 
 try:
     from aiohttp import web
@@ -23,6 +24,7 @@ except ImportError:
     web = None
 
 if web:
+
     @web.middleware
     async def cors_middleware(request, handler):
         if request.method == "OPTIONS":
@@ -44,11 +46,11 @@ else:
 try:
     from config import RemoteConfig, load_config
     from coords import normalize_coordinates, to_hid_digitizer
-    from keycodes import lookup_consumer_key, lookup_remote_key, resolve_key_dispatch
+    from keycodes import resolve_key_dispatch
 except ImportError:
     from .config import RemoteConfig, load_config
     from .coords import normalize_coordinates, to_hid_digitizer
-    from .keycodes import lookup_consumer_key, lookup_remote_key, resolve_key_dispatch
+    from .keycodes import resolve_key_dispatch
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("mirrormere-remote")
@@ -65,83 +67,153 @@ ADVERT_NAME = _default_config.advert_name
 AUTO_CONFIRM_PAIRING = _default_config.auto_confirm_pairing
 
 # Multi-Report HID Descriptor (Mouse + Touch + Consumer Control)
-REPORT_MAP = bytes([
-    # Report 1: Relative Mouse
-    0x05, 0x01,        # Usage Page (Generic Desktop)
-    0x09, 0x02,        # Usage (Mouse)
-    0xa1, 0x01,        # Collection (Application)
-    0x85, 0x01,        #   Report ID (1)
-    0x09, 0x01,        #   Usage (Pointer)
-    0xa1, 0x00,        #   Collection (Physical)
-    0x05, 0x09,        #     Usage Page (Button)
-    0x19, 0x01,        #     Usage Minimum (1)
-    0x29, 0x03,        #     Usage Maximum (3)
-    0x15, 0x00,        #     Logical Minimum (0)
-    0x25, 0x01,        #     Logical Maximum (1)
-    0x95, 0x03,        #     Report Count (3)
-    0x75, 0x01,        #     Report Size (1)
-    0x81, 0x02,        #     Input (Data,Var,Abs)
-    0x95, 0x01,        #     Report Count (1)
-    0x75, 0x05,        #     Report Size (5)
-    0x81, 0x03,        #     Input (Cnst,Var,Abs)
-    0x05, 0x01,        #     Usage Page (Generic Desktop)
-    0x09, 0x30,        #     Usage (X)
-    0x09, 0x31,        #     Usage (Y)
-    0x15, 0x81,        #     Logical Minimum (-127)
-    0x25, 0x7f,        #     Logical Maximum (127)
-    0x75, 0x08,        #     Report Size (8)
-    0x95, 0x02,        #     Report Count (2)
-    0x81, 0x06,        #     Input (Data,Var,Rel)
-    0xc0,              #   End Collection
-    0xc0,              # End Collection
+REPORT_MAP = bytes(
+    [
+        # Report 1: Relative Mouse
+        0x05,
+        0x01,  # Usage Page (Generic Desktop)
+        0x09,
+        0x02,  # Usage (Mouse)
+        0xA1,
+        0x01,  # Collection (Application)
+        0x85,
+        0x01,  #   Report ID (1)
+        0x09,
+        0x01,  #   Usage (Pointer)
+        0xA1,
+        0x00,  #   Collection (Physical)
+        0x05,
+        0x09,  #     Usage Page (Button)
+        0x19,
+        0x01,  #     Usage Minimum (1)
+        0x29,
+        0x03,  #     Usage Maximum (3)
+        0x15,
+        0x00,  #     Logical Minimum (0)
+        0x25,
+        0x01,  #     Logical Maximum (1)
+        0x95,
+        0x03,  #     Report Count (3)
+        0x75,
+        0x01,  #     Report Size (1)
+        0x81,
+        0x02,  #     Input (Data,Var,Abs)
+        0x95,
+        0x01,  #     Report Count (1)
+        0x75,
+        0x05,  #     Report Size (5)
+        0x81,
+        0x03,  #     Input (Cnst,Var,Abs)
+        0x05,
+        0x01,  #     Usage Page (Generic Desktop)
+        0x09,
+        0x30,  #     Usage (X)
+        0x09,
+        0x31,  #     Usage (Y)
+        0x15,
+        0x81,  #     Logical Minimum (-127)
+        0x25,
+        0x7F,  #     Logical Maximum (127)
+        0x75,
+        0x08,  #     Report Size (8)
+        0x95,
+        0x02,  #     Report Count (2)
+        0x81,
+        0x06,  #     Input (Data,Var,Rel)
+        0xC0,  #   End Collection
+        0xC0,  # End Collection
+        # Report 2: Absolute Touch Screen (Digitizer)
+        0x05,
+        0x0D,  # Usage Page (Digitizer)
+        0x09,
+        0x04,  # Usage (Touch Screen)
+        0xA1,
+        0x01,  # Collection (Application)
+        0x85,
+        0x02,  #   Report ID (2)
+        0x09,
+        0x22,  #   Usage (Finger)
+        0xA1,
+        0x02,  #   Collection (Logical)
+        0x09,
+        0x42,  #     Usage (Tip Switch)
+        0x09,
+        0x32,  #     Usage (In Range)
+        0x15,
+        0x00,  #     Logical Minimum (0)
+        0x25,
+        0x01,  #     Logical Maximum (1)
+        0x75,
+        0x01,  #     Report Size (1)
+        0x95,
+        0x02,  #     Report Count (2)
+        0x81,
+        0x02,  #     Input (Data,Var,Abs)
+        0x95,
+        0x01,  #     Report Count (1)
+        0x75,
+        0x06,  #     Report Size (6)
+        0x81,
+        0x03,  #     Input (Cnst,Var,Abs)
+        0x05,
+        0x01,  #     Usage Page (Generic Desktop)
+        0x09,
+        0x30,  #     Usage (X)
+        0x15,
+        0x00,  #     Logical Minimum (0)
+        0x26,
+        0xFF,
+        0x7F,  #     Logical Maximum (32767)
+        0x75,
+        0x10,  #     Report Size (16)
+        0x95,
+        0x01,  #     Report Count (1)
+        0x81,
+        0x02,  #     Input (Data,Var,Abs)
+        0x09,
+        0x31,  #     Usage (Y)
+        0x15,
+        0x00,  #     Logical Minimum (0)
+        0x26,
+        0xFF,
+        0x47,  #     Logical Maximum (18431) - 16:9 Aspect Ratio (32768 x 18432)
+        0x75,
+        0x10,  #     Report Size (16)
+        0x95,
+        0x01,  #     Report Count (1)
+        0x81,
+        0x02,  #     Input (Data,Var,Abs)
+        0xC0,  #   End Collection
+        0xC0,  # End Collection
+        # Report 3: Consumer Keys (Back, Home, Media, Volume)
+        0x05,
+        0x0C,  # Usage Page (Consumer)
+        0x09,
+        0x01,  # Usage (Consumer Control)
+        0xA1,
+        0x01,  # Collection (Application)
+        0x85,
+        0x03,  #   Report ID (3)
+        0x19,
+        0x00,  #   Usage Minimum (0)
+        0x2A,
+        0x9C,
+        0x02,  #   Usage Maximum (0x029C)
+        0x15,
+        0x00,  #   Logical Minimum (0)
+        0x26,
+        0x9C,
+        0x02,  #   Logical Maximum (0x029C)
+        0x95,
+        0x01,  #   Report Count (1)
+        0x75,
+        0x10,  #   Report Size (16)
+        0x81,
+        0x00,  #   Input (Data,Ary,Abs)
+        0xC0,  # End Collection
+    ]
+)
 
-    # Report 2: Absolute Touch Screen (Digitizer)
-    0x05, 0x0d,        # Usage Page (Digitizer)
-    0x09, 0x04,        # Usage (Touch Screen)
-    0xa1, 0x01,        # Collection (Application)
-    0x85, 0x02,        #   Report ID (2)
-    0x09, 0x22,        #   Usage (Finger)
-    0xa1, 0x02,        #   Collection (Logical)
-    0x09, 0x42,        #     Usage (Tip Switch)
-    0x09, 0x32,        #     Usage (In Range)
-    0x15, 0x00,        #     Logical Minimum (0)
-    0x25, 0x01,        #     Logical Maximum (1)
-    0x75, 0x01,        #     Report Size (1)
-    0x95, 0x02,        #     Report Count (2)
-    0x81, 0x02,        #     Input (Data,Var,Abs)
-    0x95, 0x01,        #     Report Count (1)
-    0x75, 0x06,        #     Report Size (6)
-    0x81, 0x03,        #     Input (Cnst,Var,Abs)
-    0x05, 0x01,        #     Usage Page (Generic Desktop)
-    0x09, 0x30,        #     Usage (X)
-    0x15, 0x00,        #     Logical Minimum (0)
-    0x26, 0xff, 0x7f,  #     Logical Maximum (32767)
-    0x75, 0x10,        #     Report Size (16)
-    0x95, 0x01,        #     Report Count (1)
-    0x81, 0x02,        #     Input (Data,Var,Abs)
-    0x09, 0x31,        #     Usage (Y)
-    0x15, 0x00,        #     Logical Minimum (0)
-    0x26, 0xff, 0x47,  #     Logical Maximum (18431) - 16:9 Aspect Ratio (32768 x 18432)
-    0x75, 0x10,        #     Report Size (16)
-    0x95, 0x01,        #     Report Count (1)
-    0x81, 0x02,        #     Input (Data,Var,Abs)
-    0xc0,              #   End Collection
-    0xc0,              # End Collection
-
-    # Report 3: Consumer Keys (Back, Home, Media, Volume)
-    0x05, 0x0c,        # Usage Page (Consumer)
-    0x09, 0x01,        # Usage (Consumer Control)
-    0xa1, 0x01,        # Collection (Application)
-    0x85, 0x03,        #   Report ID (3)
-    0x19, 0x00,        #   Usage Minimum (0)
-    0x2a, 0x9c, 0x02,  #   Usage Maximum (0x029C)
-    0x15, 0x00,        #   Logical Minimum (0)
-    0x26, 0x9c, 0x02,  #   Logical Maximum (0x029C)
-    0x95, 0x01,        #   Report Count (1)
-    0x75, 0x10,        #   Report Size (16)
-    0x81, 0x00,        #   Input (Data,Ary,Abs)
-    0xc0               # End Collection
-])
 
 class AndroidRemoteHelper:
     """Manages Wi-Fi Android TV Remote v2 connection and command dispatching."""
@@ -179,6 +251,7 @@ class AndroidRemoteHelper:
 
         try:
             from androidtvremote2.androidtv_remote import AndroidTVRemote
+
             self.remote = AndroidTVRemote(
                 client_name="Mirrormere Remote",
                 certfile=self.cert_file,
@@ -197,14 +270,18 @@ class AndroidRemoteHelper:
                 await self.remote.async_connect()
                 self.connected = True
                 backoff = 1.0
-                logger.info("Android TV Remote connected successfully (power=%s)", self.remote.is_on)
+                logger.info(
+                    "Android TV Remote connected successfully (power=%s)", self.remote.is_on
+                )
 
                 # Keep connection alive while connected
                 while self.remote._remote_message_protocol:
                     await asyncio.sleep(5)
             except Exception as e:
                 self.connected = False
-                logger.warning("Android TV Remote connection error: %s (retry in %.1fs)", e, backoff)
+                logger.warning(
+                    "Android TV Remote connection error: %s (retry in %.1fs)", e, backoff
+                )
                 await asyncio.sleep(backoff)
                 backoff = min(30.0, backoff * 1.5)
 
@@ -252,17 +329,28 @@ class AndroidRemoteHelper:
             logger.error("Failed to stream voice to Android TV Remote: %s", e)
             return False
 
+
+# D-Bus type signatures. dbus-next reads method and property signatures from
+# the annotations, so these must stay plain strings; naming them keeps linters
+# from parsing a bare "o" or "u" annotation as an undefined forward reference.
+DBUS_INT16 = "n"
+DBUS_UINT16 = "q"
+DBUS_UINT32 = "u"
+DBUS_STRING = "s"
+DBUS_OBJECT_PATH = "o"
+
 # Initialize BlueZ GATT and Agent if bluez-peripheral is installed
 try:
-    from bluez_peripheral.util import get_message_bus, Adapter
     from bluez_peripheral.advert import Advertisement
-    from bluez_peripheral.agent import BaseAgent, AgentCapability
+    from bluez_peripheral.agent import AgentCapability, BaseAgent
+    from bluez_peripheral.gatt.characteristic import CharacteristicFlags, characteristic
+    from bluez_peripheral.gatt.descriptor import DescriptorFlags, descriptor
     from bluez_peripheral.gatt.service import Service, ServiceCollection
-    from bluez_peripheral.gatt.characteristic import characteristic, CharacteristicFlags
-    from bluez_peripheral.gatt.descriptor import descriptor, DescriptorFlags
-    from dbus_next.service import dbus_property, method
+    from bluez_peripheral.util import Adapter, get_message_bus
     from dbus_next.constants import PropertyAccess
     from dbus_next.errors import DBusError
+    from dbus_next.service import dbus_property, method
+
     HAS_BLUEZ_PERIPHERAL = True
 except ImportError:
     logger.warning("bluez-peripheral not installed; running in mock/test mode.")
@@ -298,21 +386,27 @@ except ImportError:
             class CharMock:
                 def __init__(self, fn):
                     self.fn = fn
+
                 def __call__(self, *args, **kwargs):
                     return self.fn(*args, **kwargs)
+
                 def setter(self, fn):
                     return self
+
             return CharMock(f)
+
         return decorator
 
     def descriptor(uuid, char):
         def decorator(f):
             return f
+
         return decorator
 
     def method(*args, **kwargs):
         def decorator(f):
             return f
+
         return decorator
 
     def dbus_property(*args, **kwargs):
@@ -320,11 +414,15 @@ except ImportError:
             class PropMock:
                 def __init__(self, fn):
                     self.fn = fn
+
                 def __call__(self, *args, **kwargs):
                     return self.fn(*args, **kwargs)
+
                 def setter(self, fn):
                     return self
+
             return PropMock(f)
+
         return decorator
 
     class PropertyAccess:
@@ -454,15 +552,15 @@ class HIDService(Service):
 
 
 if Advertisement:
+
     class KioskAdvertisement(Advertisement):
         @dbus_property(PropertyAccess.READWRITE)
-        def TxPower(self) -> "n":
+        def TxPower(self) -> DBUS_INT16:
             return 0
 
         @TxPower.setter
-        def TxPower(self, val: "n"):
+        def TxPower(self, val: DBUS_INT16):
             pass
-
 
     class FastKioskAdvertisement(KioskAdvertisement):
         def __init__(
@@ -477,11 +575,11 @@ if Advertisement:
             super().__init__(*args, **kwargs)
 
         @dbus_property(PropertyAccess.READ)
-        def MinInterval(self) -> "u":
+        def MinInterval(self) -> DBUS_UINT32:
             return self._min_interval
 
         @dbus_property(PropertyAccess.READ)
-        def MaxInterval(self) -> "u":
+        def MaxInterval(self) -> DBUS_UINT32:
             return self._max_interval
 else:
     KioskAdvertisement = None
@@ -495,12 +593,12 @@ class PairingAgent(BaseAgent):
         self,
         remote_helper: AndroidRemoteHelper,
         auto_confirm: bool = True,
-        on_trusted: Optional[Callable[[str], None]] = None,
+        on_trusted: Callable[[str], None] | None = None,
     ):
         self.remote_helper = remote_helper
         self.auto_confirm = auto_confirm
         self.on_trusted = on_trusted
-        self._trusting_macs: Set[str] = set()
+        self._trusting_macs: set[str] = set()
         super().__init__(AgentCapability.DISPLAY_YES_NO)
 
     @method()
@@ -508,52 +606,72 @@ class PairingAgent(BaseAgent):
         logger.info("Agent released")
 
     @method()
-    def RequestPinCode(self, device: "o") -> "s":
+    def RequestPinCode(self, device: DBUS_OBJECT_PATH) -> DBUS_STRING:
         if not self.auto_confirm:
-            logger.warning("PIN code request rejected: auto_confirm_pairing is false for %s", device)
-            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
+            logger.warning(
+                "PIN code request rejected: auto_confirm_pairing is false for %s", device
+            )
+            raise DBusError(
+                "org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false"
+            )
         logger.info("Auto-replying PIN code 0000 for %s", device)
         mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
         asyncio.create_task(self._trust_device(mac))
         return "0000"
 
     @method()
-    def RequestPasskey(self, device: "o") -> "u":
+    def RequestPasskey(self, device: DBUS_OBJECT_PATH) -> DBUS_UINT32:
         if not self.auto_confirm:
             logger.warning("Passkey request rejected: auto_confirm_pairing is false for %s", device)
-            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
+            raise DBusError(
+                "org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false"
+            )
         logger.info("RequestPasskey for %s", device)
         mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
         asyncio.create_task(self._trust_device(mac))
         return 0
 
     @method()
-    def DisplayPasskey(self, device: "o", passkey: "u", entered: "q"):
+    def DisplayPasskey(self, device: DBUS_OBJECT_PATH, passkey: DBUS_UINT32, entered: DBUS_UINT16):
         logger.info("DisplayPasskey for %s: %06d", device, passkey)
 
     @method()
-    def RequestConfirmation(self, device: "o", passkey: "u"):
+    def RequestConfirmation(self, device: DBUS_OBJECT_PATH, passkey: DBUS_UINT32):
         if not self.auto_confirm:
-            logger.warning("Pairing confirmation rejected: auto_confirm_pairing is false for %s", device)
-            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
+            logger.warning(
+                "Pairing confirmation rejected: auto_confirm_pairing is false for %s", device
+            )
+            raise DBusError(
+                "org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false"
+            )
         logger.info("Auto-confirming pairing request for %s (passkey %06d)", device, passkey)
         mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
         asyncio.create_task(self._trust_device(mac))
 
     @method()
-    def RequestAuthorization(self, device: "o"):
+    def RequestAuthorization(self, device: DBUS_OBJECT_PATH):
         if not self.auto_confirm:
-            logger.warning("Pairing authorization rejected: auto_confirm_pairing is false for %s", device)
-            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
+            logger.warning(
+                "Pairing authorization rejected: auto_confirm_pairing is false for %s", device
+            )
+            raise DBusError(
+                "org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false"
+            )
         logger.info("Auto-authorizing device %s", device)
         mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
         asyncio.create_task(self._trust_device(mac))
 
     @method()
-    def AuthorizeService(self, device: "o", uuid: "s"):
+    def AuthorizeService(self, device: DBUS_OBJECT_PATH, uuid: DBUS_STRING):
         if not self.auto_confirm:
-            logger.warning("Service authorization rejected: auto_confirm_pairing is false for %s (uuid %s)", device, uuid)
-            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
+            logger.warning(
+                "Service authorization rejected: auto_confirm_pairing is false for %s (uuid %s)",
+                device,
+                uuid,
+            )
+            raise DBusError(
+                "org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false"
+            )
         logger.info("Auto-authorizing service %s for device %s", uuid, device)
         mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
         asyncio.create_task(self._trust_device(mac))
@@ -572,7 +690,9 @@ class PairingAgent(BaseAgent):
                 await asyncio.sleep(0.5)
                 try:
                     proc = await asyncio.create_subprocess_exec(
-                        "bluetoothctl", "trust", mac,
+                        "bluetoothctl",
+                        "trust",
+                        mac,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
@@ -585,7 +705,12 @@ class PairingAgent(BaseAgent):
                             except Exception as e:
                                 logger.debug("on_trusted callback failed: %s", e)
                         return
-                    logger.debug("bluetoothctl trust %s (attempt %d) output: %s", mac, attempt + 1, stdout.decode().strip())
+                    logger.debug(
+                        "bluetoothctl trust %s (attempt %d) output: %s",
+                        mac,
+                        attempt + 1,
+                        stdout.decode().strip(),
+                    )
                 except Exception as e:
                     logger.warning("Failed to auto-trust %s (attempt %d): %s", mac, attempt + 1, e)
         finally:
@@ -607,7 +732,7 @@ class TouchReader:
         self.min_y = 0.0
         self.max_y = 1620.0
 
-    def resolve_device(self) -> Optional[str]:
+    def resolve_device(self) -> str | None:
         if self.target_path and os.path.exists(self.target_path):
             return self.target_path
         # Search by-id or by touch capability
@@ -616,6 +741,7 @@ class TouchReader:
             return matches[0]
         try:
             import evdev
+
             for p in sorted(glob.glob("/dev/input/event*")):
                 try:
                     d = evdev.InputDevice(p)
@@ -631,8 +757,12 @@ class TouchReader:
                             keys = [c[0] if isinstance(c, (list, tuple)) else c for c in abs_codes]
                         else:
                             keys = []
-                        has_x = (evdev.ecodes.ABS_MT_POSITION_X in keys) or (evdev.ecodes.ABS_X in keys)
-                        has_y = (evdev.ecodes.ABS_MT_POSITION_Y in keys) or (evdev.ecodes.ABS_Y in keys)
+                        has_x = (evdev.ecodes.ABS_MT_POSITION_X in keys) or (
+                            evdev.ecodes.ABS_X in keys
+                        )
+                        has_y = (evdev.ecodes.ABS_MT_POSITION_Y in keys) or (
+                            evdev.ecodes.ABS_Y in keys
+                        )
                         if has_touch and has_x and has_y:
                             return p
                 except Exception:
@@ -646,6 +776,7 @@ class TouchReader:
         try:
             try:
                 import evdev
+
                 x_codes = (evdev.ecodes.ABS_MT_POSITION_X, evdev.ecodes.ABS_X)
                 y_codes = (evdev.ecodes.ABS_MT_POSITION_Y, evdev.ecodes.ABS_Y)
             except ImportError:
@@ -675,7 +806,13 @@ class TouchReader:
             if y_info and getattr(y_info, "max", 0) > getattr(y_info, "min", 0):
                 self.min_y = float(y_info.min)
                 self.max_y = float(y_info.max)
-            logger.info("TouchReader calibrated: X=[%.1f, %.1f], Y=[%.1f, %.1f]", self.min_x, self.max_x, self.min_y, self.max_y)
+            logger.info(
+                "TouchReader calibrated: X=[%.1f, %.1f], Y=[%.1f, %.1f]",
+                self.min_x,
+                self.max_x,
+                self.min_y,
+                self.max_y,
+            )
         except Exception as e:
             logger.warning("Failed to calibrate touch device absinfo: %s", e)
 
@@ -715,7 +852,7 @@ class TouchReader:
                         elif ev.code in (evdev.ecodes.ABS_MT_POSITION_Y, evdev.ecodes.ABS_Y):
                             self.cur_y = ev.value
                         elif ev.code == evdev.ecodes.ABS_MT_TRACKING_ID:
-                            self.touch_active = (ev.value >= 0)
+                            self.touch_active = ev.value >= 0
                             if not self.touch_active:
                                 prev_touch_active = False
                                 if self.hid:
@@ -734,15 +871,19 @@ class TouchReader:
                                 else:
                                     x_r, y_r = self._normalize()
                                     self.hid.send_touch(False, x_r, y_r)
-                    elif ev.type == evdev.ecodes.EV_SYN and ev.code == evdev.ecodes.SYN_REPORT:
-                        if self.touch_active and self.hid:
-                            if self.pointer_mode == "mouse":
-                                if not prev_touch_active:
-                                    self.hid.send_mouse(1, 0, 0)
-                                    prev_touch_active = True
-                            else:
-                                x_r, y_r = self._normalize()
-                                self.hid.send_touch(True, x_r, y_r)
+                    elif (
+                        ev.type == evdev.ecodes.EV_SYN
+                        and ev.code == evdev.ecodes.SYN_REPORT
+                        and self.touch_active
+                        and self.hid
+                    ):
+                        if self.pointer_mode == "mouse":
+                            if not prev_touch_active:
+                                self.hid.send_mouse(1, 0, 0)
+                                prev_touch_active = True
+                        else:
+                            x_r, y_r = self._normalize()
+                            self.hid.send_touch(True, x_r, y_r)
             except Exception as e:
                 logger.warning("Touch reader disconnected or errored (%s); re-opening in 3s...", e)
                 if self.touch_active and self.hid:
@@ -760,12 +901,14 @@ class TouchReader:
 
 
 class RemoteDaemon:
-    def __init__(self, config: Optional[RemoteConfig] = None):
+    def __init__(self, config: RemoteConfig | None = None):
         self.config = config or load_config()
         self.remote_helper = AndroidRemoteHelper(self.config.chromecast_host, self.config.cert_dir)
         self.hid = HIDService() if (HIDService and HAS_BLUEZ_PERIPHERAL) else None
-        self.touch_reader = TouchReader(self.hid, self.config.touch_device, pointer_mode=self.config.pointer_mode)
-        self.managed_macs: Set[str] = set()
+        self.touch_reader = TouchReader(
+            self.hid, self.config.touch_device, pointer_mode=self.config.pointer_mode
+        )
+        self.managed_macs: set[str] = set()
         if self.config.managed_devices:
             for m in self.config.managed_devices:
                 if m.strip():
@@ -787,7 +930,7 @@ class RemoteDaemon:
         try:
             device_file = os.path.join(self.config.cert_dir, "managed_devices.txt")
             if os.path.exists(device_file):
-                with open(device_file, "r", encoding="utf-8") as f:
+                with open(device_file, encoding="utf-8") as f:
                     for line in f:
                         m = line.strip().upper()
                         if m:
@@ -805,7 +948,7 @@ class RemoteDaemon:
             device_file = os.path.join(self.config.cert_dir, "managed_devices.txt")
             existing = set()
             if os.path.exists(device_file):
-                with open(device_file, "r", encoding="utf-8") as f:
+                with open(device_file, encoding="utf-8") as f:
                     for line in f:
                         m = line.strip().upper()
                         if m:
@@ -825,7 +968,7 @@ class RemoteDaemon:
             device_file = os.path.join(self.config.cert_dir, "managed_devices.txt")
             if os.path.exists(device_file):
                 existing = set()
-                with open(device_file, "r", encoding="utf-8") as f:
+                with open(device_file, encoding="utf-8") as f:
                     for line in f:
                         m = line.strip().upper()
                         if m:
@@ -864,22 +1007,24 @@ class RemoteDaemon:
                 logger.debug("Failed sending Wi-Fi wake pulse: %s", e)
 
     async def handle_healthz(self, request):
-        return web.json_response({
-            "status": "ok",
-            "service": "mirrormere-remote",
-            "wifi_remote": {
-                "connected": self.remote_helper.connected,
-                "has_credentials": self.remote_helper.has_credentials(),
-                "host": self.remote_helper.host,
-            },
-            "bluetooth": {
-                "active": self.hid is not None,
-                "advert_name": self.config.advert_name,
-                "keepalive": self.config.bluetooth_keepalive,
-                "heartbeat": self.config.bluetooth_heartbeat,
-                "paired_devices": self.last_known_paired_devices,
-            },
-        })
+        return web.json_response(
+            {
+                "status": "ok",
+                "service": "mirrormere-remote",
+                "wifi_remote": {
+                    "connected": self.remote_helper.connected,
+                    "has_credentials": self.remote_helper.has_credentials(),
+                    "host": self.remote_helper.host,
+                },
+                "bluetooth": {
+                    "active": self.hid is not None,
+                    "advert_name": self.config.advert_name,
+                    "keepalive": self.config.bluetooth_keepalive,
+                    "heartbeat": self.config.bluetooth_heartbeat,
+                    "paired_devices": self.last_known_paired_devices,
+                },
+            }
+        )
 
     async def handle_tap(self, request):
         try:
@@ -891,7 +1036,9 @@ class RemoteDaemon:
             raw_x = float(data.get("x", 0.5))
             raw_y = float(data.get("y", 0.5))
         except (ValueError, TypeError):
-            return web.json_response({"status": "error", "message": "invalid coordinates"}, status=400)
+            return web.json_response(
+                {"status": "error", "message": "invalid coordinates"}, status=400
+            )
 
         x_ratio = max(0.0, min(1.0, raw_x))
         y_ratio = max(0.0, min(1.0, raw_y))
@@ -903,9 +1050,13 @@ class RemoteDaemon:
         if self.hid:
             try:
                 await asyncio.wait_for(self.touch_lock.acquire(), timeout=0.5)
-            except asyncio.TimeoutError:
-                logger.warning("Dropping tap event: touch_lock acquisition timed out (D-Bus congestion)")
-                return web.json_response({"status": "error", "message": "touch dispatch timeout"}, status=503)
+            except TimeoutError:
+                logger.warning(
+                    "Dropping tap event: touch_lock acquisition timed out (D-Bus congestion)"
+                )
+                return web.json_response(
+                    {"status": "error", "message": "touch dispatch timeout"}, status=503
+                )
             try:
                 if self.config.pointer_mode == "mouse":
                     self.hid.send_mouse(1, 0, 0)
@@ -922,7 +1073,9 @@ class RemoteDaemon:
                     pass
                 self.touch_lock.release()
             return web.json_response({"status": "ok", "action": "tap", "x": x_ratio, "y": y_ratio})
-        return web.json_response({"status": "error", "message": "BLE HID not initialized"}, status=503)
+        return web.json_response(
+            {"status": "error", "message": "BLE HID not initialized"}, status=503
+        )
 
     async def handle_touch(self, request):
         try:
@@ -935,7 +1088,9 @@ class RemoteDaemon:
             raw_x = float(data.get("x", 0.5))
             raw_y = float(data.get("y", 0.5))
         except (ValueError, TypeError):
-            return web.json_response({"status": "error", "message": "invalid coordinates"}, status=400)
+            return web.json_response(
+                {"status": "error", "message": "invalid coordinates"}, status=400
+            )
 
         x_ratio = max(0.0, min(1.0, raw_x))
         y_ratio = max(0.0, min(1.0, raw_y))
@@ -944,13 +1099,19 @@ class RemoteDaemon:
             asyncio.create_task(self._wake_via_wifi_if_needed())
 
         if not self.hid:
-            return web.json_response({"status": "error", "message": "BLE HID not initialized"}, status=503)
+            return web.json_response(
+                {"status": "error", "message": "BLE HID not initialized"}, status=503
+            )
 
         try:
             await asyncio.wait_for(self.touch_lock.acquire(), timeout=0.5)
-        except asyncio.TimeoutError:
-            logger.warning("Dropping touch event: touch_lock acquisition timed out (D-Bus congestion)")
-            return web.json_response({"status": "error", "message": "touch dispatch timeout"}, status=503)
+        except TimeoutError:
+            logger.warning(
+                "Dropping touch event: touch_lock acquisition timed out (D-Bus congestion)"
+            )
+            return web.json_response(
+                {"status": "error", "message": "touch dispatch timeout"}, status=503
+            )
 
         try:
             if action in ("down", "move"):
@@ -980,7 +1141,9 @@ class RemoteDaemon:
                     except Exception:
                         pass
             else:
-                return web.json_response({"status": "error", "message": f"unknown action: {action}"}, status=400)
+                return web.json_response(
+                    {"status": "error", "message": f"unknown action: {action}"}, status=400
+                )
         finally:
             self.touch_lock.release()
 
@@ -996,7 +1159,9 @@ class RemoteDaemon:
         hid_code, remote_cmd = resolve_key_dispatch(key_name)
 
         if not hid_code and not remote_cmd:
-            return web.json_response({"status": "error", "message": f"unknown key: {key_name}"}, status=400)
+            return web.json_response(
+                {"status": "error", "message": f"unknown key: {key_name}"}, status=400
+            )
 
         dispatched = []
         # Dispatch via HID consumer key if supported
@@ -1007,12 +1172,13 @@ class RemoteDaemon:
             dispatched.append("ble_consumer")
 
         # Also dispatch via Wi-Fi remote if available
-        if remote_cmd and self.remote_helper.connected:
-            if self.remote_helper.send_key(remote_cmd):
-                dispatched.append("wifi_remote")
+        if remote_cmd and self.remote_helper.connected and self.remote_helper.send_key(remote_cmd):
+            dispatched.append("wifi_remote")
 
         if not dispatched:
-            return web.json_response({"status": "error", "message": "transport unavailable"}, status=503)
+            return web.json_response(
+                {"status": "error", "message": "transport unavailable"}, status=503
+            )
 
         return web.json_response({"status": "ok", "key": key_name, "dispatched": dispatched})
 
@@ -1020,19 +1186,23 @@ class RemoteDaemon:
         data = await request.json()
         app = data.get("app")
         if not app:
-            return web.json_response({"status": "error", "message": "missing app parameter"}, status=400)
+            return web.json_response(
+                {"status": "error", "message": "missing app parameter"}, status=400
+            )
         ok = self.remote_helper.launch_app(app)
         return web.json_response({"status": "ok" if ok else "failed", "app": app})
 
     async def handle_remote_status(self, request):
-        return web.json_response({
-            "wifi_remote_connected": self.remote_helper.connected,
-            "has_credentials": self.remote_helper.has_credentials(),
-            "chromecast_host": self.remote_helper.host,
-            "ble_active": self.hid is not None,
-            "bluetooth_keepalive": self.config.bluetooth_keepalive,
-            "paired_devices": self.last_known_paired_devices,
-        })
+        return web.json_response(
+            {
+                "wifi_remote_connected": self.remote_helper.connected,
+                "has_credentials": self.remote_helper.has_credentials(),
+                "chromecast_host": self.remote_helper.host,
+                "ble_active": self.hid is not None,
+                "bluetooth_keepalive": self.config.bluetooth_keepalive,
+                "paired_devices": self.last_known_paired_devices,
+            }
+        )
 
     async def _run_bluetoothctl(self, *args: str, timeout: float = 5.0) -> tuple[int, bytes, bytes]:
         """Runs a bluetoothctl command safely with a timeout, killing and reaping any hanging process to prevent zombie leaks."""
@@ -1045,7 +1215,7 @@ class RemoteDaemon:
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             return (proc.returncode if proc.returncode is not None else 0), stdout, stderr
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except ProcessLookupError:
@@ -1065,7 +1235,9 @@ class RemoteDaemon:
             return web.json_response({"status": "error", "message": "invalid json"}, status=400)
         mac = str(data.get("mac", "")).strip().upper()
         if not mac:
-            return web.json_response({"status": "error", "message": "missing mac parameter"}, status=400)
+            return web.json_response(
+                {"status": "error", "message": "missing mac parameter"}, status=400
+            )
         try:
             code, stdout, stderr = await self._run_bluetoothctl("remove", mac, timeout=5.0)
             if code == 0:
@@ -1073,8 +1245,12 @@ class RemoteDaemon:
                 self.remove_managed_device(mac)
                 return web.json_response({"status": "ok", "action": "remove", "mac": mac})
             else:
-                logger.warning("bluetoothctl remove %s failed with code %d: %s", mac, code, stderr.decode())
-                return web.json_response({"status": "error", "message": f"bluetoothctl exit code {code}"}, status=500)
+                logger.warning(
+                    "bluetoothctl remove %s failed with code %d: %s", mac, code, stderr.decode()
+                )
+                return web.json_response(
+                    {"status": "error", "message": f"bluetoothctl exit code {code}"}, status=500
+                )
         except Exception as e:
             logger.warning("Failed to remove bluetooth device %s: %s", mac, e)
             return web.json_response({"status": "error", "message": str(e)}, status=500)
@@ -1110,13 +1286,16 @@ class RemoteDaemon:
             pcm_bytes = await request.read()
 
         if not pcm_bytes:
-            return web.json_response({"status": "error", "message": "no audio payload provided"}, status=400)
+            return web.json_response(
+                {"status": "error", "message": "no audio payload provided"}, status=400
+            )
 
         # If WAV header detected, extract raw PCM frames
         if pcm_bytes.startswith(b"RIFF") and len(pcm_bytes) > 44:
             try:
                 import io
                 import wave
+
                 with wave.open(io.BytesIO(pcm_bytes), "rb") as wf:
                     channels = wf.getnchannels()
                     sampwidth = wf.getsampwidth()
@@ -1126,6 +1305,7 @@ class RemoteDaemon:
                     # Downmix stereo to mono if needed
                     if channels == 2 and sampwidth == 2:
                         import struct
+
                         n_samples = len(frames) // 4
                         stereo = struct.unpack(f"<{n_samples * 2}h", frames)
                         mono_samples = [stereo[i * 2] for i in range(n_samples)]
@@ -1136,15 +1316,21 @@ class RemoteDaemon:
 
         # Target sample rate: Android TV Remote protocol v2 expects 8000 Hz 16-bit mono PCM.
         # Auto-decimate 16kHz -> 8kHz by default unless caller explicitly requested 16000.
-        target_rate = request.query.get("resample") or request.headers.get("X-Target-Sample-Rate") or "8000"
+        target_rate = (
+            request.query.get("resample") or request.headers.get("X-Target-Sample-Rate") or "8000"
+        )
         if target_rate not in ("16000", "16k") and sample_rate == 16000:
             # 2x decimate 16-bit PCM (stride 4 bytes -> take first 2 bytes)
-            pcm_bytes = b"".join([pcm_bytes[i:i+2] for i in range(0, len(pcm_bytes), 4)])
+            pcm_bytes = b"".join([pcm_bytes[i : i + 2] for i in range(0, len(pcm_bytes), 4)])
             sample_rate = 8000
 
         if not self.remote_helper.connected:
             return web.json_response(
-                {"status": "error", "message": "Android TV Remote disconnected", "connected": False},
+                {
+                    "status": "error",
+                    "message": "Android TV Remote disconnected",
+                    "connected": False,
+                },
                 status=503,
             )
 
@@ -1155,11 +1341,13 @@ class RemoteDaemon:
                 status=502,
             )
 
-        return web.json_response({
-            "status": "ok",
-            "bytes_sent": len(pcm_bytes),
-            "sample_rate": sample_rate,
-        })
+        return web.json_response(
+            {
+                "status": "ok",
+                "bytes_sent": len(pcm_bytes),
+                "sample_rate": sample_rate,
+            }
+        )
 
     STANDARD_PERIPHERAL_ICONS = (
         "Icon: audio-",
@@ -1197,21 +1385,33 @@ class RemoteDaemon:
                 if len(parts) >= 2 and parts[0] == "Device":
                     mac = parts[1].upper()
                     if self.managed_macs and mac not in self.managed_macs:
-                        logger.debug("Skipping unmanaged device %s during stale connection cleanup", mac)
+                        logger.debug(
+                            "Skipping unmanaged device %s during stale connection cleanup", mac
+                        )
                         continue
                     try:
                         _, info_out, _ = await self._run_bluetoothctl("info", mac, timeout=5.0)
                         info_str = info_out.decode()
                         if not self.managed_macs and self._is_standard_peripheral(info_str):
-                            logger.debug("Skipping standard peripheral %s during stale connection cleanup", mac)
+                            logger.debug(
+                                "Skipping standard peripheral %s during stale connection cleanup",
+                                mac,
+                            )
                             continue
-                        if any(l.strip() == "Connected: yes" for l in info_str.splitlines()):
-                            logger.info("Found pre-existing/stale connection to %s on startup; resetting link...", mac)
+                        if any(line.strip() == "Connected: yes" for line in info_str.splitlines()):
+                            logger.info(
+                                "Found pre-existing/stale connection to %s on startup; resetting link...",
+                                mac,
+                            )
                             await self._run_bluetoothctl("disconnect", mac, timeout=5.0)
                     except Exception as e:
-                        logger.debug("Failed checking/resetting stale connection for %s: %s", mac, e)
+                        logger.debug(
+                            "Failed checking/resetting stale connection for %s: %s", mac, e
+                        )
 
-    async def _check_and_reconnect_bluetooth(self, target_mac: Optional[str] = None, force: bool = False) -> list[dict]:
+    async def _check_and_reconnect_bluetooth(
+        self, target_mac: str | None = None, force: bool = False
+    ) -> list[dict]:
         """Inspects paired Bluetooth devices and attempts reconnection for disconnected devices."""
         reconnect_results = []
         async with self.bluetooth_lock:
@@ -1255,33 +1455,57 @@ class RemoteDaemon:
                         continue
 
                     if force and is_connected:
-                        logger.info("Forced reconnect requested for %s (%s); disconnecting first...", mac, name)
+                        logger.info(
+                            "Forced reconnect requested for %s (%s); disconnecting first...",
+                            mac,
+                            name,
+                        )
                         try:
                             await self._run_bluetoothctl("disconnect", mac, timeout=5.0)
                             is_connected = False
                         except Exception as e:
-                            logger.debug("Failed to disconnect %s during forced reconnect: %s", mac, e)
+                            logger.debug(
+                                "Failed to disconnect %s during forced reconnect: %s", mac, e
+                            )
 
-                    current_devices.append({
-                        "mac": mac,
-                        "name": name,
-                        "connected": is_connected,
-                        "services_resolved": services_resolved,
-                    })
+                    current_devices.append(
+                        {
+                            "mac": mac,
+                            "name": name,
+                            "connected": is_connected,
+                            "services_resolved": services_resolved,
+                        }
+                    )
 
                     if not is_connected:
-                        logger.info("Paired Bluetooth device %s (%s) is disconnected; attempting auto-reconnect...", mac, name)
+                        logger.info(
+                            "Paired Bluetooth device %s (%s) is disconnected; attempting auto-reconnect...",
+                            mac,
+                            name,
+                        )
                         success = False
                         try:
                             code, _, _ = await self._run_bluetoothctl("connect", mac, timeout=5.0)
-                            success = (code == 0)
+                            success = code == 0
                             if success:
-                                logger.info("Successfully reconnected to Bluetooth device %s (%s)", mac, name)
+                                logger.info(
+                                    "Successfully reconnected to Bluetooth device %s (%s)",
+                                    mac,
+                                    name,
+                                )
                                 is_connected = True
                             else:
-                                logger.debug("Auto-reconnect to %s returned non-zero code (%s)", mac, str(code))
+                                logger.debug(
+                                    "Auto-reconnect to %s returned non-zero code (%s)",
+                                    mac,
+                                    str(code),
+                                )
                         except Exception as conn_err:
-                            logger.debug("Auto-reconnect attempt to %s timed out or failed: %s", mac, conn_err)
+                            logger.debug(
+                                "Auto-reconnect attempt to %s timed out or failed: %s",
+                                mac,
+                                conn_err,
+                            )
 
                         reconnect_results.append({"mac": mac, "name": name, "reconnected": success})
 
@@ -1290,7 +1514,10 @@ class RemoteDaemon:
 
     async def _bluetooth_keepalive_loop(self):
         """Background loop to periodically ensure paired devices stay connected."""
-        logger.info("Bluetooth keepalive monitor active (interval=%.1fs)", self.config.bluetooth_keepalive_interval)
+        logger.info(
+            "Bluetooth keepalive monitor active (interval=%.1fs)",
+            self.config.bluetooth_keepalive_interval,
+        )
         try:
             await asyncio.sleep(min(2.0, self.config.bluetooth_keepalive_interval))
             await self._check_and_reconnect_bluetooth()
@@ -1304,7 +1531,9 @@ class RemoteDaemon:
                 await asyncio.sleep(self.config.bluetooth_keepalive_interval)
                 await self._check_and_reconnect_bluetooth()
 
-                if self.config.bluetooth_heartbeat and any(d.get("connected") for d in self.last_known_paired_devices):
+                if self.config.bluetooth_heartbeat and any(
+                    d.get("connected") for d in self.last_known_paired_devices
+                ):
                     loop = asyncio.get_running_loop()
                     now = loop.time()
                     if (now - self._last_heartbeat) >= self.config.bluetooth_heartbeat_interval:
@@ -1357,7 +1586,9 @@ class RemoteDaemon:
                 battery = BatteryService()
                 self.battery_service = battery
                 collection = ServiceCollection([dev_info, battery, self.hid])
-                await collection.register(self.bus, path="/com/mirrormere/gatt", adapter=self.adapter)
+                await collection.register(
+                    self.bus, path="/com/mirrormere/gatt", adapter=self.adapter
+                )
 
                 await self._configure_adapter()
                 try:
@@ -1377,7 +1608,10 @@ class RemoteDaemon:
                         self.config.advert_max_interval,
                     )
                 except Exception as adv_err:
-                    logger.warning("Fast interval advertisement registration failed (%s); falling back to standard advertisement", adv_err)
+                    logger.warning(
+                        "Fast interval advertisement registration failed (%s); falling back to standard advertisement",
+                        adv_err,
+                    )
                     self.advert = KioskAdvertisement(
                         localName=self.config.advert_name,
                         serviceUUIDs=["1812", "180F", "180A"],
@@ -1385,18 +1619,25 @@ class RemoteDaemon:
                         timeout=0,
                     )
                     await self.advert.register(self.bus, adapter=self.adapter)
-                    logger.info("BLE peripheral & standard advertisement registered as '%s' (0x03C2)", self.config.advert_name)
+                    logger.info(
+                        "BLE peripheral & standard advertisement registered as '%s' (0x03C2)",
+                        self.config.advert_name,
+                    )
 
                 # Reset any stale host connections from prior container lifecycles so peers reconnect fresh
                 await self._cleanup_stale_connections()
             except Exception as e:
-                logger.error("Failed to register BlueZ peripheral (check D-Bus mount / permissions): %s", e)
+                logger.error(
+                    "Failed to register BlueZ peripheral (check D-Bus mount / permissions): %s", e
+                )
 
         # Start Touch Reader if evdev is explicitly enabled
         if self.config.enable_evdev and self.config.touch_device:
             asyncio.create_task(self.touch_reader.run())
         else:
-            logger.info("Physical evdev touch reader disabled (browser-level touch forwarding active)")
+            logger.info(
+                "Physical evdev touch reader disabled (browser-level touch forwarding active)"
+            )
 
         # Start Bluetooth keepalive worker
         if self.config.bluetooth_keepalive:
@@ -1419,31 +1660,27 @@ class RemoteDaemon:
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", self.config.http_port)
         await site.start()
-        logger.info("Mirrormere Remote HTTP API listening on http://0.0.0.0:%d", self.config.http_port)
+        logger.info(
+            "Mirrormere Remote HTTP API listening on http://0.0.0.0:%d", self.config.http_port
+        )
 
         # Keep server running until shutdown signal
         stop_event = asyncio.Event()
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
-            try:
+            with contextlib.suppress(NotImplementedError):
                 loop.add_signal_handler(sig, stop_event.set)
-            except NotImplementedError:
-                pass
 
         await stop_event.wait()
         logger.info("Shutting down mirrormere-remote...")
         if self.keepalive_task:
             self.keepalive_task.cancel()
         if self.advert and self.adapter:
-            try:
+            with contextlib.suppress(Exception):
                 await self.advert.unregister(self.bus, adapter=self.adapter)
-            except Exception:
-                pass
         if self.agent and self.bus:
-            try:
+            with contextlib.suppress(Exception):
                 await self.agent.unregister(self.bus)
-            except Exception:
-                pass
 
 
 def main():

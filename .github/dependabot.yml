@@ -36,6 +36,7 @@ updates:
 
   - package-ecosystem: "pip"
     directories:
+      - "/"
       - "/client/ear"
       - "/client/eink-node"
       - "/client/remote"

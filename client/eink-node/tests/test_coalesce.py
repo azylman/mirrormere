@@ -5,7 +5,7 @@ test_coalesce.py - Hermetic unit tests for refresh coalescing engine and ETag ca
 import unittest
 from typing import Any
 
-from coalesce import CoalescingEngine, RefreshResult
+from coalesce import CoalescingEngine
 from fetcher import FetchResult
 
 
@@ -57,11 +57,13 @@ class TestCoalescingEngine(unittest.TestCase):
         self.panel_writes: list[dict[str, Any]] = []
 
     def panel_writer(self, data: bytes, is_full: bool):
-        self.panel_writes.append({
-            "data": data,
-            "is_full": is_full,
-            "timestamp": self.clock.time(),
-        })
+        self.panel_writes.append(
+            {
+                "data": data,
+                "is_full": is_full,
+                "timestamp": self.clock.time(),
+            }
+        )
 
     def create_engine(
         self,
@@ -211,7 +213,9 @@ class TestCoalescingEngine(unittest.TestCase):
         # At t=1065 (floor satisfied, but debounce NOT satisfied: 2s < 5s)
         self.clock.advance(2.0)  # t=1065
         ready, _ = engine.should_refresh(self.clock.time())
-        self.assertFalse(ready, "Debounce window must be enforced even if min write floor is satisfied")
+        self.assertFalse(
+            ready, "Debounce window must be enforced even if min write floor is satisfied"
+        )
         self.assertAlmostEqual(engine.time_until_next_check(self.clock.time()), 3.0)
 
         # At t=1068 (both floor and debounce satisfied)
@@ -253,7 +257,9 @@ class TestCoalescingEngine(unittest.TestCase):
 
         # First fetch: 200 OK with frame-1
         self.fetcher.set_response(
-            FetchResult(status_code=200, etag='"etag-1"', data=b"identical-png-bytes", not_modified=False)
+            FetchResult(
+                status_code=200, etag='"etag-1"', data=b"identical-png-bytes", not_modified=False
+            )
         )
         engine.mark_dirty("init")
         self.clock.advance(5.0)
@@ -267,11 +273,15 @@ class TestCoalescingEngine(unittest.TestCase):
         self.clock.advance(5.0)
 
         self.fetcher.set_response(
-            FetchResult(status_code=200, etag='"etag-2"', data=b"identical-png-bytes", not_modified=False)
+            FetchResult(
+                status_code=200, etag='"etag-2"', data=b"identical-png-bytes", not_modified=False
+            )
         )
         res2 = engine.execute_refresh(self.clock.time())
         self.assertEqual(res2.status, "skipped_identical")
-        self.assertEqual(len(self.panel_writes), 1, "Panel write must be skipped for identical bytes")
+        self.assertEqual(
+            len(self.panel_writes), 1, "Panel write must be skipped for identical bytes"
+        )
         self.assertFalse(engine.is_dirty)
         self.assertEqual(engine.skipped_identical_count, 1)
 
@@ -280,7 +290,9 @@ class TestCoalescingEngine(unittest.TestCase):
         A safety fetch runs every max_idle_seconds (900s) even with zero incoming events,
         preventing the panel from remaining stale if an SSE event was dropped.
         """
-        engine = self.create_engine(coalesce_seconds=5.0, min_refresh_seconds=60.0, max_idle_seconds=900.0)
+        engine = self.create_engine(
+            coalesce_seconds=5.0, min_refresh_seconds=60.0, max_idle_seconds=900.0
+        )
 
         # Start clean; advance 899s
         self.clock.advance(899.0)
@@ -308,7 +320,13 @@ class TestCoalescingEngine(unittest.TestCase):
         """
         engine = self.create_engine(coalesce_seconds=5.0, min_refresh_seconds=60.0)
         self.fetcher.set_response(
-            FetchResult(status_code=503, etag=None, data=None, not_modified=False, error="HTTP 503: Service Unavailable")
+            FetchResult(
+                status_code=503,
+                etag=None,
+                data=None,
+                not_modified=False,
+                error="HTTP 503: Service Unavailable",
+            )
         )
 
         engine.mark_dirty("widget.update")
@@ -352,7 +370,9 @@ class TestCoalescingEngine(unittest.TestCase):
         engine.last_image_bytes = b"stale-image-bytes"
 
         self.fetcher.set_response(
-            FetchResult(status_code=200, etag='"fresh-etag"', data=b"stale-image-bytes", not_modified=False)
+            FetchResult(
+                status_code=200, etag='"fresh-etag"', data=b"stale-image-bytes", not_modified=False
+            )
         )
 
         engine.mark_dirty("reconnect_recovery")

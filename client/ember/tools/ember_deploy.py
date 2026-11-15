@@ -107,7 +107,9 @@ def disconnect_device(adb_bin: str, device: str) -> None:
         cmd = [adb_bin, "disconnect", device]
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if res.returncode != 0:
-            print(f"[WARN] adb disconnect from {device} returned {res.returncode}: {res.stderr.strip()}")
+            print(
+                f"[WARN] adb disconnect from {device} returned {res.returncode}: {res.stderr.strip()}"
+            )
 
 
 def install_apk(adb_bin: str, device: str, apk_path: Path | str) -> None:
@@ -157,10 +159,18 @@ def launch_kiosk(
     if bridge_origins is not None:
         cmd.extend(["-e", "bridge_origins", bridge_origins])
     if ota_enabled is not None:
-        val = ota_enabled if isinstance(ota_enabled, bool) else (str(ota_enabled).lower() in ("true", "1", "yes"))
+        val = (
+            ota_enabled
+            if isinstance(ota_enabled, bool)
+            else (str(ota_enabled).lower() in ("true", "1", "yes"))
+        )
         cmd.extend(["--ez", "ota_enabled", "true" if val else "false"])
     if allow_mixed_content is not None:
-        val = allow_mixed_content if isinstance(allow_mixed_content, bool) else (str(allow_mixed_content).lower() in ("true", "1", "yes"))
+        val = (
+            allow_mixed_content
+            if isinstance(allow_mixed_content, bool)
+            else (str(allow_mixed_content).lower() in ("true", "1", "yes"))
+        )
         cmd.extend(["--ez", "allow_mixed_content", "true" if val else "false"])
     subprocess.run(cmd, capture_output=True, text=True, check=True)
 

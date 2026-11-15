@@ -2,11 +2,11 @@
 panel.py - Waveshare SPI panel driver controller, Adafruit Bonnet pin patching, and refresh lifecycle
 """
 
-from abc import ABC, abstractmethod
 import io
 import logging
 import threading
 import time
+from abc import ABC, abstractmethod
 from typing import Any
 
 try:
@@ -213,7 +213,9 @@ class WaveshareEPDPanel(BasePanel):
         self._epd = None
         self._busy_timeout = busy_timeout
         self._stage = "idle"
-        self._prev_buf = None  # last displayed frame, in the polarity 0x10/0x13 take in partial mode
+        self._prev_buf = (
+            None  # last displayed frame, in the polarity 0x10/0x13 take in partial mode
+        )
 
         # Dynamically import or load epd driver module
         try:
@@ -242,7 +244,7 @@ class WaveshareEPDPanel(BasePanel):
             if waited > self._busy_timeout:
                 self._dump_diagnostics(waited, polls)
                 raise PanelTimeoutError(
-                    "panel BUSY did not release in %.1fs (stage=%s)" % (waited, self._stage)
+                    f"panel BUSY did not release in {waited:.1f}s (stage={self._stage})"
                 )
             time.sleep(0.01)
             epd.send_command(0x71)
@@ -255,10 +257,14 @@ class WaveshareEPDPanel(BasePanel):
         try:
             pin = self._epdconfig.digital_read(self._epd.busy_pin)
         except Exception as exc:  # diagnostics must never raise
-            pin = "unreadable (%r)" % (exc,)
+            pin = f"unreadable ({exc!r})"
         logger.error(
             "BUSY timeout: stage=%s waited=%.1fs polls=%d busy_pin=%s threads=%d",
-            self._stage, waited, polls, pin, threading.active_count(),
+            self._stage,
+            waited,
+            polls,
+            pin,
+            threading.active_count(),
         )
         for tid, frame in sys._current_frames().items():
             logger.error("thread %s stack:\n%s", tid, "".join(traceback.format_stack(frame)[-6:]))
@@ -309,8 +315,17 @@ class WaveshareEPDPanel(BasePanel):
             epd.send_data(0x07)
             epd.send_command(0x91)
             epd.send_command(0x90)
-            for v in (0, 0, (epd.width - 1) // 256, (epd.width - 1) % 256,
-                      0, 0, (epd.height - 1) // 256, (epd.height - 1) % 256, 0x01):
+            for v in (
+                0,
+                0,
+                (epd.width - 1) // 256,
+                (epd.width - 1) % 256,
+                0,
+                0,
+                (epd.height - 1) // 256,
+                (epd.height - 1) % 256,
+                0x01,
+            ):
                 epd.send_data(v)
             epd.send_command(0x10)
             epd.send_data2(self._prev_buf)
@@ -393,7 +408,8 @@ class PanelManager:
                 or (self.consecutive_partials >= self.config.refresh.max_consecutive_partials)
                 or (
                     self.last_full_refresh_time >= 0
-                    and (now - self.last_full_refresh_time) >= self.config.refresh.full_refresh_minutes * 60
+                    and (now - self.last_full_refresh_time)
+                    >= self.config.refresh.full_refresh_minutes * 60
                 )
             )
 

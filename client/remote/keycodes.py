@@ -3,16 +3,14 @@
 Pure Python module with zero external dependencies for fast, hermetic unit testing.
 """
 
-from typing import Optional, Tuple
-
 # USB HID Consumer Usage Page (0x0C) codes
 CONSUMER_KEYCODES: dict[str, int] = {
-    "back": 0x0224,      # AC Back
-    "home": 0x0223,      # AC Home
-    "play": 0x00CD,      # Play/Pause
-    "pause": 0x00CD,     # Play/Pause
-    "playpause": 0x00CD, # Play/Pause
-    "play_pause": 0x00CD,# Play/Pause
+    "back": 0x0224,  # AC Back
+    "home": 0x0223,  # AC Home
+    "play": 0x00CD,  # Play/Pause
+    "pause": 0x00CD,  # Play/Pause
+    "playpause": 0x00CD,  # Play/Pause
+    "play_pause": 0x00CD,  # Play/Pause
     "rewind": 0x00B4,
     "fast_forward": 0x00B3,
     "fastforward": 0x00B3,
@@ -29,12 +27,12 @@ CONSUMER_KEYCODES: dict[str, int] = {
     "cc": 0x0061,
     "captions": 0x0061,
     "closed_captions": 0x0061,
-    "volup": 0x00E9,     # Volume Increment
+    "volup": 0x00E9,  # Volume Increment
     "volume_up": 0x00E9,
-    "voldown": 0x00EA,   # Volume Decrement
+    "voldown": 0x00EA,  # Volume Decrement
     "volume_down": 0x00EA,
-    "mute": 0x00E2,      # Mute
-    "power": 0x0030,     # Power
+    "mute": 0x00E2,  # Mute
+    "power": 0x0030,  # Power
 }
 
 # Android TV Remote Protobuf Keycodes
@@ -84,17 +82,20 @@ REMOTE_KEYCODES: dict[str, str] = {
     "wakeup": "WAKEUP",
 }
 
-def lookup_consumer_key(name: str) -> Optional[int]:
+
+def lookup_consumer_key(name: str) -> int | None:
     """Look up HID Consumer Control keycode (case-insensitive)."""
     clean = name.strip().lower()
     return CONSUMER_KEYCODES.get(clean)
 
-def lookup_remote_key(name: str) -> Optional[str]:
+
+def lookup_remote_key(name: str) -> str | None:
     """Look up Android TV Remote key command string (case-insensitive)."""
     clean = name.strip().lower()
     return REMOTE_KEYCODES.get(clean)
 
-def resolve_key_dispatch(name: str) -> Tuple[Optional[int], Optional[str]]:
+
+def resolve_key_dispatch(name: str) -> tuple[int | None, str | None]:
     """Resolve key name into both HID consumer code and Android TV Remote key string."""
     clean = name.strip().lower()
     hid_code = CONSUMER_KEYCODES.get(clean)

@@ -35,7 +35,6 @@ Two implementations behind one small interface:
 import logging
 import os
 import time
-from typing import List, Optional, Tuple
 
 try:
     import numpy as np
@@ -58,7 +57,7 @@ class SpeechDetector:
     def reset(self) -> None:
         """Called at the start of a new utterance/segment."""
 
-    def drain_inference_stats(self) -> Tuple[float, int]:
+    def drain_inference_stats(self) -> tuple[float, int]:
         """Returns (mean_inference_ms, sample_count) since the last drain, and resets it.
 
         Energy detection has no inference cost worth tracking, so the base
@@ -109,7 +108,7 @@ class SileroDetector(SpeechDetector):
         n_windows = len(samples) // SILERO_WINDOW_SAMPLES
         speech = False
         for i in range(n_windows):
-            window = samples[i * SILERO_WINDOW_SAMPLES:(i + 1) * SILERO_WINDOW_SAMPLES]
+            window = samples[i * SILERO_WINDOW_SAMPLES : (i + 1) * SILERO_WINDOW_SAMPLES]
             t0 = time.perf_counter()
             score = float(self._vad.predict(window, frame_size=SILERO_WINDOW_SAMPLES))
             self._infer_ms_sum += (time.perf_counter() - t0) * 1000.0
@@ -117,10 +116,10 @@ class SileroDetector(SpeechDetector):
             if score >= self._threshold:
                 speech = True
 
-        self._remainder = samples[n_windows * SILERO_WINDOW_SAMPLES:]
+        self._remainder = samples[n_windows * SILERO_WINDOW_SAMPLES :]
         return speech
 
-    def drain_inference_stats(self) -> Tuple[float, int]:
+    def drain_inference_stats(self) -> tuple[float, int]:
         count = self._infer_count
         mean_ms = (self._infer_ms_sum / count) if count else 0.0
         self._infer_ms_sum = 0.0
@@ -156,6 +155,7 @@ class SherpaSileroDetector(SpeechDetector):
         else:
             import array
             import struct
+
             n_samples = len(raw_bytes) // 2
             samples = struct.unpack(f"<{n_samples}h", raw_bytes)
             chunk = array.array("f", (s / 32768.0 for s in samples))
@@ -172,7 +172,7 @@ class SherpaSileroDetector(SpeechDetector):
 
         return speech
 
-    def drain_inference_stats(self) -> Tuple[float, int]:
+    def drain_inference_stats(self) -> tuple[float, int]:
         count = self._infer_count
         mean_ms = (self._infer_ms_sum / count) if count else 0.0
         self._infer_ms_sum = 0.0
@@ -240,21 +240,16 @@ def build_detector(
                 logger.info("VAD: silero (openwakeword, threshold=%.2f)", vad_threshold)
                 return SileroDetector(vad_model, vad_threshold)
             except Exception as e:
-                raise RuntimeError(
-                    f"Silero VAD failed to load for openwakeword: {e}"
-                ) from e
+                raise RuntimeError(f"Silero VAD failed to load for openwakeword: {e}") from e
         elif wake_engine == "sherpa-onnx":
             try:
                 vad_model = load_sherpa_silero_vad(sherpa_model_dir, vad_threshold)
                 logger.info("VAD: silero (sherpa-onnx, threshold=%.2f)", vad_threshold)
                 return SherpaSileroDetector(vad_model)
             except Exception as e:
-                raise RuntimeError(
-                    f"Silero VAD failed to load for sherpa-onnx: {e}"
-                ) from e
+                raise RuntimeError(f"Silero VAD failed to load for sherpa-onnx: {e}") from e
         else:
             raise RuntimeError(f"Unknown wake engine '{wake_engine}' for silero VAD")
 
     logger.info("VAD: energy (threshold=%.1f dBFS)", speech_threshold_db)
     return EnergyDetector(speech_threshold_db, compute_db)
-

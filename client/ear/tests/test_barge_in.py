@@ -4,8 +4,8 @@ import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
-from client.ear.config import VoiceConfig, load_config
 from client.ear.client import VoiceDaemon
+from client.ear.config import VoiceConfig, load_config
 
 FRAME = b"\x00" * 2560  # 1280 samples of 16-bit PCM = 80 ms @ 16 kHz
 
@@ -103,7 +103,10 @@ class TestBargeInDisabled(BargeInTestCase):
         self.cfg.barge_in = False
         daemon = VoiceDaemon(self.cfg, model=MockModel())
         self.start_playback(daemon)
-        with patch.object(daemon, "_check_barge_in") as mock_check, patch.object(daemon, "_do_barge_in") as mock_do:
+        with (
+            patch.object(daemon, "_check_barge_in") as mock_check,
+            patch.object(daemon, "_do_barge_in") as mock_do,
+        ):
             results = self.feed(daemon, 30)
         mock_check.assert_not_called()
         mock_do.assert_not_called()
@@ -149,7 +152,9 @@ class TestCheckBargeIn(BargeInTestCase):
         self.assertEqual(daemon.process_frame(FRAME), "barge_in")
         self.assertEqual(daemon.barge_in_count, 1)
         self.assertEqual(daemon.state, "listening")
-        self.assertEqual(detector.resets, 1, "detector gets fresh state when playback watching starts")
+        self.assertEqual(
+            detector.resets, 1, "detector gets fresh state when playback watching starts"
+        )
 
     def test_single_non_speech_frame_inside_word_is_tolerated(self):
         # S S gap S S: the lone gap neither resets nor counts.
@@ -261,8 +266,7 @@ class TestAbortedTurnRace(BargeInTestCase):
             daemon.busy = True
             daemon.pre_roll.append(b"new-turn-frame")
             daemon.model.reset_called = False
-            for line in sse_after_barge:
-                yield line
+            yield from sse_after_barge
 
         mock_resp = MagicMock()
         mock_resp.status = 200
@@ -291,7 +295,9 @@ class TestAbortedTurnRace(BargeInTestCase):
         self.assertFalse(daemon.model.reset_called, "wake engine must not be reset again")
         self.assertEqual(daemon.state, "listening")
         for c in self.mock_post_state.call_args_list:
-            self.assertNotEqual(c.args[1], "idle", "aborted worker must not post idle over the new turn")
+            self.assertNotEqual(
+                c.args[1], "idle", "aborted worker must not post idle over the new turn"
+            )
         self.assertIsNone(daemon._active_resp)
 
     def test_no_audio_played_after_abort(self):

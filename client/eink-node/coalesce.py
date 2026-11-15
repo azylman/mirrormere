@@ -2,11 +2,12 @@
 coalesce.py - Refresh coalescing engine and rate limiting for Mirrormere E-Ink display node
 """
 
-from dataclasses import dataclass
 import logging
 import threading
 import time
-from typing import Callable, Any
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 try:
     from .fetcher import ETagFetcher, FetchResult
@@ -83,7 +84,9 @@ class CoalescingEngine:
                 self.dirty_reasons = []
             self.last_dirty_time = now
             self.dirty_reasons.append(reason)
-            logger.debug("Marked dirty (reason: %s, total reasons: %d)", reason, len(self.dirty_reasons))
+            logger.debug(
+                "Marked dirty (reason: %s, total reasons: %d)", reason, len(self.dirty_reasons)
+            )
             self._cond.notify_all()
 
     def should_refresh(self, now: float | None = None) -> tuple[bool, str]:
@@ -96,15 +99,19 @@ class CoalescingEngine:
                 now = self._time_fn()
 
             # 1. Safety fetch: max_idle_seconds elapsed since last fetch
-            if self.max_idle_seconds > 0 and self.last_fetch_time >= 0:
-                if (now - self.last_fetch_time) >= self.max_idle_seconds:
-                    return True, "max_idle"
+            if (
+                self.max_idle_seconds > 0
+                and self.last_fetch_time >= 0
+                and (now - self.last_fetch_time) >= self.max_idle_seconds
+            ):
+                return True, "max_idle"
 
             # 2. Coalesced dirty trigger: screen is dirty, debounce expired, and write floor respected
             if self.is_dirty and self.last_dirty_time is not None:
                 debounce_satisfied = (now - self.last_dirty_time) >= self.coalesce_seconds
                 min_floor_satisfied = (
-                    self.last_write_time < 0 or (now - self.last_write_time) >= self.min_refresh_seconds
+                    self.last_write_time < 0
+                    or (now - self.last_write_time) >= self.min_refresh_seconds
                 )
                 if debounce_satisfied and min_floor_satisfied:
                     return True, "dirty"
@@ -181,7 +188,10 @@ class CoalescingEngine:
 
             # Handle 304 Not Modified
             if result.not_modified or result.status_code == 304:
-                logger.info("Image unchanged (304 Not Modified, ETag: %s); skipping panel write", self.last_etag)
+                logger.info(
+                    "Image unchanged (304 Not Modified, ETag: %s); skipping panel write",
+                    self.last_etag,
+                )
                 self.is_dirty = False
                 self.first_dirty_time = None
                 self.last_dirty_time = None
@@ -203,7 +213,11 @@ class CoalescingEngine:
 
             # Handle 200 OK with fresh content
             payload_len = len(result.data) if result.data else 0
-            logger.info("Received fresh 1-bit image (%d bytes, ETag: %s); writing to panel", payload_len, result.etag)
+            logger.info(
+                "Received fresh 1-bit image (%d bytes, ETag: %s); writing to panel",
+                payload_len,
+                result.etag,
+            )
             self.is_dirty = False
             self.first_dirty_time = None
             self.last_dirty_time = None

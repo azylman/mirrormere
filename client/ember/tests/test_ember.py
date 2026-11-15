@@ -4,7 +4,6 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from urllib.parse import urlparse
 
 import pytest
 import yaml
@@ -25,10 +24,7 @@ def test_android_manifest_structure():
     android_ns = "{http://schemas.android.com/apk/res/android}"
 
     # Verify permissions
-    permissions = {
-        elem.attrib.get(f"{android_ns}name")
-        for elem in root.findall("uses-permission")
-    }
+    permissions = {elem.attrib.get(f"{android_ns}name") for elem in root.findall("uses-permission")}
     expected_permissions = {
         "android.permission.INTERNET",
         "android.permission.CAMERA",
@@ -78,7 +74,10 @@ def test_android_manifest_structure():
     for ifilter in intent_filters:
         actions = {a.attrib.get(f"{android_ns}name") for a in ifilter.findall("action")}
         categories = {c.attrib.get(f"{android_ns}name") for c in ifilter.findall("category")}
-        if "android.intent.action.MAIN" in actions and "android.intent.category.LAUNCHER" in categories:
+        if (
+            "android.intent.action.MAIN" in actions
+            and "android.intent.category.LAUNCHER" in categories
+        ):
             has_launcher = True
         if (
             "android.intent.action.MAIN" in actions
@@ -134,7 +133,17 @@ def test_gradle_build_config():
 
 
 def test_boot_receiver_structure():
-    boot_file = REPO_ROOT / "app" / "src" / "main" / "java" / "ventures" / "brock" / "ember" / "BootReceiver.kt"
+    boot_file = (
+        REPO_ROOT
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "ventures"
+        / "brock"
+        / "ember"
+        / "BootReceiver.kt"
+    )
     assert boot_file.exists(), "BootReceiver.kt does not exist"
 
     content = boot_file.read_text(encoding="utf-8")
@@ -151,11 +160,23 @@ def test_boot_receiver_structure():
 
     # Enforce Zero Hardcoded Topology Invariant
     rfc1918_pattern = r"(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)"
-    assert not re.search(rfc1918_pattern, content), "BootReceiver.kt contains hardcoded private RFC 1918 IP"
+    assert not re.search(rfc1918_pattern, content), (
+        "BootReceiver.kt contains hardcoded private RFC 1918 IP"
+    )
 
 
 def test_motion_luma_monitor_structure():
-    monitor_file = REPO_ROOT / "app" / "src" / "main" / "java" / "ventures" / "brock" / "ember" / "MotionLumaMonitor.kt"
+    monitor_file = (
+        REPO_ROOT
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "ventures"
+        / "brock"
+        / "ember"
+        / "MotionLumaMonitor.kt"
+    )
     assert monitor_file.exists(), "MotionLumaMonitor.kt does not exist"
 
     content = monitor_file.read_text(encoding="utf-8")
@@ -203,7 +224,9 @@ def test_motion_luma_monitor_structure():
 
     # Enforce Zero Hardcoded Topology Invariant
     rfc1918_pattern = r"(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)"
-    assert not re.search(rfc1918_pattern, content), "MotionLumaMonitor.kt contains hardcoded private RFC 1918 IP"
+    assert not re.search(rfc1918_pattern, content), (
+        "MotionLumaMonitor.kt contains hardcoded private RFC 1918 IP"
+    )
 
 
 def test_main_activity_structure():
@@ -244,10 +267,7 @@ def test_main_activity_structure():
     # Start URL handling and fallback
     assert 'EXTRA_START_URL = "start_url"' in content
     assert 'PREFS_NAME = "ember_prefs"' in content
-    assert (
-        'DEFAULT_START_URL = "https://hearth.local/display?hide_cursor=true"'
-        in content
-    )
+    assert 'DEFAULT_START_URL = "https://hearth.local/display?hide_cursor=true"' in content
     assert "resolveStartUrl" in content
     assert "resolveStartUrlValue" in content
     assert "onNewIntent" in content
@@ -308,12 +328,12 @@ def test_main_activity_structure():
     assert "data class NightScheduleDecision" in content
 
     # Hardware GPU acceleration invariant (no LAYER_TYPE_SOFTWARE or CSS suppressors)
-    assert (
-        "LAYER_TYPE_SOFTWARE" not in content
-    ), "MainActivity.kt contains LAYER_TYPE_SOFTWARE causing UI lag"
-    assert (
-        "ember-gpu-guard" not in content
-    ), "MainActivity.kt contains ember-gpu-guard suppressing CSS"
+    assert "LAYER_TYPE_SOFTWARE" not in content, (
+        "MainActivity.kt contains LAYER_TYPE_SOFTWARE causing UI lag"
+    )
+    assert "ember-gpu-guard" not in content, (
+        "MainActivity.kt contains ember-gpu-guard suppressing CSS"
+    )
 
     # JavaScript Bridge interface (EmberBridge)
     assert "class EmberBridge" in content
@@ -353,18 +373,18 @@ def test_main_activity_structure():
     assert "android.net.wifi" not in content
 
     # Enforce Zero Hardcoded Topology Invariant
-    rfc1918_pattern = (
-        r"(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)"
+    rfc1918_pattern = r"(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)"
+    assert not re.search(rfc1918_pattern, content), (
+        "MainActivity.kt contains hardcoded private RFC 1918 IP"
     )
-    assert not re.search(
-        rfc1918_pattern, content
-    ), "MainActivity.kt contains hardcoded private RFC 1918 IP"
 
 
 def test_ci_workflow_structure():
     """Verify root GitHub Actions CI workflow configuration and EMBER test integration."""
     nested_ci_path = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-    assert not nested_ci_path.exists(), "Nested client/ember/.github/workflows/ci.yml should not exist"
+    assert not nested_ci_path.exists(), (
+        "Nested client/ember/.github/workflows/ci.yml should not exist"
+    )
 
     root_ci_path = REPO_ROOT.parent.parent / ".github" / "workflows" / "ci.yml"
     assert root_ci_path.exists(), "Root .github/workflows/ci.yml does not exist"
@@ -397,7 +417,9 @@ def test_deploy_no_hardcoded_topology():
     content = deploy_file.read_text(encoding="utf-8")
 
     rfc1918_pattern = r"(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)"
-    assert not re.search(rfc1918_pattern, content), "ember_deploy.py contains hardcoded private RFC 1918 IP"
+    assert not re.search(rfc1918_pattern, content), (
+        "ember_deploy.py contains hardcoded private RFC 1918 IP"
+    )
 
 
 def test_deploy_resolve_adb_binary(monkeypatch, tmp_path):
@@ -422,7 +444,10 @@ def test_deploy_resolve_adb_binary(monkeypatch, tmp_path):
     # Case 3: Default fallback when neither override nor env exists
     monkeypatch.delenv("ADB_BIN", raising=False)
     resolved = ember_deploy.resolve_adb_binary()
-    assert resolved in ("/workspace/tools/bin/adb", ember_deploy.shutil.which("adb") or "/workspace/tools/bin/adb")
+    assert resolved in (
+        "/workspace/tools/bin/adb",
+        ember_deploy.shutil.which("adb") or "/workspace/tools/bin/adb",
+    )
 
 
 def test_deploy_download_apk_artifact_success(monkeypatch, tmp_path):
@@ -525,12 +550,24 @@ def test_deploy_install_and_grant_permissions(monkeypatch, tmp_path):
     # Grant permissions
     ember_deploy.grant_permissions("adb", test_device, "ventures.brock.ember")
     assert recorded_cmds[-2] == [
-        "adb", "-s", test_device, "shell", "pm", "grant",
-        "ventures.brock.ember", "android.permission.CAMERA",
+        "adb",
+        "-s",
+        test_device,
+        "shell",
+        "pm",
+        "grant",
+        "ventures.brock.ember",
+        "android.permission.CAMERA",
     ]
     assert recorded_cmds[-1] == [
-        "adb", "-s", test_device, "shell", "pm", "grant",
-        "ventures.brock.ember", "android.permission.RECORD_AUDIO",
+        "adb",
+        "-s",
+        test_device,
+        "shell",
+        "pm",
+        "grant",
+        "ventures.brock.ember",
+        "android.permission.RECORD_AUDIO",
     ]
 
 
@@ -558,9 +595,17 @@ def test_deploy_launch_kiosk(monkeypatch):
     )
     assert len(recorded_cmds) == 1
     assert recorded_cmds[0] == [
-        "adb", "-s", test_device, "shell", "am", "start",
-        "-n", "ventures.brock.ember/.MainActivity",
-        "-e", "start_url", test_url,
+        "adb",
+        "-s",
+        test_device,
+        "shell",
+        "am",
+        "start",
+        "-n",
+        "ventures.brock.ember/.MainActivity",
+        "-e",
+        "start_url",
+        test_url,
     ]
 
 
@@ -617,11 +662,16 @@ def test_deploy_cli_main(monkeypatch, tmp_path):
     monkeypatch.setattr(ember_deploy, "deploy", mock_deploy)
 
     test_device = "198.51.100.10:5555"
-    code = ember_deploy.main([
-        "--device", test_device,
-        "--apk", str(fake_apk),
-        "--url", "https://hearth.local/test",
-    ])
+    code = ember_deploy.main(
+        [
+            "--device",
+            test_device,
+            "--apk",
+            str(fake_apk),
+            "--url",
+            "https://hearth.local/test",
+        ]
+    )
     assert code == 0
     assert deployed_args["device"] == test_device
     assert deployed_args["start_url"] == "https://hearth.local/test"
@@ -781,12 +831,26 @@ def test_deploy_launch_kiosk_configurable_flags(monkeypatch):
     )
     assert len(recorded_cmds) == 1
     assert recorded_cmds[0] == [
-        "adb", "-s", test_device, "shell", "am", "start",
-        "-n", "ventures.brock.ember/.MainActivity",
-        "-e", "start_url", test_url,
-        "-e", "bridge_origins", "https://updates.example.com",
-        "--ez", "ota_enabled", "true",
-        "--ez", "allow_mixed_content", "false",
+        "adb",
+        "-s",
+        test_device,
+        "shell",
+        "am",
+        "start",
+        "-n",
+        "ventures.brock.ember/.MainActivity",
+        "-e",
+        "start_url",
+        test_url,
+        "-e",
+        "bridge_origins",
+        "https://updates.example.com",
+        "--ez",
+        "ota_enabled",
+        "true",
+        "--ez",
+        "allow_mixed_content",
+        "false",
     ]
 
     # 2. Disabled OTA and allowed mixed content
@@ -801,11 +865,23 @@ def test_deploy_launch_kiosk_configurable_flags(monkeypatch):
     )
     assert len(recorded_cmds) == 1
     assert recorded_cmds[0] == [
-        "adb", "-s", test_device, "shell", "am", "start",
-        "-n", "ventures.brock.ember/.MainActivity",
-        "-e", "start_url", test_url,
-        "--ez", "ota_enabled", "false",
-        "--ez", "allow_mixed_content", "true",
+        "adb",
+        "-s",
+        test_device,
+        "shell",
+        "am",
+        "start",
+        "-n",
+        "ventures.brock.ember/.MainActivity",
+        "-e",
+        "start_url",
+        test_url,
+        "--ez",
+        "ota_enabled",
+        "false",
+        "--ez",
+        "allow_mixed_content",
+        "true",
     ]
 
 
@@ -864,14 +940,20 @@ def test_deploy_cli_security_flags(monkeypatch, tmp_path):
     test_device = "198.51.100.10:5555"
 
     # Flag variant 1: --bridge-origins, --ota-enabled, --no-allow-mixed-content
-    code = ember_deploy.main([
-        "--device", test_device,
-        "--apk", str(fake_apk),
-        "--url", "https://frame.example.com/dash",
-        "--bridge-origins", "https://updates.example.com",
-        "--ota-enabled",
-        "--no-allow-mixed-content",
-    ])
+    code = ember_deploy.main(
+        [
+            "--device",
+            test_device,
+            "--apk",
+            str(fake_apk),
+            "--url",
+            "https://frame.example.com/dash",
+            "--bridge-origins",
+            "https://updates.example.com",
+            "--ota-enabled",
+            "--no-allow-mixed-content",
+        ]
+    )
     assert code == 0
     assert deployed_kwargs["device"] == test_device
     assert deployed_kwargs["start_url"] == "https://frame.example.com/dash"
@@ -881,24 +963,34 @@ def test_deploy_cli_security_flags(monkeypatch, tmp_path):
 
     # Flag variant 2: --no-ota-enabled, --allow-mixed-content
     deployed_kwargs.clear()
-    code = ember_deploy.main([
-        "--device", test_device,
-        "--apk", str(fake_apk),
-        "--no-ota-enabled",
-        "--allow-mixed-content",
-    ])
+    code = ember_deploy.main(
+        [
+            "--device",
+            test_device,
+            "--apk",
+            str(fake_apk),
+            "--no-ota-enabled",
+            "--allow-mixed-content",
+        ]
+    )
     assert code == 0
     assert deployed_kwargs["ota_enabled"] is False
     assert deployed_kwargs["allow_mixed_content"] is True
 
     # Flag variant 3: explicit string boolean values --ota-enabled false --allow-mixed-content true
     deployed_kwargs.clear()
-    code = ember_deploy.main([
-        "--device", test_device,
-        "--apk", str(fake_apk),
-        "--ota-enabled", "false",
-        "--allow-mixed-content", "true",
-    ])
+    code = ember_deploy.main(
+        [
+            "--device",
+            test_device,
+            "--apk",
+            str(fake_apk),
+            "--ota-enabled",
+            "false",
+            "--allow-mixed-content",
+            "true",
+        ]
+    )
     assert code == 0
     assert deployed_kwargs["ota_enabled"] is False
     assert deployed_kwargs["allow_mixed_content"] is True
@@ -906,7 +998,9 @@ def test_deploy_cli_security_flags(monkeypatch, tmp_path):
 
 def test_ember_google_photos_bridge_interface():
     """Verify Google Photos URL allowlist, HTML URL extraction, single-flight timeout cleanup, and OtaInstallReceiver."""
-    source = (REPO_ROOT / "app/src/main/java/ventures/brock/ember/MainActivity.kt").read_text(encoding="utf-8")
+    source = (REPO_ROOT / "app/src/main/java/ventures/brock/ember/MainActivity.kt").read_text(
+        encoding="utf-8"
+    )
     assert "CookieManager.getInstance()" in source
     assert "setAcceptCookie(true)" in source
     assert "setAcceptThirdPartyCookies(webView, true)" in source

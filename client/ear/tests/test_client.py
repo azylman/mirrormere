@@ -1,7 +1,6 @@
 import base64
 import io
 import json
-import math
 import os
 import shutil
 import struct
@@ -12,12 +11,12 @@ import unittest
 import urllib.error
 from unittest.mock import MagicMock, call, patch
 
-from client.ear.config import VoiceConfig
 from client.ear.client import (
     VoiceDaemon,
-    post_voice_state,
     post_voice_heartbeat,
+    post_voice_state,
 )
+from client.ear.config import VoiceConfig
 
 
 class MockModel:
@@ -87,8 +86,6 @@ class MockSherpaSpotter:
         self.reset_streams.append(stream)
         self._ready_count = 1
         stream.reset()
-
-
 
 
 class TestVoiceDaemon(unittest.TestCase):
@@ -339,7 +336,9 @@ class TestVoiceDaemon(unittest.TestCase):
 
         daemon = VoiceDaemon(self.cfg, model=MockModel())
         self.assertTrue(daemon.play_audio(b"fake-mp3-bytes"))
-        mock_popen.assert_called_once_with(["/usr/bin/pw-play", "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        mock_popen.assert_called_once_with(
+            ["/usr/bin/pw-play", "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
 
     @patch("client.ear.client.shutil.which")
     @patch("client.ear.client.subprocess.Popen")
@@ -350,7 +349,14 @@ class TestVoiceDaemon(unittest.TestCase):
         mock_which.return_value = "/usr/bin/pw-play"
         daemon._start_pcm_stream(sample_rate=24000, channels=1)
         mock_popen.assert_called_with(
-            ["/usr/bin/pw-play", "--format=s16", "--rate=24000", "--channels=1", "--latency=800ms", "-"],
+            [
+                "/usr/bin/pw-play",
+                "--format=s16",
+                "--rate=24000",
+                "--channels=1",
+                "--latency=800ms",
+                "-",
+            ],
             stdin=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
@@ -561,7 +567,9 @@ class TestVoiceDaemon(unittest.TestCase):
         with patch.object(daemon, "_start_pcm_stream", return_value=mock_proc):
             daemon._hub_stream_worker(self.save_path)
 
-        self.assertEqual(busy_during_wait, [True], "busy flag must remain True while player.wait() executes")
+        self.assertEqual(
+            busy_during_wait, [True], "busy flag must remain True while player.wait() executes"
+        )
         self.assertFalse(daemon.busy, "busy flag must clear after player.wait() completes")
 
     @patch("client.ear.client.urllib.request.urlopen")
@@ -603,7 +611,9 @@ class TestVoiceDaemon(unittest.TestCase):
             daemon._hub_stream_worker(self.save_path)
 
         mock_proc.stdin.close.assert_called_once()
-        self.assertEqual(observed, [(True, True)], "drain must run while busy and playing are still set")
+        self.assertEqual(
+            observed, [(True, True)], "drain must run while busy and playing are still set"
+        )
         self.assertFalse(daemon.busy)
         self.assertFalse(daemon.playing)
 
@@ -669,8 +679,12 @@ class TestVoiceDaemon(unittest.TestCase):
         daemon._hub_stream_worker(self.save_path)
 
         self.assertTrue(daemon.busy, "abandoned worker must not clear busy owned by the new turn")
-        self.assertEqual(list(daemon.pre_roll), [b"new-turn-frame"], "abandoned worker must not clear pre_roll")
-        self.assertEqual(daemon.reply_ended_at, 123.0, "abandoned worker must not stamp reply_ended_at")
+        self.assertEqual(
+            list(daemon.pre_roll), [b"new-turn-frame"], "abandoned worker must not clear pre_roll"
+        )
+        self.assertEqual(
+            daemon.reply_ended_at, 123.0, "abandoned worker must not stamp reply_ended_at"
+        )
         self.assertFalse(model.reset_called, "abandoned worker must not reset the wake engine")
         mock_urlopen.assert_called_once()  # no idle post from the abandoned worker
 
@@ -736,11 +750,12 @@ class TestVoiceDaemon(unittest.TestCase):
             f.write(b"RIFFdummyWAVE")
 
         daemon = VoiceDaemon(self.cfg, model=MockModel())
-        with patch.object(daemon, "play_audio", side_effect=lambda data: (time.sleep(0.01), True)[1]):
+        with patch.object(
+            daemon, "play_audio", side_effect=lambda data: (time.sleep(0.01), True)[1]
+        ):
             daemon._hub_stream_worker(self.save_path)
 
         self.assertGreaterEqual(daemon.last_playback_sec, 0.015)
-
 
     def test_check_wake_word_measures_eval_latency(self):
         mock_model = MockModel(score_map={"hey_jarvis": 0.1})
@@ -753,7 +768,11 @@ class TestVoiceDaemon(unittest.TestCase):
 
         # Measure eval latency during prediction
         silent_frame = struct.pack("<1280h", *([0] * 1280))
-        with patch.object(mock_model, "predict", side_effect=lambda chunk: (time.sleep(0.002), {"hey_jarvis": 0.1})[1]):
+        with patch.object(
+            mock_model,
+            "predict",
+            side_effect=lambda chunk: (time.sleep(0.002), {"hey_jarvis": 0.1})[1],
+        ):
             daemon._check_wake_word(silent_frame)
 
         self.assertGreater(daemon.last_wake_eval_ms, 0.0)
@@ -855,7 +874,10 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertIn('name="node_id"\r\n\r\ndisplay-1', body)
         self.assertIn('name="audio"; filename="utterance.wav"', body)
 
-        idle_req, idle_kwargs = mock_urlopen.call_args_list[1][0][0], mock_urlopen.call_args_list[1][1]
+        idle_req, idle_kwargs = (
+            mock_urlopen.call_args_list[1][0][0],
+            mock_urlopen.call_args_list[1][1],
+        )
         self.assertEqual(idle_req.full_url, "http://test-core/kiosk/api/voice/state")
         self.assertEqual(idle_kwargs.get("timeout"), 2.0)
         self.assertIn(b'"state": "idle"', idle_req.data)
@@ -872,7 +894,9 @@ class TestVoiceDaemon(unittest.TestCase):
 
     @patch("client.ear.client.post_voice_state")
     @patch("client.ear.client.urllib.request.urlopen")
-    def test_hub_stream_worker_posts_idle_on_connection_failure(self, mock_urlopen, mock_post_state):
+    def test_hub_stream_worker_posts_idle_on_connection_failure(
+        self, mock_urlopen, mock_post_state
+    ):
         with open(self.save_path, "wb") as f:
             f.write(b"RIFFdummyWAVE")
 
@@ -900,7 +924,9 @@ class TestVoiceDaemon(unittest.TestCase):
 
     @patch("client.ear.client.post_voice_state")
     @patch("client.ear.client.urllib.request.urlopen")
-    def test_hub_stream_worker_posts_idle_on_playback_completion(self, mock_urlopen, mock_post_state):
+    def test_hub_stream_worker_posts_idle_on_playback_completion(
+        self, mock_urlopen, mock_post_state
+    ):
         sse_lines = [
             b"event: reply\r\n",
             b'data: {"reply": "The garage door is closed."}\r\n',
@@ -933,12 +959,14 @@ class TestVoiceDaemon(unittest.TestCase):
     @patch("client.ear.client.time.sleep")
     @patch("client.ear.client.post_voice_state")
     @patch("client.ear.client.urllib.request.urlopen")
-    def test_hub_stream_worker_caption_only_reading_delay(self, mock_urlopen, mock_post_state, mock_sleep):
+    def test_hub_stream_worker_caption_only_reading_delay(
+        self, mock_urlopen, mock_post_state, mock_sleep
+    ):
         # 30 words: reading delay should be min(max(30 * 0.3, 5.0), 15.0) = 9.0s
         reply_text = "word " * 30
         sse_lines = [
             b"event: reply\r\n",
-            f'data: {{"reply": "{reply_text.strip()}"}}\r\n'.encode("utf-8"),
+            f'data: {{"reply": "{reply_text.strip()}"}}\r\n'.encode(),
             b"\r\n",
             b"event: done\r\n",
             b"data: {}\r\n",
@@ -962,14 +990,16 @@ class TestVoiceDaemon(unittest.TestCase):
         # Test minimum bound clamp (3 words: 3 * 0.3 = 0.9s -> clamped to 5.0s)
         mock_sleep.reset_mock()
         mock_post_state.reset_mock()
-        mock_resp.__iter__.return_value = iter([
-            b"event: reply\r\n",
-            b'data: {"reply": "Too short reply"}\r\n',
-            b"\r\n",
-            b"event: done\r\n",
-            b"data: {}\r\n",
-            b"\r\n",
-        ])
+        mock_resp.__iter__.return_value = iter(
+            [
+                b"event: reply\r\n",
+                b'data: {"reply": "Too short reply"}\r\n',
+                b"\r\n",
+                b"event: done\r\n",
+                b"data: {}\r\n",
+                b"\r\n",
+            ]
+        )
         daemon._hub_stream_worker(self.save_path)
         mock_sleep.assert_called_once_with(5.0)
         mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
@@ -978,14 +1008,16 @@ class TestVoiceDaemon(unittest.TestCase):
         mock_sleep.reset_mock()
         mock_post_state.reset_mock()
         long_reply = "word " * 60
-        mock_resp.__iter__.return_value = iter([
-            b"event: reply\r\n",
-            f'data: {{"reply": "{long_reply.strip()}"}}\r\n'.encode("utf-8"),
-            b"\r\n",
-            b"event: done\r\n",
-            b"data: {}\r\n",
-            b"\r\n",
-        ])
+        mock_resp.__iter__.return_value = iter(
+            [
+                b"event: reply\r\n",
+                f'data: {{"reply": "{long_reply.strip()}"}}\r\n'.encode(),
+                b"\r\n",
+                b"event: done\r\n",
+                b"data: {}\r\n",
+                b"\r\n",
+            ]
+        )
         daemon._hub_stream_worker(self.save_path)
         mock_sleep.assert_called_once_with(15.0)
         mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
@@ -1055,15 +1087,12 @@ class TestVoiceDaemon(unittest.TestCase):
 
         # 3. Exception handling in post_voice_heartbeat (URLError and Exception)
         import urllib.error
+
         mock_urlopen.side_effect = urllib.error.URLError("Network unreachable")
-        self.assertFalse(
-            post_voice_heartbeat("http://test-hub:9000", "display-1", -50.0)
-        )
+        self.assertFalse(post_voice_heartbeat("http://test-hub:9000", "display-1", -50.0))
 
         mock_urlopen.side_effect = RuntimeError("Fatal socket error")
-        self.assertFalse(
-            post_voice_heartbeat("http://test-hub:9000", "display-1", -50.0)
-        )
+        self.assertFalse(post_voice_heartbeat("http://test-hub:9000", "display-1", -50.0))
 
         # 4. VoiceDaemon._send_heartbeat catches exceptions cleanly
         daemon = VoiceDaemon(self.cfg, model=MockModel())
@@ -1075,8 +1104,10 @@ class TestVoiceDaemon(unittest.TestCase):
         proc = MagicMock()
         proc.communicate.side_effect = lambda input, timeout: (time.sleep(0.002), (b"", b""))[1]
         proc.returncode = 0
-        with patch("client.ear.client.shutil.which", return_value="/usr/bin/pw-play"), \
-                patch("client.ear.client.subprocess.Popen", return_value=proc):
+        with (
+            patch("client.ear.client.shutil.which", return_value="/usr/bin/pw-play"),
+            patch("client.ear.client.subprocess.Popen", return_value=proc),
+        ):
             daemon.play_audio(b"sample-audio")
             self.assertGreater(daemon.last_playback_sec, 0.0)
 
@@ -1088,13 +1119,18 @@ class TestVoiceDaemon(unittest.TestCase):
         daemon.last_playback_sec = 3.5
 
         # Feed 1 frame, but simulate time advancing past 10s
-        chunk_bytes = self.cfg.chunk_samples * 2
+        self.cfg.chunk_samples * 2
         silent_frame = struct.pack("<1280h", *([0] * 1280))
         audio_stream = io.BytesIO(silent_frame)
 
         time_calls = [100.0, 100.0, 115.0, 115.0]
-        with patch("client.ear.client.time.time", side_effect=lambda: time_calls.pop(0) if time_calls else 115.0), \
-             patch("client.ear.client.post_voice_state"):
+        with (
+            patch(
+                "client.ear.client.time.time",
+                side_effect=lambda: time_calls.pop(0) if time_calls else 115.0,
+            ),
+            patch("client.ear.client.post_voice_state"),
+        ):
             daemon.run(audio_source=audio_stream)
 
         mock_thread_cls.assert_called_once()
@@ -1262,9 +1298,11 @@ class TestVoiceDaemon(unittest.TestCase):
         mock_oww_instance.models = {"hey_aerial": None}
         mock_oww_cls.return_value = mock_oww_instance
 
-        with patch("client.ear.client.os.path.exists", return_value=True), \
-             patch("client.ear.client.glob.glob") as mock_glob, \
-             patch.dict("sys.modules", {"openwakeword.model": MagicMock(Model=mock_oww_cls)}):
+        with (
+            patch("client.ear.client.os.path.exists", return_value=True),
+            patch("client.ear.client.glob.glob") as mock_glob,
+            patch.dict("sys.modules", {"openwakeword.model": MagicMock(Model=mock_oww_cls)}),
+        ):
             mock_glob.return_value = ["/models/hey_aerial.onnx"]
             cfg = VoiceConfig(models_dir="/models", wake_models=["hey_aerial"])
             daemon = VoiceDaemon.__new__(VoiceDaemon)
@@ -1308,11 +1346,11 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertEqual(sr, 16000)
         try:
             import numpy as np
+
             self.assertEqual(samples.dtype, np.float32)
         except ImportError:
             self.assertEqual(getattr(samples, "typecode", None), "f")
         self.assertAlmostEqual(float(samples[0]), 0.0, places=2)
-
 
         # Trigger keyword
         mock_spotter.keyword = "Hey Aerial"
@@ -1352,8 +1390,10 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertIn(daemon.sherpa_stream, mock_spotter.reset_streams)
 
     def test_sherpa_lazy_import_does_not_call_init_openwakeword(self):
-        with patch.object(VoiceDaemon, "_init_openwakeword") as mock_oww, \
-             patch.object(VoiceDaemon, "_init_sherpa") as mock_sherpa:
+        with (
+            patch.object(VoiceDaemon, "_init_openwakeword") as mock_oww,
+            patch.object(VoiceDaemon, "_init_sherpa") as mock_sherpa,
+        ):
             mock_spotter = MockSherpaSpotter()
             mock_sherpa.return_value = (mock_spotter, mock_spotter.create_stream())
 
@@ -1379,7 +1419,12 @@ class TestVoiceDaemon(unittest.TestCase):
     def test_init_sherpa_explicit_keywords_file_missing_raises(self):
         model_dir = tempfile.mkdtemp()
         try:
-            for name in ("tokens.txt", "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"):
+            for name in (
+                "tokens.txt",
+                "encoder.int8.onnx",
+                "decoder.int8.onnx",
+                "joiner.int8.onnx",
+            ):
                 with open(os.path.join(model_dir, name), "w") as f:
                     f.write("mock")
             missing_kw = os.path.join(model_dir, "missing_keywords.txt")
@@ -1393,14 +1438,22 @@ class TestVoiceDaemon(unittest.TestCase):
             with patch.dict("sys.modules", {"sherpa_onnx": MagicMock()}):
                 with self.assertRaises(RuntimeError) as ctx:
                     daemon._init_sherpa()
-                self.assertIn(f"Explicitly configured Sherpa keywords_file '{missing_kw}' not found or unreadable", str(ctx.exception))
+                self.assertIn(
+                    f"Explicitly configured Sherpa keywords_file '{missing_kw}' not found or unreadable",
+                    str(ctx.exception),
+                )
         finally:
             shutil.rmtree(model_dir, ignore_errors=True)
 
     def test_init_sherpa_explicit_keywords_file_success(self):
         model_dir = tempfile.mkdtemp()
         try:
-            for name in ("tokens.txt", "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"):
+            for name in (
+                "tokens.txt",
+                "encoder.int8.onnx",
+                "decoder.int8.onnx",
+                "joiner.int8.onnx",
+            ):
                 with open(os.path.join(model_dir, name), "w") as f:
                     f.write("mock")
             custom_kw = os.path.join(model_dir, "my_custom_keywords.txt")
@@ -1435,7 +1488,12 @@ class TestVoiceDaemon(unittest.TestCase):
     def test_init_sherpa_inline_keyword_buf(self):
         model_dir = tempfile.mkdtemp()
         try:
-            for name in ("tokens.txt", "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"):
+            for name in (
+                "tokens.txt",
+                "encoder.int8.onnx",
+                "decoder.int8.onnx",
+                "joiner.int8.onnx",
+            ):
                 with open(os.path.join(model_dir, name), "w") as f:
                     f.write("mock")
             cfg = VoiceConfig(
@@ -1466,7 +1524,13 @@ class TestVoiceDaemon(unittest.TestCase):
         model_dir = tempfile.mkdtemp()
         try:
             bundled_kw = os.path.join(model_dir, "keywords.txt")
-            for name in ("tokens.txt", "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "keywords.txt"):
+            for name in (
+                "tokens.txt",
+                "encoder.int8.onnx",
+                "decoder.int8.onnx",
+                "joiner.int8.onnx",
+                "keywords.txt",
+            ):
                 with open(os.path.join(model_dir, name), "w") as f:
                     f.write("mock")
             cfg = VoiceConfig(
@@ -1492,7 +1556,12 @@ class TestVoiceDaemon(unittest.TestCase):
     def test_init_sherpa_no_keywords_raises(self):
         model_dir = tempfile.mkdtemp()
         try:
-            for name in ("tokens.txt", "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"):
+            for name in (
+                "tokens.txt",
+                "encoder.int8.onnx",
+                "decoder.int8.onnx",
+                "joiner.int8.onnx",
+            ):
                 with open(os.path.join(model_dir, name), "w") as f:
                     f.write("mock")
             cfg = VoiceConfig(
@@ -1513,7 +1582,7 @@ class TestVoiceDaemon(unittest.TestCase):
         root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         kw_path = os.path.join(root_dir, "keywords.txt")
         self.assertTrue(os.path.exists(kw_path), f"keywords.txt not found at {kw_path}")
-        with open(kw_path, "r", encoding="utf-8") as f:
+        with open(kw_path, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("@hey_siri", content)
         self.assertIn("@hello_world", content)
@@ -1555,7 +1624,10 @@ class TestVoiceDaemon(unittest.TestCase):
 
         # Silence frame ending utterance
         daemon.silence_start = time.time() - 0.2
-        with patch.object(daemon, "dispatch_google_voice") as mock_google, patch.object(daemon, "dispatch_hub_interaction") as mock_hub:
+        with (
+            patch.object(daemon, "dispatch_google_voice") as mock_google,
+            patch.object(daemon, "dispatch_hub_interaction") as mock_hub,
+        ):
             event = daemon.process_frame(silent_frame)
             self.assertEqual(event, "utterance_saved")
             mock_google.assert_called_once_with(self.save_path)
@@ -1586,7 +1658,10 @@ class TestVoiceDaemon(unittest.TestCase):
         daemon.process_frame(speech_frame)
 
         daemon.silence_start = time.time() - 0.2
-        with patch.object(daemon, "dispatch_google_voice") as mock_google, patch.object(daemon, "dispatch_hub_interaction") as mock_hub:
+        with (
+            patch.object(daemon, "dispatch_google_voice") as mock_google,
+            patch.object(daemon, "dispatch_hub_interaction") as mock_hub,
+        ):
             event = daemon.process_frame(silent_frame)
             self.assertEqual(event, "utterance_saved")
             mock_hub.assert_called_once_with(self.save_path)
@@ -1603,7 +1678,10 @@ class TestVoiceDaemon(unittest.TestCase):
         with open(self.save_path, "wb") as f:
             f.write(wav_bytes)
 
-        with patch("urllib.request.urlopen") as mock_urlopen, patch("client.ear.client.post_voice_state") as mock_post_state:
+        with (
+            patch("urllib.request.urlopen") as mock_urlopen,
+            patch("client.ear.client.post_voice_state") as mock_post_state,
+        ):
             mock_resp = MagicMock()
             mock_resp.status = 200
             mock_urlopen.return_value.__enter__.return_value = mock_resp
@@ -1623,4 +1701,3 @@ class TestVoiceDaemon(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

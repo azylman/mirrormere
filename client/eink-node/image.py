@@ -37,7 +37,10 @@ def validate_png(data: bytes) -> tuple[bool, str | None]:
         )
 
         if width != PANEL_WIDTH or height != PANEL_HEIGHT:
-            return False, f"Invalid dimensions: expected {PANEL_WIDTH}x{PANEL_HEIGHT}, got {width}x{height}"
+            return (
+                False,
+                f"Invalid dimensions: expected {PANEL_WIDTH}x{PANEL_HEIGHT}, got {width}x{height}",
+            )
 
         # E-paper display expects 1-bit monochrome (Color Type 0: Grayscale with Bit Depth 1)
         if bit_depth != 1:
@@ -98,7 +101,9 @@ def stamp_offline_dot(png_bytes: bytes) -> bytes:
 
     # Construct new IDAT chunk
     idat_crc = zlib.crc32(b"IDAT" + recompressed) & 0xFFFFFFFF
-    new_idat = struct.pack(">I4s", len(recompressed), b"IDAT") + recompressed + struct.pack(">I", idat_crc)
+    new_idat = (
+        struct.pack(">I4s", len(recompressed), b"IDAT") + recompressed + struct.pack(">I", idat_crc)
+    )
 
     result = [PNG_SIGNATURE]
     result.extend(chunks_before_idat)
@@ -108,7 +113,9 @@ def stamp_offline_dot(png_bytes: bytes) -> bytes:
     return b"".join(result)
 
 
-def save_last_image(png_bytes: bytes, target_path: str = "/var/lib/mirrormere-eink/last.png") -> bool:
+def save_last_image(
+    png_bytes: bytes, target_path: str = "/var/lib/mirrormere-eink/last.png"
+) -> bool:
     """
     Persists the last valid image to disk so a power cycle while offline restores
     the screen without leaving a blank panel. Falls back to user cache or /tmp if

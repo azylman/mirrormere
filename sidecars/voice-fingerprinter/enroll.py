@@ -31,6 +31,7 @@ speaker, since their embeddings are meaningless under a different model, and
 prints a loud warning about it). --dry-run prints what would be written instead
 of writing it.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -63,6 +64,7 @@ MIN_SURVIVING_CHUNKS = 3
 # WAV chunking and loudness filtering (stdlib only — the embed server does
 # its own decode/downmix/resample per chunk).
 # --------------------------------------------------------------------------
+
 
 def _chunk_rms(frames: bytes, sampwidth: int) -> float:
     """Generic RMS over raw PCM bytes, any (mono or interleaved) channel
@@ -128,6 +130,7 @@ def filter_loud_enough(chunks: list) -> list:
 # Embedding + centroid math
 # --------------------------------------------------------------------------
 
+
 def embed_wav(wav_bytes: bytes, embed_url: str):
     req = Request(embed_url, data=wav_bytes, headers={"Content-Type": "audio/wav"}, method="POST")
     try:
@@ -152,7 +155,7 @@ def _l2_normalize(vec: list) -> list:
 
 
 def _cosine_similarity(a: list, b: list) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0 or nb == 0:
@@ -201,6 +204,7 @@ def build_centroid(chunk_wavs: list, embed_url: str):
 # Config YAML & Fingerprints JSON persistence on disk
 # --------------------------------------------------------------------------
 
+
 def _is_yaml_path(path: Path) -> bool:
     return path.suffix.lower() in (".yaml", ".yml")
 
@@ -213,15 +217,16 @@ def _strip_yaml_comment(val: str) -> str:
             in_single = not in_single
         elif ch == '"' and not in_single:
             in_double = not in_double
-        elif ch == "#" and not in_single and not in_double:
-            if idx == 0 or val[idx - 1].isspace():
-                return val[:idx].strip()
+        elif ch == "#" and not in_single and not in_double and (idx == 0 or val[idx - 1].isspace()):
+            return val[:idx].strip()
     return val.strip()
 
 
 def _parse_yaml_scalar(raw: str) -> str:
     cleaned = _strip_yaml_comment(raw)
-    if len(cleaned) >= 2 and ((cleaned[0] == '"' and cleaned[-1] == '"') or (cleaned[0] == "'" and cleaned[-1] == "'")):
+    if len(cleaned) >= 2 and (
+        (cleaned[0] == '"' and cleaned[-1] == '"') or (cleaned[0] == "'" and cleaned[-1] == "'")
+    ):
         if cleaned[0] == '"':
             try:
                 return str(json.loads(cleaned))
@@ -241,7 +246,9 @@ def _find_block_bounds(lines: list[str], start_idx: int, parent_indent: int) -> 
         if indent <= parent_indent:
             end_idx = idx
             break
-    while end_idx > start_idx + 1 and (not lines[end_idx - 1].strip() or lines[end_idx - 1].lstrip().startswith("#")):
+    while end_idx > start_idx + 1 and (
+        not lines[end_idx - 1].strip() or lines[end_idx - 1].lstrip().startswith("#")
+    ):
         end_idx -= 1
     return end_idx
 
@@ -268,7 +275,9 @@ def _read_yaml_speakers(path: Path) -> dict | None:
             vh_idx = i
             break
         elif re.match(r"^voice_hub:\s*\S+", line):
-            raise RuntimeError(f"{path} has malformed voice_hub entry: expected mapping block, found scalar/inline mapping")
+            raise RuntimeError(
+                f"{path} has malformed voice_hub entry: expected mapping block, found scalar/inline mapping"
+            )
 
     if vh_idx is None:
         return None
@@ -283,7 +292,9 @@ def _read_yaml_speakers(path: Path) -> dict | None:
             sid_indent = len(m.group(1))
             break
         elif re.match(r"^\s+speaker_id:\s*\S+", lines[i]):
-            raise RuntimeError(f"{path} has malformed speaker_id entry: expected mapping block, found scalar/inline mapping")
+            raise RuntimeError(
+                f"{path} has malformed speaker_id entry: expected mapping block, found scalar/inline mapping"
+            )
 
     if sid_idx is None:
         return None
@@ -339,12 +350,14 @@ def _read_yaml_speakers(path: Path) -> dict | None:
                     current["id"] = _parse_yaml_scalar(sub_s[3:].strip())
                     i += 1
                 elif sub_s.startswith("embedding:"):
-                    raw_emb = _strip_yaml_comment(sub_s[len("embedding:"):].strip())
+                    raw_emb = _strip_yaml_comment(sub_s[len("embedding:") :].strip())
                     if raw_emb:
                         try:
                             current["embedding"] = [float(x) for x in json.loads(raw_emb)]
                         except Exception as exc:
-                            raise RuntimeError(f"{path} has invalid speaker embedding list: {exc}") from exc
+                            raise RuntimeError(
+                                f"{path} has invalid speaker embedding list: {exc}"
+                            ) from exc
                         i += 1
                     else:
                         emb_vals = []
@@ -364,7 +377,9 @@ def _read_yaml_speakers(path: Path) -> dict | None:
                             try:
                                 emb_vals.append(float(m_val.group(1)))
                             except ValueError as exc:
-                                raise RuntimeError(f"{path} has invalid float in embedding block sequence: {exc}") from exc
+                                raise RuntimeError(
+                                    f"{path} has invalid float in embedding block sequence: {exc}"
+                                ) from exc
                             i += 1
                         current["embedding"] = emb_vals
                 else:
@@ -406,18 +421,22 @@ def _build_yaml_with_speakers(existing_text: str, data: dict) -> str:
             vh_idx = i
             break
         elif re.match(r"^voice_hub:\s*\S+", line):
-            raise RuntimeError("Existing text has malformed voice_hub entry: expected mapping block, found scalar/inline mapping")
+            raise RuntimeError(
+                "Existing text has malformed voice_hub entry: expected mapping block, found scalar/inline mapping"
+            )
 
     if vh_idx is None:
         entry_lines = _format_speaker_id_entries(data, indent=4, step=2)
         if lines and lines[-1].strip():
             lines.append("")
-        lines.extend([
-            "voice_hub:",
-            "  speaker_id:",
-            f'    embed_url: "{DEFAULT_DOCKER_EMBED_URL}"',
-            *entry_lines,
-        ])
+        lines.extend(
+            [
+                "voice_hub:",
+                "  speaker_id:",
+                f'    embed_url: "{DEFAULT_DOCKER_EMBED_URL}"',
+                *entry_lines,
+            ]
+        )
         return "\n".join(lines) + "\n"
 
     vh_end = _find_block_bounds(lines, vh_idx, 0)
@@ -437,7 +456,9 @@ def _build_yaml_with_speakers(existing_text: str, data: dict) -> str:
             sid_indent = len(m.group(1))
             break
         elif re.match(r"^\s+speaker_id:\s*\S+", lines[i]):
-            raise RuntimeError("Existing text has malformed speaker_id entry: expected mapping block, found scalar/inline mapping")
+            raise RuntimeError(
+                "Existing text has malformed speaker_id entry: expected mapping block, found scalar/inline mapping"
+            )
 
     if vh_child_indent is None:
         vh_child_indent = 2
@@ -445,7 +466,9 @@ def _build_yaml_with_speakers(existing_text: str, data: dict) -> str:
     if sid_idx is None:
         sid_pad = " " * vh_child_indent
         child_pad = " " * (vh_child_indent * 2)
-        entry_lines = _format_speaker_id_entries(data, indent=vh_child_indent * 2, step=vh_child_indent)
+        entry_lines = _format_speaker_id_entries(
+            data, indent=vh_child_indent * 2, step=vh_child_indent
+        )
         new_sid = [
             f"{sid_pad}speaker_id:",
             f'{child_pad}embed_url: "{DEFAULT_DOCKER_EMBED_URL}"',
@@ -544,7 +567,9 @@ def write_speakers(path: Path, data: dict) -> None:
             os.unlink(tmp_name)
 
 
-def merge_speaker(existing: dict | None, speaker_id: str, embedding: list, model: str, force: bool) -> dict:
+def merge_speaker(
+    existing: dict | None, speaker_id: str, embedding: list, model: str, force: bool
+) -> dict:
     if existing is None:
         return {"model": model, "speakers": [{"id": speaker_id, "embedding": embedding}]}
 
@@ -579,6 +604,7 @@ def merge_speaker(existing: dict | None, speaker_id: str, embedding: list, model
 # CLI
 # --------------------------------------------------------------------------
 
+
 def cmd_list(output: Path) -> int:
     data = read_speakers(output)
     if data is None:
@@ -600,7 +626,10 @@ def cmd_remove(output: Path, speaker_id: str, dry_run: bool) -> int:
     if not any(s.get("id") == speaker_id for s in speakers):
         print(f"No speaker {speaker_id!r} enrolled.")
         return 1
-    new_data = {"model": data.get("model"), "speakers": [s for s in speakers if s.get("id") != speaker_id]}
+    new_data = {
+        "model": data.get("model"),
+        "speakers": [s for s in speakers if s.get("id") != speaker_id],
+    }
     if dry_run:
         print(f"[dry-run] would remove {speaker_id!r}, leaving:")
         print(json.dumps(new_data, indent=2))
@@ -616,7 +645,9 @@ def cmd_enroll(args) -> int:
         wav_path = Path(p)
         chunks_with_rms = split_wav_into_chunks(wav_path, CHUNK_SECONDS)
         loud_enough = filter_loud_enough(chunks_with_rms)
-        print(f"{wav_path}: {len(chunks_with_rms)} chunk(s), {len(loud_enough)} above the loudness floor")
+        print(
+            f"{wav_path}: {len(chunks_with_rms)} chunk(s), {len(loud_enough)} above the loudness floor"
+        )
         all_chunks.extend(loud_enough)
 
     centroid, model, stats = build_centroid(all_chunks, args.embed_url)
@@ -640,7 +671,8 @@ def cmd_enroll(args) -> int:
         print(f"[dry-run] would write to {args.output}:")
         preview = dict(merged)
         preview["speakers"] = [
-            {"id": s["id"], "embedding": f"<{len(s['embedding'])} floats>"} for s in merged["speakers"]
+            {"id": s["id"], "embedding": f"<{len(s['embedding'])} floats>"}
+            for s in merged["speakers"]
         ]
         print(json.dumps(preview, indent=2))
         return 0
@@ -653,15 +685,31 @@ def cmd_enroll(args) -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("speaker_id", nargs="?", help="speaker id to enroll (e.g. speaker-1)")
-    parser.add_argument("--wav", nargs="+", metavar="FILE", help="WAV file(s) of the speaker talking")
-    parser.add_argument("--embed-url", default=DEFAULT_EMBED_URL,
-                         help=f"voice-fingerprinter server URL (default {DEFAULT_EMBED_URL})")
-    parser.add_argument("--output", "--config", dest="output", default=DEFAULT_OUTPUT, type=Path,
-                         help=f"Mirrormere config.yaml (or fingerprints JSON) path to read/write (default {DEFAULT_OUTPUT}) "
-                              "— updates voice_hub.speaker_id.model and voice_hub.speaker_id.speakers in-place")
-    parser.add_argument("--dry-run", action="store_true", help="print what would be written, don't write it")
-    parser.add_argument("--force", action="store_true",
-                         help="allow switching the configured model (drops every other enrolled speaker)")
+    parser.add_argument(
+        "--wav", nargs="+", metavar="FILE", help="WAV file(s) of the speaker talking"
+    )
+    parser.add_argument(
+        "--embed-url",
+        default=DEFAULT_EMBED_URL,
+        help=f"voice-fingerprinter server URL (default {DEFAULT_EMBED_URL})",
+    )
+    parser.add_argument(
+        "--output",
+        "--config",
+        dest="output",
+        default=DEFAULT_OUTPUT,
+        type=Path,
+        help=f"Mirrormere config.yaml (or fingerprints JSON) path to read/write (default {DEFAULT_OUTPUT}) "
+        "— updates voice_hub.speaker_id.model and voice_hub.speaker_id.speakers in-place",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="print what would be written, don't write it"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="allow switching the configured model (drops every other enrolled speaker)",
+    )
     parser.add_argument("--list", action="store_true", help="list enrolled speakers and exit")
     parser.add_argument("--remove", metavar="ID", help="remove a speaker id and exit")
     args = parser.parse_args(argv)

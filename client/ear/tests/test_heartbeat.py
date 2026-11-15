@@ -3,9 +3,9 @@ import os
 import tempfile
 import time
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from client.ear.client import _touch_heartbeat, HEARTBEAT_FILE, VoiceDaemon
+from client.ear.client import VoiceDaemon, _touch_heartbeat
 from client.ear.config import VoiceConfig
 
 
@@ -18,7 +18,7 @@ class TestHeartbeat(unittest.TestCase):
             t_after = int(time.time())
 
             self.assertTrue(os.path.exists(target))
-            with open(target, "r", encoding="utf-8") as f:
+            with open(target, encoding="utf-8") as f:
                 content = int(f.read().strip())
             self.assertTrue(t_before <= content <= t_after)
 
@@ -28,7 +28,7 @@ class TestHeartbeat(unittest.TestCase):
             with patch.dict(os.environ, {"MIRRORMERE_HEARTBEAT_FILE": target}):
                 _touch_heartbeat()
                 self.assertTrue(os.path.exists(target))
-                with open(target, "r", encoding="utf-8") as f:
+                with open(target, encoding="utf-8") as f:
                     content = int(f.read().strip())
                 self.assertTrue(content > 0)
 
@@ -46,7 +46,9 @@ class TestHeartbeat(unittest.TestCase):
         mock_model.prediction_buffer = {}
         mock_model.predict.return_value = {}
 
-        cfg = VoiceConfig(chunk_samples=160, sample_rate=16000, silence_ms=200, cooldown_seconds=0.1)
+        cfg = VoiceConfig(
+            chunk_samples=160, sample_rate=16000, silence_ms=200, cooldown_seconds=0.1
+        )
         daemon = VoiceDaemon(cfg, model=mock_model)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -59,7 +61,7 @@ class TestHeartbeat(unittest.TestCase):
                 daemon.run(audio_source=audio_stream)
 
                 self.assertTrue(os.path.exists(target))
-                with open(target, "r", encoding="utf-8") as f:
+                with open(target, encoding="utf-8") as f:
                     ts = int(f.read().strip())
                 self.assertTrue(ts > 0)
 

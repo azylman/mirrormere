@@ -2,10 +2,10 @@
 fetcher.py - ETag-based HTTP image fetcher for Mirrormere E-Ink display node
 """
 
-from dataclasses import dataclass
-import urllib.request
 import urllib.error
 import urllib.parse
+import urllib.request
+from dataclasses import dataclass
 
 
 @dataclass
