@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/azylman/mirrormere/internal/config"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/azylman/mirrormere/internal/config"
 )
 
 type funcBrain func(context.Context, AskRequest, func(string)) (string, error)
@@ -309,13 +310,13 @@ func TestInactivityContext(t *testing.T) {
 			t.Parallel()
 			parent, cancelParent := context.WithCancel(context.Background())
 			defer cancelParent()
-			ctx, stop := newInactivityContext(parent, tc.timeout)
+			ctx, reset, stop := newInactivityContext(parent, tc.timeout)
 			defer stop()
 			if tc.resetDelay > 0 {
 				if !waitCtx(ctx, tc.resetDelay) {
 					t.Fatalf("premature cancel: %v", ctx.Err())
 				}
-				ctx.Reset()
+				reset()
 				if !waitCtx(ctx, tc.resetDelay) {
 					t.Fatalf("canceled prematurely after reset: %v", ctx.Err())
 				}
@@ -329,7 +330,7 @@ func TestInactivityContext(t *testing.T) {
 			if waitCtx(ctx, 500*time.Millisecond) || !errors.Is(ctx.Err(), tc.wantDoneErr) {
 				t.Fatalf("expected %v, got %v", tc.wantDoneErr, ctx.Err())
 			}
-			ctx.Reset()
+			reset()
 		})
 	}
 }

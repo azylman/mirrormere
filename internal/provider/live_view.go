@@ -1,7 +1,7 @@
 package provider
 
 func init() {
-	registerBuiltin("live-view", func() Provider {
+	registerBuiltin(providerLiveView, func() Provider {
 		return NewLiveViewProvider()
 	})
 }

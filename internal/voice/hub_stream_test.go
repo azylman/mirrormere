@@ -17,6 +17,7 @@ import (
 	"github.com/azylman/mirrormere/internal/chatlog"
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/events"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 type fixedSpeaker struct{ name string }
@@ -129,7 +130,7 @@ func extractAudioChunkEvents(t *testing.T, evs []recordedEvent) []map[string]any
 	var out []map[string]any
 	for _, e := range evs {
 		if e.Event == "audio_chunk" {
-			out = append(out, e.Data.(map[string]any))
+			out = append(out, testutil.As[map[string]any](t, e.Data))
 		}
 	}
 	return out
@@ -219,7 +220,7 @@ func TestDefaultBrainClient_AskStreaming(t *testing.T) {
 				defer srv.Close()
 				url = srv.URL
 			}
-			b := NewDefaultBrainClient(url, 5).(*DefaultBrainClient)
+			b := testutil.As[*DefaultBrainClient](t, NewDefaultBrainClient(url, 5))
 			var statuses, gotChunks []string
 			var onAudio func(BrainAudioChunk)
 			if tc.collectAudio {
@@ -302,7 +303,7 @@ func assertStreamingAudioChunks(t *testing.T, tc streamingInteractCase, evs []re
 		}
 	}
 	if tc.wantRemainderBytes > 0 && len(chunks) >= 2 {
-		dec, _ := base64.StdEncoding.DecodeString(chunks[len(chunks)-2]["data"].(string))
+		dec, _ := base64.StdEncoding.DecodeString(testutil.As[string](t, chunks[len(chunks)-2]["data"]))
 		if len(dec) != tc.wantRemainderBytes {
 			t.Errorf("remainder bytes: want %d, got %d", tc.wantRemainderBytes, len(dec))
 		}
@@ -518,7 +519,11 @@ func runDefaultTTSClientWAVAndPCMParsingCase(t *testing.T, tc wavParseCase, pcm 
 		for k, v := range tc.hdr {
 			w.Header().Set(k, v)
 		}
-		f := w.(http.Flusher)
+		f, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
 		for i := 0; i < len(tc.body); i += 1000 {
 			_, _ = w.Write(tc.body[i:min(i+1000, len(tc.body))])
 			f.Flush()

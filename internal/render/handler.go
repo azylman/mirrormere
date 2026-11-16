@@ -101,7 +101,7 @@ func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widget
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodGet {
-		if _, err := w.Write(htmlBytes); err != nil {
+		if _, err := w.Write(htmlBytes); err != nil { //nolint:gosec // G705: htmlBytes is html/template output, already contextually escaped
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
@@ -119,7 +119,7 @@ func parseWidgetOverrides(query url.Values) (map[string]any, error) {
 	}
 	if viewParam := strings.TrimSpace(query.Get("view")); viewParam != "" {
 		lowerView := strings.ToLower(viewParam)
-		if lowerView != "day" && lowerView != "week" && lowerView != "month" {
+		if lowerView != calendarViewDay && lowerView != calendarViewWeek && lowerView != calendarViewMonth {
 			return nil, errors.New("invalid view parameter: must be day, week, or month")
 		}
 		overrides["default_view"] = lowerView
@@ -169,9 +169,9 @@ func (h *Handler) GetWidgetJSON(w http.ResponseWriter, r *http.Request, widgetID
 		AssetsBase: ctx.Assets + "/",
 	}
 	if ctx.Type == "calendar-grid" {
-		viewModel, err := h.calendarViewModel(ctx)
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "failed to build calendar view model: "+err.Error())
+		viewModel, vmErr := h.calendarViewModel(ctx)
+		if vmErr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to build calendar view model: "+vmErr.Error())
 			return
 		}
 		resp.ViewModel = viewModel
@@ -203,11 +203,11 @@ func (h *Handler) calendarViewModel(ctx Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	activeView := "week"
+	activeView := calendarViewWeek
 	if strings.EqualFold(stringOr(ctx.Config, "default_view", "week"), "month") {
-		activeView = "month"
+		activeView = calendarViewMonth
 	}
-	return map[string]any{"week": week, "month": month, "active_view": activeView}, nil
+	return map[string]any{calendarViewWeek: week, calendarViewMonth: month, "active_view": activeView}, nil
 }
 
 // GetWidgetAsset handles GET /widget-types/{type}/assets/{path} requests with path traversal protection.

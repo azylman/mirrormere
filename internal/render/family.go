@@ -157,7 +157,7 @@ type mergedFamilyEvents struct {
 }
 
 func newFamilyEvent(ev provider.CalendarEvent, loc *time.Location, timeFormat ...string) *FamilyEvent {
-	tf := "24h"
+	tf := timeFormat24h
 	if len(timeFormat) > 0 && timeFormat[0] != "" {
 		tf = timeFormat[0]
 	}
@@ -306,10 +306,10 @@ func assignFamilyEventOwners(fe *FamilyEvent, claimed map[string]bool, members [
 
 func claimFamilyEventMembers(ev provider.CalendarEvent, fe *FamilyEvent, members []FamilyMember, calendars map[string]familyCalendarSource, ownerSet map[string]bool) {
 	if src, ok := calendars[ev.CalendarName]; ok && src.private {
-		fe.Title = "Busy"
+		fe.Title = busyTitle
 		fe.Location = ""
 		fe.ImageURL = ""
-		fe.Description = "Busy"
+		fe.Description = busyTitle
 	} else {
 		for _, m := range members {
 			if summaryMentionsMember(ev.Title, m.Name) {
@@ -326,7 +326,7 @@ func claimFamilyEventMembers(ev provider.CalendarEvent, fe *FamilyEvent, members
 }
 
 func refineSummaryMatchedOwners(title string, members []FamilyMember, ownerSet map[string]bool) map[string]bool {
-	if len(ownerSet) <= 1 || title == "Busy" {
+	if len(ownerSet) <= 1 || title == busyTitle {
 		return ownerSet
 	}
 	summaryMatched := make(map[string]bool)
@@ -353,7 +353,7 @@ func mergeFamilyEvents(
 	if loc == nil {
 		loc = time.UTC
 	}
-	tf := "24h"
+	tf := timeFormat24h
 	if len(timeFormat) > 0 && timeFormat[0] != "" {
 		tf = timeFormat[0]
 	}
@@ -446,7 +446,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	}
 
 	maxVisible := maxVisibleTimedRows(dims)
-	timeFormat := stringOr(cfg, "time_format", "24h")
+	timeFormat := stringOr(cfg, "time_format", timeFormat24h)
 
 	mergedData := mergeFamilyEvents(
 		snapshot.Events,
@@ -945,7 +945,8 @@ func parseFamilyMembers(cfg map[string]any) ([]FamilyMember, error) {
 		}
 		initial = strings.TrimSpace(initial)
 		if initial == "" {
-			initial = strings.ToUpper(string([]rune(name)[0]))
+			first, _ := utf8.DecodeRuneInString(name)
+			initial = strings.ToUpper(string(first))
 		}
 		var pattern string
 		if v, ok := m["pattern"].(string); ok {
@@ -1254,7 +1255,7 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 	}
 
 	snapshot := extractCalendarSnapshot(data)
-	timeFormat := stringOr(cfg, "time_format", "24h")
+	timeFormat := stringOr(cfg, "time_format", timeFormat24h)
 	mergedData := mergeFamilyEvents(
 		snapshot.Events,
 		members,

@@ -77,7 +77,7 @@ func mapUpstreamStatus(code int, targetURL string) error {
 }
 
 func doBearerGet(ctx context.Context, client *http.Client, targetURL, token, errPrefix string) ([]byte, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, http.NoBody)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create http request: %w", err)
 	}

@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/azylman/mirrormere/internal/domain"
 	"gopkg.in/yaml.v3"
+
+	"github.com/azylman/mirrormere/internal/domain"
 )
 
 func assertDimensionProperties(t *testing.T, d domain.Dimension, expCols, expRows, expArea int) {

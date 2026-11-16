@@ -301,14 +301,14 @@ func (c *CalDAVClient) findCalendarInHome(ctx context.Context, homeURL string, s
 func (c *CalDAVClient) getCachedURL(key string) (string, bool) {
 	c.cacheMu.RLock()
 	defer c.cacheMu.RUnlock()
-	url, ok := c.discoveryCache[key]
-	return url, ok
+	cached, ok := c.discoveryCache[key]
+	return cached, ok
 }
 
-func (c *CalDAVClient) setCachedURL(key, url string) {
+func (c *CalDAVClient) setCachedURL(key, discoveredURL string) {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
-	c.discoveryCache[key] = url
+	c.discoveryCache[key] = discoveredURL
 }
 
 func applyCalDAVAuth(req *http.Request, source CalendarSource) {

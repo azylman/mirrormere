@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 type failWriter struct{}
@@ -134,7 +136,7 @@ func TestRun_Lifecycle(t *testing.T) {
 		t.Fatalf("failed to listen: %v", err)
 	}
 	defer l.Close()
-	cfgBindFail := writeTestYAML(t, tmpDir, "bindfail.yaml", fmt.Sprintf("control_url: \"http://cast-watcher:8090/action\"\ncontrol_port: %d\n", l.Addr().(*net.TCPAddr).Port))
+	cfgBindFail := writeTestYAML(t, tmpDir, "bindfail.yaml", fmt.Sprintf("control_url: \"http://cast-watcher:8090/action\"\ncontrol_port: %d\n", testutil.As[*net.TCPAddr](t, l.Addr()).Port))
 	if err := RunWithReady(context.Background(), []string{cfgBindFail}, &bytes.Buffer{}, &bytes.Buffer{}, nil, nil); err == nil || !strings.Contains(err.Error(), "failed to bind address") {
 		t.Fatalf("expected bind failure error, got: %v", err)
 	}

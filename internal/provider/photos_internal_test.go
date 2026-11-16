@@ -734,7 +734,7 @@ func assertPhotosProviderInitAndURLEdges(t *testing.T) {
 	if err != nil || u != "https://example.com/env" {
 		t.Errorf("expected env secret url, got %v, %v", u, err)
 	}
-	if _, err := resolveSingleAlbumURL(0, AlbumSource{URLEnv: "NON_EXISTENT_VAR"}, false, InitOptions{}); err == nil {
+	if _, err = resolveSingleAlbumURL(0, AlbumSource{URLEnv: "NON_EXISTENT_VAR"}, false, InitOptions{}); err == nil {
 		t.Error("expected error for non-existent env var")
 	}
 

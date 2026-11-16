@@ -110,10 +110,10 @@ func householdNowFunc(sp render.StateSnapshotProvider) func() time.Time {
 func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
 	return func() string {
 		if sp == nil || sp.CurrentSnapshot() == nil || sp.CurrentSnapshot().Config == nil {
-			return "day"
+			return config.ThemeModeDay
 		}
 		snap := sp.CurrentSnapshot()
-		if mode := snap.Config.Display.Theme.GetMode(); mode == "night" || mode == "day" {
+		if mode := snap.Config.Display.Theme.GetMode(); mode == config.ThemeModeNight || mode == config.ThemeModeDay {
 			return mode
 		}
 		if loc := snap.Config.GetLocationConfig(); loc != nil && loc.Latitude != nil && loc.Longitude != nil {
@@ -122,10 +122,10 @@ func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
 				now = now.In(snap.Config.Location())
 			}
 			if solar.IsNight(loc.GetLatitude(), loc.GetLongitude(), now) {
-				return "night"
+				return config.ThemeModeNight
 			}
 		}
-		return "day"
+		return config.ThemeModeDay
 	}
 }
 
@@ -316,7 +316,18 @@ func parseServerCLIArgs(args []string, stderr io.Writer) (string, bool, error) {
 	return configPath, false, nil
 }
 
-func loadInitialConfigAndAssets(configPath string, args []string) (*widget.Loader, string, string, []byte, string, string, error) {
+// initialAssets bundles the widget loader, asset directories and bootstrap
+// configuration resolved before the config manager starts.
+type initialAssets struct {
+	loader        *widget.Loader
+	builtinDir    string
+	customDir     string
+	initialYAML   []byte
+	customCSSPath string
+	configPath    string
+}
+
+func loadInitialConfigAndAssets(configPath string, args []string) (initialAssets, error) {
 	builtinDir := widget.DefaultBuiltinDir
 	for _, c := range []string{"/app/widgets", "widgets", "../../widgets"} {
 		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
@@ -340,7 +351,7 @@ func loadInitialConfigAndAssets(configPath string, args []string) (*widget.Loade
 		if data, err := os.ReadFile(configPath); err == nil {
 			initialYAML = data
 		} else if (len(args) > 0 && configPath == args[0]) || (os.Getenv("CONFIG_PATH") != "" && configPath == os.Getenv("CONFIG_PATH")) {
-			return nil, "", "", nil, "", "", fmt.Errorf("failed to read configuration file %q: %w", configPath, err)
+			return initialAssets{}, fmt.Errorf("failed to read configuration file %q: %w", configPath, err)
 		}
 	}
 	if initialYAML == nil {
@@ -351,7 +362,14 @@ func loadInitialConfigAndAssets(configPath string, args []string) (*widget.Loade
 	if effectiveConfigPath != "" {
 		customCSSPath = filepath.Join(filepath.Dir(effectiveConfigPath), "custom.css")
 	}
-	return loader, builtinDir, customDir, initialYAML, customCSSPath, effectiveConfigPath, nil
+	return initialAssets{
+		loader:        loader,
+		builtinDir:    builtinDir,
+		customDir:     customDir,
+		initialYAML:   initialYAML,
+		customCSSPath: customCSSPath,
+		configPath:    effectiveConfigPath,
+	}, nil
 }
 
 func startReloadWatchers(
@@ -443,17 +461,18 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return err
 	}
 
-	loader, builtinDir, customDir, initialYAML, customCSSPath, effectiveConfigPath, err := loadInitialConfigAndAssets(configPath, args)
+	assets, err := loadInitialConfigAndAssets(configPath, args)
 	if err != nil {
 		return err
 	}
-	configPath = effectiveConfigPath
+	configPath = assets.configPath
+	loader := assets.loader
 
 	var mgrOpts []config.ManagerOption
 	if configPath != "" {
 		mgrOpts = append(mgrOpts, config.WithUseConfigOverridePath(), config.WithOverridePath(""))
 	}
-	configManager, err := config.NewManager(initialYAML, loader, os.Getenv, logger, mgrOpts...)
+	configManager, err := config.NewManager(assets.initialYAML, loader, os.Getenv, logger, mgrOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to initialize configuration manager: %w", err)
 	}
@@ -489,7 +508,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		Registry: reg, Broadcaster: hub, StateSink: stateProvider, Logger: logger, ChatLog: chatStore,
 	}, snapshot)
 	defer func() {
-		if err := providerCoord.Stop(); err != nil {
+		if err = providerCoord.Shutdown(context.WithoutCancel(ctx)); err != nil {
 			logger.Warn("failed to stop provider coordinator", "error", err)
 		}
 	}()
@@ -501,8 +520,8 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		render.WithNowFunc(householdNowFunc(stateProvider)),
 		render.WithNodeDataFunc(chatLogNodeData(stateProvider, chatStore)),
 	)
-	renderHandler := render.NewHandler(renderEngine, loader, render.WithCSSPath(resolveCSSPath()), render.WithCustomCSSPath(customCSSPath))
-	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger, WithWebDir(resolveWebDir(configPath)))
+	renderHandler := render.NewHandler(renderEngine, loader, render.WithCSSPath(resolveCSSPath()), render.WithCustomCSSPath(assets.customCSSPath))
+	assetReloader := NewAssetReloader(assets.customCSSPath, loader, assets.builtinDir, assets.customDir, renderEngine, configManager, hub, logger, WithWebDir(resolveWebDir(configPath)))
 
 	var hupChan <-chan os.Signal
 	if rcfg.hupChan != nil {
@@ -547,7 +566,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	srv := server.New(cfg)
 	bindAddr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	var lc net.ListenConfig
-	listener, err := lc.Listen(context.Background(), "tcp", bindAddr)
+	listener, err := lc.Listen(ctx, "tcp", bindAddr)
 	if err != nil {
 		return fmt.Errorf("failed to bind address %s: %w", bindAddr, err)
 	}
@@ -570,7 +589,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	select {
 	case <-ctx.Done():
 		hub.Close()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	case err := <-errChan:

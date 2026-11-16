@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"hash"
+	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -31,7 +33,7 @@ func WithWebDir(webDir string) ReloaderOption {
 // AssetReloader coordinates detection of custom stylesheet, widget package, and runtime web asset
 // modifications, invalidating compiled template caches and broadcasting SSE reload notifications.
 type AssetReloader struct {
-	sync.Mutex
+	mu sync.Mutex
 
 	customCSSPath string
 	webDir        string
@@ -94,10 +96,10 @@ func (r *AssetReloader) readCSSHash(warnLog string) (string, bool) {
 }
 
 func (r *AssetReloader) seedInitialState() {
-	r.Lock()
-	defer r.Unlock()
-	if hash, ok := r.readCSSHash("failed to read custom CSS file during initial seeding"); ok {
-		r.lastCSSHash = hash
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if cssHash, ok := r.readCSSHash("failed to read custom CSS file during initial seeding"); ok {
+		r.lastCSSHash = cssHash
 	}
 	r.lastWebHash = r.computeWebHash()
 	if r.loader != nil {
@@ -111,8 +113,8 @@ func (r *AssetReloader) seedInitialState() {
 
 // ReloadWeb re-scans runtime web assets (templates and static bundles) and broadcasts system.reload if modified.
 func (r *AssetReloader) ReloadWeb() bool {
-	r.Lock()
-	defer r.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	currentHash := r.computeWebHash()
 	if currentHash == "" || currentHash == r.lastWebHash {
 		return false
@@ -132,8 +134,8 @@ func (r *AssetReloader) ReloadWeb() bool {
 
 // ReloadCSS re-checks custom.css on disk, updating internal hash state and broadcasting style.reload if modified.
 func (r *AssetReloader) ReloadCSS() bool {
-	r.Lock()
-	defer r.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	currentHash, ok := r.readCSSHash("failed to read custom CSS file on reload")
 	if !ok || currentHash == r.lastCSSHash {
 		return false
@@ -217,8 +219,8 @@ func (r *AssetReloader) updateLoadedWidgetLocked(widgetType string, pkg *domain.
 
 // ReloadWidgets re-scans widget packages, invalidating template caches and broadcasting widget.reload or system.status.
 func (r *AssetReloader) ReloadWidgets() bool {
-	r.Lock()
-	defer r.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.loader == nil {
 		return false
 	}
@@ -340,22 +342,28 @@ func (r *AssetReloader) computeWebHash() string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func hashDirFiles(hasher hash.Hash, rootDir string, skipTopDirs ...string) error {
-	cleanRoot := filepath.Clean(rootDir)
-	return filepath.Walk(cleanRoot, func(path string, info os.FileInfo, err error) error {
+func hashDirFiles(hasher hash.Hash, rootDir string, skipTopDirs ...string) (retErr error) {
+	root, err := os.OpenRoot(filepath.Clean(rootDir))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil && retErr == nil {
+			retErr = closeErr
+		}
+	}()
+	return fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
-			if path != cleanRoot && (strings.HasPrefix(info.Name(), ".") || (filepath.Dir(path) == cleanRoot && slices.Contains(skipTopDirs, info.Name()))) {
-				return filepath.SkipDir
+		if d.IsDir() {
+			if rel != "." && (strings.HasPrefix(d.Name(), ".") || (path.Dir(rel) == "." && slices.Contains(skipTopDirs, d.Name()))) {
+				return fs.SkipDir
 			}
 			return nil
 		}
-		if rel, relErr := filepath.Rel(cleanRoot, path); relErr == nil {
-			hasher.Write([]byte(filepath.ToSlash(rel)))
-		}
-		if data, readErr := os.ReadFile(path); readErr == nil {
+		hasher.Write([]byte(rel))
+		if data, readErr := root.ReadFile(rel); readErr == nil {
 			hasher.Write(data)
 		}
 		return nil

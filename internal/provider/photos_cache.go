@@ -555,9 +555,9 @@ func parseSingleFDcn4bEnvelope(elemArr []any) (string, string, string, bool) {
 	}
 	var mediaType string
 	if hasVideoMarker(info) {
-		mediaType = "video"
+		mediaType = mediaTypeVideo
 	} else if hasGIFMarker(info) {
-		mediaType = "gif"
+		mediaType = mediaTypeGIF
 	}
 	return id, loc, mediaType, true
 }

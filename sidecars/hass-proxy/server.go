@@ -61,7 +61,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
+func (*Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -101,7 +101,7 @@ func (s *Server) handleIntent(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var req IntentRequest
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+	if err = json.Unmarshal(bodyBytes, &req); err != nil {
 		s.logger.DebugContext(r.Context(), "malformed intent request JSON", "error", err)
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
@@ -128,7 +128,7 @@ func (s *Server) handleIntent(w http.ResponseWriter, r *http.Request) {
 	s.writeSSE(w, r, req.TurnID, intentResp.Speech)
 }
 
-func (s *Server) writeSSE(w http.ResponseWriter, r *http.Request, turnID, speech string) {
+func (*Server) writeSSE(w http.ResponseWriter, r *http.Request, turnID, speech string) {
 	var flusher http.Flusher
 	if f, ok := w.(http.Flusher); ok {
 		flusher = f

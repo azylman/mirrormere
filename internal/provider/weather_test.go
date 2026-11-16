@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/azylman/mirrormere/internal/provider"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 func wCfg(lat, lon any, units, name, locName string) map[string]any {
@@ -227,7 +228,7 @@ func runWeatherFetchCase(t *testing.T, tc weatherFetchTestCase) {
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
-	snap := res.(provider.WeatherSnapshot)
+	snap := testutil.As[provider.WeatherSnapshot](t, res)
 	assertWeatherSnapshotBasics(t, snap, tc)
 	assertWeatherSnapshotDetails(t, snap, reqQuery, tc)
 }
@@ -415,7 +416,7 @@ func TestWeatherProvider_LifecycleAndSerialization(t *testing.T) {
 	if err := json.Unmarshal(b, &parsed); err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
-	if parsed["location"] != "Home" || parsed["current"].(map[string]any)["temperature"] != 72.4 {
+	if parsed["location"] != "Home" || testutil.As[map[string]any](t, parsed["current"])["temperature"] != 72.4 {
 		t.Errorf("unexpected json: %+v", parsed)
 	}
 }

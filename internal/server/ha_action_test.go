@@ -81,7 +81,7 @@ func TestWidgetAction_MethodNotAllowed(t *testing.T) {
 	srv := server.New(server.Config{WidgetActionHandler: handler})
 
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch} {
-		req := httptest.NewRequest(method, "/api/widgets/light-1/action", nil)
+		req := httptest.NewRequest(method, "/api/widgets/light-1/action", http.NoBody)
 		rec := httptest.NewRecorder()
 		srv.Routes().ServeHTTP(rec, req)
 
@@ -100,7 +100,7 @@ func TestWidgetAction_CORS(t *testing.T) {
 	handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
 	srv := server.New(server.Config{WidgetActionHandler: handler})
 
-	req := httptest.NewRequest(http.MethodOptions, "/api/widgets/light-1/action", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/widgets/light-1/action", http.NoBody)
 	rec := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rec, req)
 

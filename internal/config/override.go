@@ -8,9 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/layout"
-	"gopkg.in/yaml.v3"
 )
 
 // ErrLayoutEditDisabled indicates that live canvas layout modifications are forbidden by configuration.
@@ -21,10 +22,10 @@ var (
 
 // WidgetOverride specifies an explicit coordinate and dimension override for an existing widget.
 type WidgetOverride struct {
-	ID         string `yaml:"id" json:"widget_id"`
-	Screen     int    `yaml:"screen" json:"screen"`
-	Origin     [2]int `yaml:"origin" json:"origin"`
-	Dimensions []int  `yaml:"dimensions" json:"dimensions"`
+	ID         string `yaml:"id"               json:"widget_id"`
+	Screen     int    `yaml:"screen"           json:"screen"`
+	Origin     [2]int `yaml:"origin"           json:"origin"`
+	Dimensions []int  `yaml:"dimensions"       json:"dimensions"`
 	Pinned     bool   `yaml:"pinned,omitempty" json:"pinned,omitempty"`
 }
 

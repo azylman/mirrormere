@@ -10,8 +10,24 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
+// Family widget time formats; timeFormat24h is the default.
+const (
+	timeFormat12h = "12h"
+	timeFormat24h = "24h"
+)
+
+// busyTitle replaces event titles hidden by a calendar's privacy setting.
+const busyTitle = "Busy"
+
+// Calendar views selectable via default_view and ?view=.
+const (
+	calendarViewDay   = "day"
+	calendarViewWeek  = "week"
+	calendarViewMonth = "month"
+)
+
 func formatTimeLabel(h, m int, timeFormat string) string {
-	if strings.EqualFold(timeFormat, "12h") {
+	if strings.EqualFold(timeFormat, timeFormat12h) {
 		hMod := (h%24 + 24) % 24
 		period := "am"
 		if hMod >= 12 {
@@ -30,7 +46,7 @@ func formatTimeLabel(h, m int, timeFormat string) string {
 }
 
 func newHoursBand(hStart, mStart, hEnd, mEnd int, timeFormat ...string) HoursBand {
-	tf := "24h"
+	tf := timeFormat24h
 	if len(timeFormat) > 0 && timeFormat[0] != "" {
 		tf = timeFormat[0]
 	}
@@ -77,11 +93,11 @@ func parseExplicitHoursBand(cfg map[string]any) (HoursBand, bool) {
 		return HoursBand{}, false
 	}
 
-	return newHoursBand(hStart, mStart, hEnd, mEnd, stringOr(cfg, "time_format", "24h")), true
+	return newHoursBand(hStart, mStart, hEnd, mEnd, stringOr(cfg, "time_format", timeFormat24h)), true
 }
 
 func defaultHoursBand(timeFormat ...string) HoursBand {
-	tf := "24h"
+	tf := timeFormat24h
 	if len(timeFormat) > 0 && timeFormat[0] != "" {
 		tf = timeFormat[0]
 	}
@@ -94,7 +110,7 @@ func defaultHoursBand(timeFormat ...string) HoursBand {
 // (floored to 30-minute intervals for clean timeline alignment), with a minimum 4-hour
 // window and a fallback to 07:00–21:00 when no events or only late events exist.
 func resolveFamilyHoursBand(cfg map[string]any, events []provider.CalendarEvent, dayIndex map[string]int, loc *time.Location) HoursBand {
-	timeFormat := stringOr(cfg, "time_format", "24h")
+	timeFormat := stringOr(cfg, "time_format", timeFormat24h)
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -398,7 +414,7 @@ func generateTimelineMarkersWithGaps(hours HoursBand, timeFormat string) []Timel
 }
 
 func generateTimelineMarkers(hStart, mStart, hEnd, mEnd int, timeFormat ...string) []TimelineMarker {
-	tf := "24h"
+	tf := timeFormat24h
 	if len(timeFormat) > 0 && timeFormat[0] != "" {
 		tf = timeFormat[0]
 	}
@@ -443,7 +459,7 @@ func generateTimelineMarkers(hStart, mStart, hEnd, mEnd int, timeFormat ...strin
 }
 
 func generateHourMarkers(hStart, mStart, hEnd, mEnd int, timeFormat ...string) []string {
-	tf := "24h"
+	tf := timeFormat24h
 	if len(timeFormat) > 0 && timeFormat[0] != "" {
 		tf = timeFormat[0]
 	}
@@ -455,8 +471,7 @@ func generateHourMarkers(hStart, mStart, hEnd, mEnd int, timeFormat ...string) [
 	}
 	for h := firstHour; h <= hEnd; h++ {
 		if h == hEnd && mEnd > 0 {
-			markers = append(markers, formatTimeLabel(h, 0, tf))
-			markers = append(markers, formatTimeLabel(hEnd, mEnd, tf))
+			markers = append(markers, formatTimeLabel(h, 0, tf), formatTimeLabel(hEnd, mEnd, tf))
 			break
 		}
 		markers = append(markers, formatTimeLabel(h, 0, tf))

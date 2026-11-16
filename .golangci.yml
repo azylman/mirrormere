@@ -7,6 +7,7 @@ linters:
     - bodyclose
     - canonicalheader
     - containedctx
+    - contextcheck
     - copyloopvar
     - cyclop
     - decorder
@@ -22,10 +23,13 @@ linters:
     - exhaustive
     - exptostd
     - fatcontext
+    - forbidigo
+    - forcetypeassert
     - funlen
     - gocheckcompilerdirectives
     - gochecksumtype
     - gocognit
+    - goconst
     - gocritic
     - gocyclo
     - godoclint
@@ -67,6 +71,7 @@ linters:
     - spancheck
     - sqlclosecheck
     - staticcheck
+    - tagalign
     - testableexamples
     - thelper
     - tparallel
@@ -84,38 +89,21 @@ linters:
       package-average: 10.0
     exhaustive:
       default-signifies-exhaustive: true
+    forbidigo:
+      forbid:
+        - pattern: ^time\.Sleep$
+          msg: use channels, deadline-bounded condition polling, or an injected clock instead of time.Sleep
     gomoddirectives:
       replace-local: true
     perfsprint:
       error-format: false
+    tagalign:
+      align: true
+      sort: false
     dupl:
       threshold: 100
     dupword:
       comments-only: true
-    funlen:
-      lines: 150
-      statements: -1
-      ignore-comments: true
-    gocognit:
-      min-complexity: 30
-    gocritic: {}
-    gocyclo:
-      min-complexity: 20
-    govet:
-      enable:
-        - nilness
-        - reflectvaluecompare
-        - sortslice
-        - timeformat
-        - unusedwrite
-    modernize:
-      disable:
-        - omitzero
-    nestif:
-      min-complexity: 5
-    thelper:
-      tb:
-        name: false
     errcheck:
       check-type-assertions: true
       check-blank: true
@@ -132,6 +120,59 @@ linters:
         - (*database/sql.Rows).Close
         - (io.Closer).Close
         - (io.ReadCloser).Close
+    funlen:
+      lines: 150
+      statements: -1
+      ignore-comments: true
+    gocognit:
+      min-complexity: 30
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - hugeParam
+        - paramTypeCombine
+        # ptrToRefParam: both findings are deliberate pointer-to-reference params
+        # (deferred *error metrics hook, lazily initialised *map lock table).
+        - ptrToRefParam
+        # rangeValCopy: 215 findings (166 production), each a >128-byte struct copy
+        # in a range loop with no measured hot path; over the 150-finding budget.
+        - rangeValCopy
+        # sloppyReassign: contradicts govet shadow; every `if err = f()` it flags
+        # reuses an outer err, and the suggested `err :=` is a shadow finding.
+        - sloppyReassign
+        # sprintfQuotedString: 29 findings, all deliberate wire formats (Discord
+        # markdown code spans, ETag quoting, TwiML attributes) where %q/%#q would
+        # Go-escape the payload or fall back to double quotes and change output.
+        - sprintfQuotedString
+        # stringConcatSimplify: pure taste; its 22 findings all collapse readable
+        # one-line-per-record strings.Join test fixtures into single long lines.
+        - stringConcatSimplify
+        - unnamedResult
+        - whyNoLint
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    gocyclo:
+      min-complexity: 20
+    govet:
+      enable:
+        - nilness
+        - reflectvaluecompare
+        - shadow
+        - sortslice
+        - timeformat
+        - unusedwrite
+      settings:
+        shadow:
+          strict: false
+    modernize:
+      disable:
+        - omitzero
+    nestif:
+      min-complexity: 5
     staticcheck:
       checks:
         - "SA*"
@@ -140,30 +181,32 @@ linters:
     dogsled:
       max-blank-identifiers: 3
     gosec:
+      # Audited per rule for mirrormere (build-1794767772 chunk 7). Every rule
+      # not listed is enforced; each exclusion below is noise for this codebase.
       excludes:
+        # G101: name heuristic; the only hit is the public Google OAuth token
+        # endpoint URL (defaultGoogleOAuthTokenURL), not a credential.
         - G101
+        # G104: duplicates errcheck, which owns the unchecked-error policy
+        # (including its deliberate Close exclusions).
         - G104
+        # G115: all 10 hits are Cast v2 protobuf framing in cast-watcher/wire.go:
+        # varint field tags, enum fields and frame lengths already bounded by
+        # MaxPayloadSize before conversion.
         - G115
-        - G117
-        - G118
-        - G122
-        - G201
-        - G202
-        - G203
-        - G204
+        # G301/G306: the config override dir, the photo cache dir and the
+        # code-health tool's rewritten Go sources and baseline are ordinary
+        # 0755 dirs and 0644 repo files by design (4 hits).
         - G301
-        - G302
-        - G304
         - G306
-        - G402
-        - G404
-        - G505
-        - G701
-        - G702
+        # G304/G703: 19 hits, all operator-configured paths (config file,
+        # custom CSS, widget package manifests and views, photo/task caches,
+        # code-health targets) or files the process itself wrote.
+        - G304
         - G703
+        # G704: hass-proxy posts to its configured Home Assistant endpoint by
+        # design (2 hits).
         - G704
-        - G705
-        - G706
     gosmopolitan:
       allow-time-local: true
     revive:
@@ -171,11 +214,14 @@ linters:
         - name: blank-imports
         - name: context-as-argument
         - name: context-keys-type
+        - name: defer
         - name: dot-imports
+        - name: early-return
         - name: empty-block
         - name: error-naming
         - name: error-return
         - name: errorf
+        - name: import-shadowing
         - name: increment-decrement
         - name: indent-error-flow
         - name: range
@@ -185,8 +231,13 @@ linters:
         - name: time-naming
         - name: unexported-return
         - name: unreachable-code
+        - name: unused-receiver
         - name: var-declaration
         - name: var-naming
+        - name: waitgroup-by-value
+    thelper:
+      tb:
+        name: false
   exclusions:
     generated: lax
     rules:
@@ -194,6 +245,7 @@ linters:
           - containedctx
           - errcheck
           - errchkjson
+          - goconst
           - gosec
           - gosmopolitan
           - nilnil
@@ -216,8 +268,15 @@ linters:
       - examples$
 formatters:
   enable:
+    - gci
     - gofmt
     - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/azylman)
   exclusions:
     generated: lax
     paths:

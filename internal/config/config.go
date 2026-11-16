@@ -176,6 +176,14 @@ func (lc *LocationConfig) GetLongitude() float64 {
 	return derefOr(lc.Longitude, 0)
 }
 
+// Theme modes accepted in display.theme.mode. ThemeModeDay and
+// ThemeModeNight are also the resolved themes broadcast to clients.
+const (
+	ThemeModeAuto  = "auto"
+	ThemeModeDay   = "day"
+	ThemeModeNight = "night"
+)
+
 // ThemeConfig defines visual theme mode and Day/Night switching behavior.
 type ThemeConfig struct {
 	Mode string `yaml:"mode,omitempty"` // "auto", "day", "night"
@@ -184,9 +192,9 @@ type ThemeConfig struct {
 // GetMode returns the configured theme mode, defaulting to "day" if unspecified.
 func (tc *ThemeConfig) GetMode() string {
 	if tc == nil {
-		return "day"
+		return ThemeModeDay
 	}
-	return strings.ToLower(trimmedOr(tc.Mode, "day"))
+	return strings.ToLower(trimmedOr(tc.Mode, ThemeModeDay))
 }
 
 // GetLocationConfig returns the device location configuration, falling back to header weather coordinates if present.
@@ -385,7 +393,7 @@ func (f *FastPathConfig) GetTimeoutMS() int {
 
 // SpeakerFingerprint is one enrolled speaker voiceprint centroid.
 type SpeakerFingerprint struct {
-	ID        string    `yaml:"id" json:"id"`
+	ID        string    `yaml:"id"        json:"id"`
 	Embedding []float64 `yaml:"embedding" json:"embedding"`
 }
 
@@ -671,9 +679,9 @@ func (c *Config) applyHeaderAndThemeDefaults() {
 	}
 
 	if c.Display.Theme == nil {
-		c.Display.Theme = &ThemeConfig{Mode: "day"}
+		c.Display.Theme = &ThemeConfig{Mode: ThemeModeDay}
 	} else if c.Display.Theme.Mode == "" {
-		c.Display.Theme.Mode = "day"
+		c.Display.Theme.Mode = ThemeModeDay
 	}
 
 	if c.Display.Header.Elements == nil {
@@ -703,11 +711,11 @@ func (c *Config) validateTheme() error {
 	}
 	mode := tc.GetMode()
 	switch mode {
-	case "auto", "day", "night":
+	case ThemeModeAuto, ThemeModeDay, ThemeModeNight:
 	default:
 		return fmt.Errorf("invalid theme mode '%s': must be one of auto, day, night", tc.Mode)
 	}
-	if mode == "auto" {
+	if mode == ThemeModeAuto {
 		locCfg := c.GetLocationConfig()
 		if locCfg == nil || locCfg.Latitude == nil || locCfg.Longitude == nil {
 			return fmt.Errorf("theme mode 'auto' requires location coordinates (latitude and longitude) to be configured")

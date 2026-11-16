@@ -13,7 +13,7 @@ import (
 
 type customHTTPError int
 
-func (c customHTTPError) Error() string   { return "http" }
+func (customHTTPError) Error() string     { return "http" }
 func (c customHTTPError) StatusCode() int { return int(c) }
 
 func TestIsNetworkOrServerError(t *testing.T) {

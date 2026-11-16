@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/provider"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 const (
@@ -58,7 +59,7 @@ func runPhotosFetchExtractionCase(t *testing.T, tc photosExtractionTestCase) {
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
-	snap := res.(*provider.PhotoSnapshot)
+	snap := testutil.As[*provider.PhotoSnapshot](t, res)
 	if snap.AlbumName != tc.wantAlbum || snap.TotalPhotos != tc.wantTotal || len(snap.Photos) != tc.wantPhotos {
 		t.Fatalf("got album=%q total=%d photos=%d; want %q, %d, %d", snap.AlbumName, snap.TotalPhotos, len(snap.Photos), tc.wantAlbum, tc.wantTotal, tc.wantPhotos)
 	}
@@ -226,7 +227,7 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 		if err != nil {
 			t.Fatalf("second fetch under SWR failed: %v", err)
 		}
-		s1, s2 := res1.(*provider.PhotoSnapshot), res2.(*provider.PhotoSnapshot)
+		s1, s2 := testutil.As[*provider.PhotoSnapshot](t, res1), testutil.As[*provider.PhotoSnapshot](t, res2)
 		if len(s2.Photos) != 1 || s2.Photos[0].URL != s1.Photos[0].URL {
 			t.Fatalf("expected cached snapshot under SWR: %+v", s2)
 		}
@@ -269,13 +270,13 @@ func assertPhotosProviderEmberAndMalformed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch on ember_bridge failed: %v", err)
 	}
-	snapEmber := resEmber.(*provider.PhotoSnapshot)
+	snapEmber := testutil.As[*provider.PhotoSnapshot](t, resEmber)
 	if snapEmber.AlbumName != "Shared Album" || snapEmber.AlbumURL != "https://photos.app.goo.gl/ember" || snapEmber.TotalPhotos != 0 || len(snapEmber.Photos) != 0 {
 		t.Fatalf("unexpected ember snapshot: %+v", snapEmber)
 	}
 
 	pUninit := provider.NewPhotosProvider()
-	if _, err := pUninit.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "provider not initialized") {
+	if _, err = pUninit.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "provider not initialized") {
 		t.Fatalf("expected uninitialized error, got: %v", err)
 	}
 	tsMal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -284,8 +285,9 @@ func assertPhotosProviderEmberAndMalformed(t *testing.T) {
 	defer tsMal.Close()
 	pMal := provider.NewPhotosProvider()
 	_ = pMal.Init(context.Background(), map[string]any{"source": "share_url", "album_url": tsMal.URL}, provider.InitOptions{})
-	if res, err := pMal.Fetch(context.Background()); err != nil || len(res.(*provider.PhotoSnapshot).Photos) != 0 {
-		t.Fatalf("expected empty photos on malformed JSON, got %v, err=%v", res, err)
+	resMal, err := pMal.Fetch(context.Background())
+	if err != nil || len(testutil.As[*provider.PhotoSnapshot](t, resMal).Photos) != 0 {
+		t.Fatalf("expected empty photos on malformed JSON, got %v, err=%v", resMal, err)
 	}
 
 	reg := provider.NewRegistry()
@@ -399,7 +401,7 @@ func collectDeckSnapshots(t *testing.T, p *provider.PhotosProvider, cfg map[stri
 		if err != nil {
 			t.Fatalf("poll %d Fetch failed: %v", i, err)
 		}
-		snapshots[i] = res.(*provider.PhotoSnapshot)
+		snapshots[i] = testutil.As[*provider.PhotoSnapshot](t, res)
 	}
 	return snapshots
 }
@@ -577,7 +579,7 @@ func runPhotosMultiAlbumParsingSubtest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
-	snap := res.(*provider.PhotoSnapshot)
+	snap := testutil.As[*provider.PhotoSnapshot](t, res)
 	// First ember_bridge album's ResolvedURL takes precedence for AlbumURL
 	if snap.AlbumURL != "https://photos.app.goo.gl/ember-url" {
 		t.Errorf("AlbumURL = %q, want %q", snap.AlbumURL, "https://photos.app.goo.gl/ember-url")
@@ -625,7 +627,7 @@ func runPhotosPerDayPairingSubtest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
-	snap := res.(*provider.PhotoSnapshot)
+	snap := testutil.As[*provider.PhotoSnapshot](t, res)
 	if snap.TotalPhotos != 7 {
 		t.Fatalf("TotalPhotos = %d, want 7", snap.TotalPhotos)
 	}
@@ -684,7 +686,7 @@ func runPhotosWarmBootZeroHTTPSubtest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("warm Fetch failed: %v", err)
 	}
-	snap := res.(*provider.PhotoSnapshot)
+	snap := testutil.As[*provider.PhotoSnapshot](t, res)
 	if snap.AlbumName != "Warm Scraped Title" {
 		t.Errorf("AlbumName = %q, want %q", snap.AlbumName, "Warm Scraped Title")
 	}
@@ -740,7 +742,7 @@ func runPhotosSnAcKcPaginationSubtest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
-	snap := res.(*provider.PhotoSnapshot)
+	snap := testutil.As[*provider.PhotoSnapshot](t, res)
 	if snap.TotalPhotos != 3 {
 		t.Errorf("TotalPhotos = %d, want 3 (Page 1 + Page 2 + Page 3)", snap.TotalPhotos)
 	}
@@ -888,7 +890,7 @@ func runPhotosSnAcKcPaginationErrorSubtest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
-	snap := res.(*provider.PhotoSnapshot)
+	snap := testutil.As[*provider.PhotoSnapshot](t, res)
 	if snap.TotalPhotos != 2 {
 		t.Errorf("TotalPhotos = %d, want 2", snap.TotalPhotos)
 	}

@@ -69,9 +69,9 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func writef(w io.Writer, format string, args ...any) {
+func writef(w io.Writer, layout string, args ...any) {
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, format, args...)
+	fmt.Fprintf(&buf, layout, args...)
 	if _, err := w.Write(buf.Bytes()); err != nil {
 		return
 	}
@@ -264,17 +264,17 @@ func buildBaseline(absRoot string, targets, _ []string) (Baseline, error) {
 		Functions: make(map[string]FuncMetrics),
 	}
 	for _, rel := range targets {
-		fm, fns, _, _, skipped, _, err := analyzeFile(filepath.Join(absRoot, rel), rel)
+		fa, err := analyzeFile(filepath.Join(absRoot, rel), rel)
 		if err != nil {
 			return b, err
 		}
-		if skipped {
+		if fa.skipped {
 			continue
 		}
-		if fm.Lines > maxFileLines {
-			b.Files[rel] = fm
+		if fa.metrics.Lines > maxFileLines {
+			b.Files[rel] = fa.metrics
 		}
-		for fnName, m := range fns {
+		for fnName, m := range fa.funcs {
 			if entry, ok := outlierFuncMetrics(m); ok {
 				b.Functions[rel+"::"+fnName] = entry
 			}
@@ -303,23 +303,23 @@ func checkTargets(absRoot string, targets, testTargets []string, base Baseline, 
 		}
 		violations = append(violations, orderViolations...)
 
-		fm, fns, sigs, structSigs, skipped, nolintViolations, err := analyzeFile(fullPath, rel)
+		fa, err := analyzeFile(fullPath, rel)
 		if err != nil {
 			return nil, err
 		}
-		if skipped {
+		if fa.skipped {
 			continue
 		}
-		for _, nv := range nolintViolations {
+		for _, nv := range fa.nolintViolations {
 			violations = append(violations, fmt.Sprintf("%s: %s", rel, nv))
 		}
 		fileLimit := max(maxFileLines, base.Files[rel].Lines)
-		if fm.Lines > fileLimit {
-			violations = append(violations, fmt.Sprintf("%s: file length %d exceeds limit %d (ceiling %d)", rel, fm.Lines, fileLimit, maxFileLines))
+		if fa.metrics.Lines > fileLimit {
+			violations = append(violations, fmt.Sprintf("%s: file length %d exceeds limit %d (ceiling %d)", rel, fa.metrics.Lines, fileLimit, maxFileLines))
 		}
-		violations = append(violations, checkFuncMetrics(rel, fns, base.Functions)...)
-		allFuncSigs = append(allFuncSigs, sigs...)
-		allStructSigs = append(allStructSigs, structSigs...)
+		violations = append(violations, checkFuncMetrics(rel, fa.funcs, base.Functions)...)
+		allFuncSigs = append(allFuncSigs, fa.funcSigs...)
+		allStructSigs = append(allStructSigs, fa.structSigs...)
 	}
 
 	violations = append(violations, checkCloneViolations(allFuncSigs)...)
@@ -721,20 +721,31 @@ func countLines(src []byte) int {
 	return lines
 }
 
-func analyzeFile(fullPath, rel string) (FileMetrics, map[string]FuncMetrics, []funcCloneSig, []structCloneSig, bool, []string, error) {
+// fileAnalysis is everything analyzeFile measures in one source file.
+// skipped is set for generated files, which carry no other data.
+type fileAnalysis struct {
+	metrics          FileMetrics
+	funcs            map[string]FuncMetrics
+	funcSigs         []funcCloneSig
+	structSigs       []structCloneSig
+	skipped          bool
+	nolintViolations []string
+}
+
+func analyzeFile(fullPath, rel string) (fileAnalysis, error) {
 	src, err := os.ReadFile(fullPath)
 	if err != nil {
-		return FileMetrics{}, nil, nil, nil, false, nil, err
+		return fileAnalysis{}, err
 	}
 	if isGeneratedSource(src) {
-		return FileMetrics{}, nil, nil, nil, true, nil, nil
+		return fileAnalysis{skipped: true}, nil
 	}
 	lines := countLines(src)
 
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, fullPath, src, parser.ParseComments)
 	if err != nil {
-		return FileMetrics{}, nil, nil, nil, false, nil, err
+		return fileAnalysis{}, err
 	}
 
 	nolintViolations := findBannedNolints(f, fset)
@@ -775,7 +786,13 @@ func analyzeFile(fullPath, rel string) (FileMetrics, map[string]FuncMetrics, []f
 		}
 	}
 	structSigs := collectStructCloneSigs(f, rel, pkgKey)
-	return FileMetrics{Lines: lines}, fns, sigs, structSigs, false, nolintViolations, nil
+	return fileAnalysis{
+		metrics:          FileMetrics{Lines: lines},
+		funcs:            fns,
+		funcSigs:         sigs,
+		structSigs:       structSigs,
+		nolintViolations: nolintViolations,
+	}, nil
 }
 
 func appendNodeCloneTokens(tokens []string, n ast.Node) []string {

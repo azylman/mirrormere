@@ -127,11 +127,10 @@ func parseAlbumsList(raw any) ([]AlbumSource, error) {
 		urlEnvStr := mapString(itemMap, "url_env")
 
 		if source == "" {
-			if urlStr != "" || urlEnvStr != "" {
-				source = PhotoSourceShareURL
-			} else {
+			if urlStr == "" && urlEnvStr == "" {
 				return nil, fmt.Errorf("photo-carousel: album %q requires 'source'", name)
 			}
+			source = PhotoSourceShareURL
 		} else if source != PhotoSourceShareURL && source != PhotoSourceEmberBridge {
 			return nil, fmt.Errorf("photo-carousel: 'source' must be either %q or %q", PhotoSourceShareURL, PhotoSourceEmberBridge)
 		}
@@ -159,11 +158,10 @@ func parseLegacyPhotosConfig(cfg map[string]any, cacheDir string) (PhotosConfig,
 		source = strings.TrimSpace(sourceVal)
 	}
 	if source == "" {
-		if cfg["share_url"] != nil || cfg["share_url_env"] != nil {
-			source = PhotoSourceShareURL
-		} else {
+		if cfg["share_url"] == nil && cfg["share_url_env"] == nil {
 			return PhotosConfig{}, fmt.Errorf("photo-carousel: 'source' is required and must be either %q or %q", PhotoSourceShareURL, PhotoSourceEmberBridge)
 		}
+		source = PhotoSourceShareURL
 	} else if source != PhotoSourceShareURL && source != PhotoSourceEmberBridge {
 		return PhotosConfig{}, fmt.Errorf("photo-carousel: 'source' is required and must be either %q or %q", PhotoSourceShareURL, PhotoSourceEmberBridge)
 	}
@@ -196,7 +194,7 @@ func parseLegacyPhotosConfig(cfg map[string]any, cacheDir string) (PhotosConfig,
 		isLegacy:    true,
 		Albums: []AlbumSource{
 			{
-				Name:   "Shared Album",
+				Name:   defaultAlbumName,
 				Source: source,
 				URL:    albumURL,
 				URLEnv: albumURLEnv,

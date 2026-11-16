@@ -60,7 +60,7 @@ func Handler(hub *Hub) http.Handler {
 
 		// 7. Flush initial batch (hydration or replay)
 		for _, evt := range initialBatch {
-			if _, err := w.Write(evt.Format()); err != nil {
+			if _, err := w.Write(evt.Format()); err != nil { //nolint:gosec // G705: text/event-stream frames of server-built JSON events, not HTML
 				return
 			}
 		}

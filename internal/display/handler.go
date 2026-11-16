@@ -59,6 +59,12 @@ func WithGridProvider(provider func() string) HandlerOption {
 	return func(h *Handler) { h.gridProvider = provider }
 }
 
+// Display shells selectable via display.ui or ?ui=.
+const (
+	uiReact  = "react"
+	uiLegacy = "legacy"
+)
+
 // WithUIProvider supplies display.ui from config ("legacy" or "react"). ?ui= on the request overrides it.
 func WithUIProvider(provider func() string) HandlerOption {
 	return func(h *Handler) { h.uiProvider = provider }
@@ -133,22 +139,22 @@ func (h *Handler) Theme() string {
 
 // UI returns the configured display shell, "react" unless the config provider says "legacy".
 func (h *Handler) UI() string {
-	if h.uiProvider != nil && h.uiProvider() == "legacy" {
-		return "legacy"
+	if h.uiProvider != nil && h.uiProvider() == uiLegacy {
+		return uiLegacy
 	}
-	return "react"
+	return uiReact
 }
 
 // useReact reports whether the request should get the React shell: ?ui= wins when it is
 // "react" or "legacy"; any other value falls through to the configured default.
 func (h *Handler) useReact(r *http.Request) bool {
 	switch r.URL.Query().Get("ui") {
-	case "react":
+	case uiReact:
 		return true
-	case "legacy":
+	case uiLegacy:
 		return false
 	}
-	return h.UI() == "react"
+	return h.UI() == uiReact
 }
 
 func (h *Handler) Grid() string {

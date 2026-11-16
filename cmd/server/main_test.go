@@ -27,7 +27,7 @@ type failListener struct {
 	net.Listener
 }
 
-func (f *failListener) Close() error {
+func (*failListener) Close() error {
 	return errors.New("simulated close listener failure")
 }
 
@@ -147,12 +147,12 @@ type fakeSnapProvider struct {
 }
 
 func (f *fakeSnapProvider) CurrentSnapshot() *config.Snapshot { return f.snap }
-func (f *fakeSnapProvider) GetWidgetState(string) (any, string, string, bool) {
+func (*fakeSnapProvider) GetWidgetState(string) (any, string, string, bool) {
 	return nil, "", "", false
 }
-func (f *fakeSnapProvider) CurrentStatus() config.Status { return config.Status{} }
-func (f *fakeSnapProvider) GetTheme() string             { return f.theme }
-func (f *fakeSnapProvider) SetTheme(s string)            { f.theme = s }
+func (*fakeSnapProvider) CurrentStatus() config.Status { return config.Status{} }
+func (f *fakeSnapProvider) GetTheme() string           { return f.theme }
+func (f *fakeSnapProvider) SetTheme(s string)          { f.theme = s }
 
 func runHouseholdNowCase(t *testing.T, sp *fakeSnapProvider, wantTheme string) {
 	t.Helper()
@@ -364,7 +364,7 @@ func runDaemonSmokeEndpoints(t *testing.T, baseURL string) {
 		{"/style.css", "", 200},
 	}
 	for _, ep := range endpoints {
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+ep.path, nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+ep.path, http.NoBody)
 		r, err := c.Do(req)
 		if err != nil || r.StatusCode != ep.status {
 			t.Fatalf("GET %s = %v, err=%v", ep.path, r.StatusCode, err)
@@ -376,14 +376,14 @@ func runDaemonSmokeEndpoints(t *testing.T, baseURL string) {
 		}
 	}
 
-	completeReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/lists/test/items/item-1/complete", nil)
+	completeReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/lists/test/items/item-1/complete", http.NoBody)
 	completeResp, err := c.Do(completeReq)
 	if err != nil || completeResp.StatusCode != http.StatusNotFound {
 		t.Fatalf("POST /api/lists/test/items/item-1/complete = %v, err=%v", completeResp.StatusCode, err)
 	}
 	_ = completeResp.Body.Close()
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/events", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/events", http.NoBody)
 	r, err := http.DefaultClient.Do(req)
 	if err != nil || r.StatusCode != http.StatusOK {
 		t.Fatalf("events: %v", err)
@@ -451,7 +451,7 @@ func applySighupAction(d *testDaemon, action string) {
 func listenSseEvents(ctx context.Context, t *testing.T, baseURL string) <-chan string {
 	t.Helper()
 	sseEvents := make(chan string, 20)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/events", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/events", http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("SSE connect: %v", err)
@@ -486,7 +486,7 @@ func waitSseEvent(t *testing.T, sseEvents <-chan string, wantEvt string) {
 
 func assertDaemonHTTPResponse(t *testing.T, baseURL, path, wantBody string) {
 	t.Helper()
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+path, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+path, http.NoBody)
 	r, err := http.DefaultClient.Do(req)
 	if err != nil || r.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s failed: %v", path, err)
@@ -549,7 +549,7 @@ func TestRun_SIGHUP(t *testing.T) {
 				}
 			}
 			if tc.action == "invalid_yaml" || tc.action == "read_error" {
-				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, d.baseURL+"/display", nil)
+				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, d.baseURL+"/display", http.NoBody)
 				if r, err := http.DefaultClient.Do(req); err != nil || r.StatusCode != http.StatusOK {
 					t.Fatalf("display LKGC: %v", err)
 				} else {
