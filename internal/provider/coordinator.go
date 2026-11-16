@@ -14,12 +14,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
+
 	"github.com/azylman/mirrormere/internal/chatlog"
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/tasks"
-	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // Broadcaster defines the interface for emitting Server-Sent Events over the event bus.
@@ -90,7 +91,24 @@ type ProviderCoordinator struct {
 	headerPoller       *HeaderWeatherPoller
 }
 
-// NewCoordinator constructs an initialized ProviderCoordinator.
+// Built-in provider names that need no polling worker.
+const (
+	providerSpacer   = "spacer"
+	providerChatLog  = "chat-log"
+	providerLiveView = "live-view"
+)
+
+// Weather unit systems accepted in widget and header config.
+const (
+	unitsImperial = "imperial"
+	unitsMetric   = "metric"
+)
+
+// NewCoordinator constructs an initialized ProviderCoordinator. The event
+// sink, header poller and widget workers it starts are owned by the
+// coordinator and run until Shutdown, independent of any caller's context.
+//
+//nolint:contextcheck,nolintlint // contextcheck reads this to exempt the coordinator-lifetime goroutines from callers' contexts; golangci sees no in-body issue.
 func NewCoordinator(cfg CoordinatorConfig, initialSnapshot *config.Snapshot) *ProviderCoordinator {
 	reg := cfg.Registry
 	if reg == nil {
@@ -231,13 +249,13 @@ func (c *ProviderCoordinator) CompleteListItem(ctx context.Context, listID, item
 }
 
 // CallWidgetAction executes a service call on the matching widget provider worker.
-func (c *ProviderCoordinator) CallWidgetAction(ctx context.Context, widgetID, domain, service string, serviceData map[string]any) error {
-	_, err := c.CallWidgetActionWithResponse(ctx, widgetID, domain, service, serviceData)
+func (c *ProviderCoordinator) CallWidgetAction(ctx context.Context, widgetID, serviceDomain, service string, serviceData map[string]any) error {
+	_, err := c.CallWidgetActionWithResponse(ctx, widgetID, serviceDomain, service, serviceData)
 	return err
 }
 
 // CallWidgetActionWithResponse executes a service call and returns the response from the provider worker.
-func (c *ProviderCoordinator) CallWidgetActionWithResponse(ctx context.Context, widgetID, domain, service string, serviceData map[string]any) (any, error) {
+func (c *ProviderCoordinator) CallWidgetActionWithResponse(ctx context.Context, widgetID, serviceDomain, service string, serviceData map[string]any) (any, error) {
 	c.mu.RLock()
 	var targetProvider *HomeAssistantProvider
 	var targetWidgetID string
@@ -262,7 +280,7 @@ func (c *ProviderCoordinator) CallWidgetActionWithResponse(ctx context.Context, 
 		return nil, fmt.Errorf("%w: widget provider not found: %s", ErrWidgetNotFound, widgetID)
 	}
 
-	res, err := targetProvider.CallServiceWithResponse(ctx, domain, service, serviceData)
+	res, err := targetProvider.CallServiceWithResponse(ctx, serviceDomain, service, serviceData)
 	if err != nil {
 		return nil, err
 	}
@@ -420,6 +438,10 @@ func (c *ProviderCoordinator) startWorkersLocked(snap *config.Snapshot) {
 	}
 }
 
+// startSingleWorkerLocked starts a widget worker whose context is owned by the
+// coordinator: it lives until Shutdown cancels it, never as long as a caller.
+//
+//nolint:contextcheck,nolintlint // contextcheck reads this to exempt the coordinator-lifetime worker from callers' contexts; golangci sees no in-body issue.
 func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, snap *config.Snapshot) {
 	providerName := resolveProviderName(w, snap)
 	var pkg *domain.Package
@@ -430,7 +452,7 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 	// Native Spacer and Live View Optimization: Zero-overhead padding/streaming, no polling ticker needed
 	// The chat-log and live-view widgets take the same path: live-view streams directly via WebRTC/MJPEG/HLS
 	// on the client, and chat-log lives in the in-memory chatlog store, so nothing polls on the backend.
-	if w.Type == "spacer" || providerName == "spacer" || providerName == "chat-log" || providerName == "live-view" || w.Type == "live-view" {
+	if w.Type == providerSpacer || providerName == providerSpacer || providerName == providerChatLog || providerName == providerLiveView || w.Type == providerLiveView {
 		now := c.nowFunc()
 		payload, _ := c.cache.RecordSuccess(w.ID, map[string]any{}, now)
 		c.syncAndBroadcast(payload)
@@ -693,7 +715,7 @@ func (c *ProviderCoordinator) broadcastUpdate(payload WidgetPayload) {
 	c.broadcaster.Publish(events.EventWidgetUpdate, data)
 }
 
-func (c *ProviderCoordinator) buildProviderConfig(w *config.WidgetConfig) map[string]any {
+func (*ProviderCoordinator) buildProviderConfig(w *config.WidgetConfig) map[string]any {
 	cfgMap := make(map[string]any)
 	if w.Config != nil {
 		maps.Copy(cfgMap, w.Config)
@@ -792,7 +814,7 @@ func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]
 	if targetWidget.Type == "tasks" || providerName == "tasks" {
 		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrListWidgetPushForbidden, widgetID)
 	}
-	if providerName != "http" && providerName != "chat-log" {
+	if providerName != "http" && providerName != providerChatLog {
 		return WidgetPayload{}, fmt.Errorf("%w: widget %q uses provider %q", ErrNonHTTPWidgetPushForbidden, widgetID, providerName)
 	}
 
@@ -807,7 +829,7 @@ func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]
 		}
 	}
 
-	if providerName == "chat-log" && c.chatLog != nil {
+	if providerName == providerChatLog && c.chatLog != nil {
 		// The pushed transcript becomes this widget's own conversation in the
 		// shared in-memory store (same TTL and cap as voice turns).
 		msgs, err := chatlog.ParsePush(data)
@@ -915,8 +937,8 @@ func (c *ProviderCoordinator) getCompiledResponseSchema(widgetType string, schem
 
 	c.schemaMu.Lock()
 	defer c.schemaMu.Unlock()
-	if sch, ok := c.schemas[widgetType]; ok {
-		return sch, nil
+	if cached, ok := c.schemas[widgetType]; ok {
+		return cached, nil
 	}
 
 	sch, err := compileResponseSchema(widgetType, schemaMap)

@@ -11,6 +11,14 @@ import (
 	"github.com/azylman/mirrormere/internal/domain"
 )
 
+// Hydration defaults for clients that connect before the video or voice
+// subsystem has reported state. They mirror video.ModeWidgets and
+// voice.StateIdle, which import this package.
+const (
+	defaultVideoMode  = "widgets"
+	defaultVoiceState = "idle"
+)
+
 type ScreenRotateWidget struct {
 	WidgetID   string           `json:"widget_id"`
 	Origin     [2]int           `json:"origin"`
@@ -120,10 +128,10 @@ func NewInMemoryStateProvider(mgr *config.Manager) *InMemoryStateProvider {
 		bootID:       strconv.FormatInt(time.Now().UnixNano(), 10),
 		widgetStates: make(map[string]widgetStateEntry),
 		providers:    make(map[string]string),
-		theme:        "day",
-		videoState:   &VideoStateData{Mode: "widgets"},
+		theme:        config.ThemeModeDay,
+		videoState:   &VideoStateData{Mode: defaultVideoMode},
 		audioState:   &AudioStateData{Volume: 75},
-		voiceState:   &VoiceStateData{State: "idle"},
+		voiceState:   &VoiceStateData{State: defaultVoiceState},
 	}
 }
 
@@ -214,7 +222,7 @@ func (p *InMemoryStateProvider) GetVideoState() *VideoStateData {
 	if p.videoState != nil {
 		return p.videoState
 	}
-	return &VideoStateData{Mode: "widgets"}
+	return &VideoStateData{Mode: defaultVideoMode}
 }
 
 func (p *InMemoryStateProvider) SetAudioState(state *AudioStateData) {
@@ -244,7 +252,7 @@ func (p *InMemoryStateProvider) GetVoiceState() *VoiceStateData {
 	if p.voiceState != nil {
 		return p.voiceState
 	}
-	return &VoiceStateData{State: "idle"}
+	return &VoiceStateData{State: defaultVoiceState}
 }
 
 func (p *InMemoryStateProvider) SetTheme(theme string) {
@@ -259,7 +267,7 @@ func (p *InMemoryStateProvider) GetTheme() string {
 	if p.theme != "" {
 		return p.theme
 	}
-	return "day"
+	return config.ThemeModeDay
 }
 
 func (p *InMemoryStateProvider) SetProvidersStatus(providers map[string]string) {
@@ -379,40 +387,52 @@ func appendWidgetHydrationEvents(events []*Event, snap *config.Snapshot, provide
 	return events
 }
 
-func resolveSubsystemHydrationState(provider StateProvider, snap *config.Snapshot) (*HeaderWeather, string, *VideoStateData, *AudioStateData, *VoiceStateData, config.Status, string) {
-	var weather *HeaderWeather
-	tz := "UTC"
-	vid := &VideoStateData{Mode: "widgets"}
-	aud := &AudioStateData{Volume: 75}
-	vc := &VoiceStateData{State: "idle"}
-	var status config.Status
-	theme := "day"
+// subsystemHydrationState is the per-subsystem snapshot replayed to a newly
+// connected client, with defaults filled in for anything the provider lacks.
+type subsystemHydrationState struct {
+	weather  *HeaderWeather
+	timezone string
+	video    *VideoStateData
+	audio    *AudioStateData
+	voice    *VoiceStateData
+	status   config.Status
+	theme    string
+}
+
+func resolveSubsystemHydrationState(provider StateProvider, snap *config.Snapshot) subsystemHydrationState {
+	st := subsystemHydrationState{
+		timezone: "UTC",
+		video:    &VideoStateData{Mode: defaultVideoMode},
+		audio:    &AudioStateData{Volume: 75},
+		voice:    &VoiceStateData{State: defaultVoiceState},
+		theme:    config.ThemeModeDay,
+	}
 
 	if provider == nil {
-		return weather, tz, vid, aud, vc, status, theme
+		return st
 	}
 
 	if w, ok := provider.GetHeaderWeather(); ok {
-		weather = w
+		st.weather = w
 	}
 	if snap != nil && snap.Config != nil && snap.Config.Timezone != "" {
-		tz = snap.Config.Timezone
+		st.timezone = snap.Config.Timezone
 	}
 	if v := provider.GetVideoState(); v != nil {
-		vid = v
+		st.video = v
 	}
 	if a := provider.GetAudioState(); a != nil {
-		aud = a
+		st.audio = a
 	}
 	if v := provider.GetVoiceState(); v != nil {
-		vc = v
+		st.voice = v
 	}
 	if t := provider.GetTheme(); t != "" {
-		theme = t
+		st.theme = t
 	}
-	status = provider.CurrentStatus()
+	st.status = provider.CurrentStatus()
 
-	return weather, tz, vid, aud, vc, status, theme
+	return st
 }
 
 func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Time) []*Event {
@@ -433,13 +453,13 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 
 	events = appendWidgetHydrationEvents(events, snap, provider, idGen, now, nowStr)
 
-	weather, tz, vid, aud, vc, status, theme := resolveSubsystemHydrationState(provider, snap)
+	st := resolveSubsystemHydrationState(provider, snap)
 
-	events = appendHydrationEvent(events, idGen, now, EventHeaderUpdate, HeaderUpdateData{Timestamp: nowStr, Timezone: tz, Weather: weather})
-	events = appendHydrationEvent(events, idGen, now, EventVideoState, vid)
-	events = appendHydrationEvent(events, idGen, now, EventAudioState, aud)
-	events = appendHydrationEvent(events, idGen, now, EventVoiceState, vc)
-	events = appendHydrationEvent(events, idGen, now, EventSystemStatus, buildSystemStatusData(provider, status, nowStr))
-	events = appendHydrationEvent(events, idGen, now, EventThemeUpdate, ThemeUpdateData{Theme: theme})
+	events = appendHydrationEvent(events, idGen, now, EventHeaderUpdate, HeaderUpdateData{Timestamp: nowStr, Timezone: st.timezone, Weather: st.weather})
+	events = appendHydrationEvent(events, idGen, now, EventVideoState, st.video)
+	events = appendHydrationEvent(events, idGen, now, EventAudioState, st.audio)
+	events = appendHydrationEvent(events, idGen, now, EventVoiceState, st.voice)
+	events = appendHydrationEvent(events, idGen, now, EventSystemStatus, buildSystemStatusData(provider, st.status, nowStr))
+	events = appendHydrationEvent(events, idGen, now, EventThemeUpdate, ThemeUpdateData{Theme: st.theme})
 	return events
 }

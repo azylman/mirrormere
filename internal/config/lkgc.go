@@ -15,10 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/azylman/mirrormere/internal/domain"
-	"github.com/azylman/mirrormere/internal/layout"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
+
+	"github.com/azylman/mirrormere/internal/domain"
+	"github.com/azylman/mirrormere/internal/layout"
 )
 
 const (
@@ -252,9 +253,9 @@ func ValidatePipeline(data []byte, loader PackageLoader, getenv func(string) str
 	}
 	inputs := make([]layout.WidgetInput, len(cfg.Display.Widgets))
 	for i, w := range cfg.Display.Widgets {
-		dim, err := domain.DimensionFromSlice(w.Dimensions)
-		if err != nil {
-			return nil, fmt.Errorf("stage 6 (layout solver): %w", err)
+		dim, dimErr := domain.DimensionFromSlice(w.Dimensions)
+		if dimErr != nil {
+			return nil, fmt.Errorf("stage 6 (layout solver): %w", dimErr)
 		}
 		inputs[i] = layout.WidgetInput{ID: w.ID, Type: w.Type, Dimensions: dim, Pinned: w.Pinned}
 	}
@@ -280,7 +281,7 @@ func validateCoreInstancesStage(cfg *Config, getenv func(string) string) error {
 }
 
 func parseYAMLStage(data []byte) (*Config, error) {
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if strings.TrimSpace(string(data)) == "" {
 		return nil, fmt.Errorf("configuration file is empty")
 	}
 	var root yaml.Node

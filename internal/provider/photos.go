@@ -35,12 +35,21 @@ var (
 )
 
 // AlbumSource describes a single configured album.
+// defaultAlbumName labels an album whose share page exposes no title.
+const defaultAlbumName = "Shared Album"
+
+// Photo media types reported to the carousel alongside plain images.
+const (
+	mediaTypeVideo = "video"
+	mediaTypeGIF   = "gif"
+)
+
 type AlbumSource struct {
-	Name        string `json:"name" yaml:"name"`
-	Source      string `json:"source,omitempty" yaml:"source,omitempty"`
-	URL         string `json:"url,omitempty" yaml:"url,omitempty"`
+	Name        string `json:"name"              yaml:"name"`
+	Source      string `json:"source,omitempty"  yaml:"source,omitempty"`
+	URL         string `json:"url,omitempty"     yaml:"url,omitempty"`
 	URLEnv      string `json:"url_env,omitempty" yaml:"url_env,omitempty"`
-	ResolvedURL string `json:"-" yaml:"-"`
+	ResolvedURL string `json:"-"                 yaml:"-"`
 }
 
 // PhotoSnapshot represents the normalized photo carousel data emitted over SSE.
@@ -67,11 +76,11 @@ type PhotoItem struct {
 
 // PhotosConfig holds parsed configuration for PhotosProvider.
 type PhotosConfig struct {
-	Source      string        `json:"source,omitempty" yaml:"source,omitempty"`
-	AlbumURL    string        `json:"album_url,omitempty" yaml:"album_url,omitempty"`
+	Source      string        `json:"source,omitempty"        yaml:"source,omitempty"`
+	AlbumURL    string        `json:"album_url,omitempty"     yaml:"album_url,omitempty"`
 	AlbumURLEnv string        `json:"album_url_env,omitempty" yaml:"album_url_env,omitempty"`
-	Albums      []AlbumSource `json:"albums,omitempty" yaml:"albums,omitempty"`
-	CacheDir    string        `json:"cache_dir,omitempty" yaml:"cache_dir,omitempty"`
+	Albums      []AlbumSource `json:"albums,omitempty"        yaml:"albums,omitempty"`
+	CacheDir    string        `json:"cache_dir,omitempty"     yaml:"cache_dir,omitempty"`
 	isLegacy    bool
 }
 
@@ -121,7 +130,7 @@ func NewPhotosProvider(opts ...PhotosOption) *PhotosProvider {
 			Timeout: 15 * time.Second,
 		},
 		logger:     slog.Default().With("provider", "photo-carousel"),
-		randSource: rand.New(rand.NewSource(time.Now().UnixNano())),
+		randSource: rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // G404: photo shuffle order is cosmetic
 		location:   time.UTC,
 	}
 	for _, opt := range opts {
@@ -169,24 +178,24 @@ func (p *PhotosProvider) isAllEmberBridgeLocked() bool {
 }
 
 func resolveAlbumDisplayName(a *albumState) string {
-	if a.cfg.Name != "Shared Album" && a.cfg.Name != "" {
+	if a.cfg.Name != defaultAlbumName && a.cfg.Name != "" {
 		return a.cfg.Name
 	}
 	if a.scrapedTitle != "" {
 		return a.scrapedTitle
 	}
-	return "Shared Album"
+	return defaultAlbumName
 }
 
 func resolveSnapshotAlbumName(albums []*albumState) string {
 	if len(albums) == 0 {
-		return "Shared Album"
+		return defaultAlbumName
 	}
-	if len(albums) == 1 && albums[0].cfg.Name == "Shared Album" {
+	if len(albums) == 1 && albums[0].cfg.Name == defaultAlbumName {
 		if title := strings.TrimSpace(albums[0].scrapedTitle); title != "" {
 			return title
 		}
-		return "Shared Album"
+		return defaultAlbumName
 	}
 	seen := make(map[string]struct{})
 	var names []string
@@ -200,7 +209,7 @@ func resolveSnapshotAlbumName(albums []*albumState) string {
 		}
 	}
 	if len(names) == 0 {
-		return "Shared Album"
+		return defaultAlbumName
 	}
 	return strings.Join(names, ", ")
 }
@@ -446,7 +455,7 @@ func (p *PhotosProvider) Sync(ctx context.Context, full bool) error {
 	return nil
 }
 
-func (p *PhotosProvider) syncAlbumFull(ctx context.Context, albumURL, albumKey, initialToken, authKey, displayName string, page1Photos []PhotoItem, client *http.Client, logger *slog.Logger) ([]PhotoItem, bool) {
+func (*PhotosProvider) syncAlbumFull(ctx context.Context, albumURL, albumKey, initialToken, authKey, displayName string, page1Photos []PhotoItem, client *http.Client, logger *slog.Logger) ([]PhotoItem, bool) {
 	paged, complete := paginateSnAcKc(ctx, client, albumURL, albumKey, initialToken, authKey, logger)
 	allPhotos := make([]PhotoItem, 0, len(page1Photos)+len(paged))
 	for _, it := range page1Photos {
@@ -499,7 +508,7 @@ func (p *PhotosProvider) syncAlbum(ctx context.Context, a *albumState, full bool
 	existingPhotos := slices.Clone(a.photos)
 	p.mu.RUnlock()
 
-	page1Photos, scrapedTitle, initialToken, albumKey, authKey, err := p.scrapePage1(ctx, client, resolvedURL, logger)
+	page1, err := p.scrapePage1(ctx, client, resolvedURL, logger)
 	if err != nil {
 		if alreadyHydrated {
 			logger.Warn("photo-carousel upstream scrape failed; returning cached SWR snapshot",
@@ -512,16 +521,16 @@ func (p *PhotosProvider) syncAlbum(ctx context.Context, a *albumState, full bool
 	}
 
 	finalTitle := currentTitle
-	if scrapedTitle != "" {
-		finalTitle = scrapedTitle
+	if page1.title != "" {
+		finalTitle = page1.title
 	}
 
 	displayName := albumSourceName
-	if displayName == "" || displayName == "Shared Album" {
+	if displayName == "" || displayName == defaultAlbumName {
 		if finalTitle != "" {
 			displayName = finalTitle
 		} else {
-			displayName = "Shared Album"
+			displayName = defaultAlbumName
 		}
 	}
 
@@ -531,18 +540,18 @@ func (p *PhotosProvider) syncAlbum(ctx context.Context, a *albumState, full bool
 	isFullSync := full || !alreadyHydrated || lastFullZero
 
 	if isFullSync {
-		newPhotos, paginatedOK = p.syncAlbumFull(ctx, resolvedURL, albumKey, initialToken, authKey, displayName, page1Photos, client, logger)
+		newPhotos, paginatedOK = p.syncAlbumFull(ctx, resolvedURL, page1.albumKey, page1.initialToken, page1.authKey, displayName, page1.photos, client, logger)
 	} else {
-		newPhotos = syncAlbumDelta(existingPhotos, page1Photos, displayName)
+		newPhotos = syncAlbumDelta(existingPhotos, page1.photos, displayName)
 	}
 	carryCachedPhotoMetadata(newPhotos, existingPhotos)
-	enrichPhotoLocations(ctx, client, resolvedURL, authKey, newPhotos, logger)
+	enrichPhotoLocations(ctx, client, resolvedURL, page1.authKey, newPhotos, logger)
 
 	var toCache *albumDiskCache
 
 	p.mu.Lock()
-	if scrapedTitle != "" {
-		a.scrapedTitle = scrapedTitle
+	if page1.title != "" {
+		a.scrapedTitle = page1.title
 	}
 	a.photos = newPhotos
 	a.lastPage1Sync = now
@@ -741,10 +750,20 @@ func checkAlbumResponseStatus(resp *http.Response) error {
 	return nil
 }
 
-func (p *PhotosProvider) scrapePage1(ctx context.Context, client *http.Client, albumURL string, logger *slog.Logger) ([]PhotoItem, string, string, string, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, albumURL, nil)
+// albumPage1 is what the first HTML page of a shared album yields: its
+// photos, title, and the keys needed to paginate and enrich the rest.
+type albumPage1 struct {
+	photos       []PhotoItem
+	title        string
+	initialToken string
+	albumKey     string
+	authKey      string
+}
+
+func (*PhotosProvider) scrapePage1(ctx context.Context, client *http.Client, albumURL string, logger *slog.Logger) (albumPage1, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, albumURL, http.NoBody)
 	if err != nil {
-		return nil, "", "", "", "", fmt.Errorf("failed to create request: %w", err)
+		return albumPage1{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Browser User-Agent and Accept-Language per Girl Gang recommendations
@@ -754,22 +773,22 @@ func (p *PhotosProvider) scrapePage1(ctx context.Context, client *http.Client, a
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", "", "", "", fmt.Errorf("request to %s failed: %w", redactURL(albumURL), err)
+		return albumPage1{}, fmt.Errorf("request to %s failed: %w", redactURL(albumURL), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if err := checkAlbumResponseStatus(resp); err != nil {
-		return nil, "", "", "", "", err
+	if err = checkAlbumResponseStatus(resp); err != nil {
+		return albumPage1{}, err
 	}
 
 	// Slowloris defense: enforce 5MB ceiling
 	limitReader := io.LimitReader(resp.Body, maxPhotoAlbumBytes+1)
 	bodyBytes, err := io.ReadAll(limitReader)
 	if err != nil {
-		return nil, "", "", "", "", fmt.Errorf("failed to read response body: %w", err)
+		return albumPage1{}, fmt.Errorf("failed to read response body: %w", err)
 	}
 	if len(bodyBytes) > maxPhotoAlbumBytes {
-		return nil, "", "", "", "", fmt.Errorf("google photos payload exceeded %d byte ceiling", maxPhotoAlbumBytes)
+		return albumPage1{}, fmt.Errorf("google photos payload exceeded %d byte ceiling", maxPhotoAlbumBytes)
 	}
 
 	var authKey string
@@ -782,7 +801,7 @@ func (p *PhotosProvider) scrapePage1(ctx context.Context, client *http.Client, a
 	photos := extractPhotosFromHTML(html, logger)
 	albumKey, token := extractAlbumKeyAndToken(html)
 
-	return photos, albumName, token, albumKey, authKey, nil
+	return albumPage1{photos: photos, title: albumName, initialToken: token, albumKey: albumKey, authKey: authKey}, nil
 }
 
 func photoItemKey(item PhotoItem) string {
@@ -868,7 +887,7 @@ func (p *PhotosProvider) extractExistingDeckState(buckets dayAlbumBuckets) ([]st
 
 func (p *PhotosProvider) reconcilePhotoDeck(scraped []PhotoItem, r *rand.Rand) {
 	if r == nil {
-		r = rand.New(rand.NewSource(time.Now().UnixNano()))
+		r = rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // G404: photo shuffle order is cosmetic
 	}
 
 	buckets := groupPhotosByDayAndAlbum(scraped, p.location)
@@ -931,7 +950,7 @@ func (p *PhotosProvider) selectAlbumWindowLocked(scraped []PhotoItem) []PhotoIte
 
 	r := p.randSource
 	if r == nil {
-		r = rand.New(rand.NewSource(time.Now().UnixNano()))
+		r = rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // G404: photo shuffle order is cosmetic
 		p.randSource = r
 	}
 	p.reconcilePhotoDeck(scraped, r)
@@ -1068,7 +1087,7 @@ func extractAlbumTitle(html string) string {
 			}
 		}
 	}
-	return "Shared Album"
+	return defaultAlbumName
 }
 
 // extractPhotosFromHTML implements the multi-strategy photo extraction pipeline.
@@ -1208,7 +1227,7 @@ func hasVideoMarker(val any) bool {
 	switch v := val.(type) {
 	case string:
 		l := strings.ToLower(v)
-		return strings.Contains(l, "video/") || strings.Contains(l, ".mp4") || l == "video"
+		return strings.Contains(l, "video/") || strings.Contains(l, ".mp4") || l == mediaTypeVideo
 	case []any:
 		return slices.ContainsFunc(v, hasVideoMarker)
 	case map[string]any:
@@ -1227,7 +1246,7 @@ func hasGIFMarker(val any) bool {
 	switch v := val.(type) {
 	case string:
 		l := strings.ToLower(strings.TrimSpace(v))
-		return strings.Contains(l, "image/gif") || strings.HasSuffix(l, ".gif") || l == "gif"
+		return strings.Contains(l, "image/gif") || strings.HasSuffix(l, ".gif") || l == mediaTypeGIF
 	case []any:
 		return slices.ContainsFunc(v, hasGIFMarker)
 	case map[string]any:
@@ -1371,9 +1390,9 @@ func parseMediaItem(elem any) (PhotoItem, bool) {
 		return PhotoItem{}, false
 	}
 	if hasVideoMarker(arr) {
-		item.MediaType = "video"
+		item.MediaType = mediaTypeVideo
 	} else if hasGIFMarker(arr) {
-		item.MediaType = "gif"
+		item.MediaType = mediaTypeGIF
 	}
 	return item, true
 }

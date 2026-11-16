@@ -11,8 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/azylman/mirrormere/internal/covflush"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/azylman/mirrormere/internal/covflush"
 )
 
 const (
@@ -297,7 +298,7 @@ func (s *Server) setupRoutes() {
 	}))
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (*Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
@@ -325,7 +326,7 @@ var (
 	writeCountersDirFn = coverage.WriteCountersDir
 )
 
-func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
+func (*Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -352,7 +353,7 @@ func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+func (*Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return

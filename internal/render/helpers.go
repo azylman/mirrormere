@@ -236,7 +236,7 @@ func JSONHelper(v any) (template.HTML, error) {
 	if err != nil {
 		return "", err
 	}
-	return template.HTML(b), nil
+	return template.HTML(b), nil //nolint:gosec // G203: json.Marshal escapes <, > and & so the payload cannot open a tag
 }
 
 // JSONJSHelper marshals any value into safe template.JS.
@@ -245,8 +245,14 @@ func JSONJSHelper(v any) (template.JS, error) {
 	if err != nil {
 		return "", err
 	}
-	return template.JS(b), nil
+	return template.JS(b), nil //nolint:gosec // G203: json.Marshal output is a valid, HTML-escaped JS literal
 }
+
+// Weather icon tokens referenced outside weatherIconPath's table.
+const (
+	weatherIconCloudy = "weather-cloudy"
+	weatherIconSnowy  = "weather-snowy"
+)
 
 func weatherIconPath(token string) string {
 	switch token {
@@ -258,7 +264,7 @@ func weatherIconPath(token string) string {
 		return `<circle cx="16" cy="9" r="4" fill="#f59e0b"/><g stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round"><line x1="16" y1="2" x2="16" y2="3.5"/><line x1="21.5" y1="6" x2="20" y2="7"/><line x1="21.5" y1="12" x2="20" y2="11"/><line x1="11.5" y1="4" x2="12.5" y2="5"/></g><path d="M15.5 19H7a4.5 4.5 0 0 1-.8-8.9A5.5 5.5 0 0 1 16.8 11 3.5 3.5 0 0 1 15.5 19z" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-linejoin="round"/>`
 	case "weather-night-partly-cloudy":
 		return `<path d="M19 10.5A6 6 0 0 1 12.5 4a5 5 0 0 0 6.5 6.5z" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-linejoin="round"/><path d="M15.5 19H7a4.5 4.5 0 0 1-.8-8.9A5.5 5.5 0 0 1 16.8 11 3.5 3.5 0 0 1 15.5 19z" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-linejoin="round"/>`
-	case "weather-cloudy":
+	case weatherIconCloudy:
 		return `<path d="M17.5 19H7a5 5 0 0 1-1-9.9A6 6 0 0 1 17.8 11 4 4 0 0 1 17.5 19z" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.7" stroke-linejoin="round"/>`
 	case "weather-fog":
 		return `<g stroke="#94a3b8" stroke-width="2" stroke-linecap="round"><line x1="4" y1="10" x2="20" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="5" y1="18" x2="19" y2="18"/><line x1="7" y1="6" x2="17" y2="6"/></g>`
@@ -266,7 +272,7 @@ func weatherIconPath(token string) string {
 		return `<path d="M17.5 15H7a4.5 4.5 0 0 1-1-8.9A5.5 5.5 0 0 1 16.8 7 3.5 3.5 0 0 1 17.5 15z" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.7" stroke-linejoin="round"/><g stroke="#38bdf8" stroke-width="2" stroke-linecap="round"><line x1="8" y1="18" x2="7" y2="21"/><line x1="12" y1="18" x2="11" y2="21"/><line x1="16" y1="18" x2="15" y2="21"/></g>`
 	case "weather-pouring":
 		return `<path d="M17.5 14H7a4.5 4.5 0 0 1-1-8.9A5.5 5.5 0 0 1 16.8 6 3.5 3.5 0 0 1 17.5 14z" fill="#e2e8f0" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round"/><g stroke="#0284c7" stroke-width="2" stroke-linecap="round"><line x1="6" y1="17" x2="4" y2="21"/><line x1="10" y1="17" x2="8" y2="21"/><line x1="14" y1="17" x2="12" y2="21"/><line x1="18" y1="17" x2="16" y2="21"/></g>`
-	case "weather-snowy":
+	case weatherIconSnowy:
 		return `<path d="M17.5 14H7a4.5 4.5 0 0 1-1-8.9A5.5 5.5 0 0 1 16.8 6 3.5 3.5 0 0 1 17.5 14z" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.7" stroke-linejoin="round"/><g fill="#93c5fd"><circle cx="8" cy="18" r="1.3"/><circle cx="12" cy="18" r="1.3"/><circle cx="16" cy="18" r="1.3"/><circle cx="10" cy="21" r="1.3"/><circle cx="14" cy="21" r="1.3"/></g>`
 	case "weather-snowy-rainy":
 		return `<path d="M17.5 14H7a4.5 4.5 0 0 1-1-8.9A5.5 5.5 0 0 1 16.8 6 3.5 3.5 0 0 1 17.5 14z" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.7" stroke-linejoin="round"/><g fill="#93c5fd"><circle cx="8" cy="18" r="1.3"/><circle cx="14" cy="18" r="1.3"/></g><g stroke="#38bdf8" stroke-width="2" stroke-linecap="round"><line x1="11" y1="18" x2="10" y2="21"/></g>`
@@ -279,7 +285,7 @@ func weatherIconPath(token string) string {
 
 // WeatherIcon returns a sanitized, scalable vector inline SVG for WMO condition tokens.
 func WeatherIcon(args ...any) template.HTML {
-	token := "weather-cloudy"
+	token := weatherIconCloudy
 	size := 20
 	if len(args) > 0 && args[0] != nil {
 		s := fmt.Sprint(args[0])
@@ -315,7 +321,7 @@ func WeatherIcon(args ...any) template.HTML {
 	}
 
 	pathHTML := weatherIconPath(token)
-	return template.HTML(fmt.Sprintf(`<svg width="%d" height="%d" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mm-weather-icon mm-icon-%s">%s</svg>`, size, size, template.HTMLEscapeString(token), pathHTML))
+	return template.HTML(fmt.Sprintf(`<svg width="%d" height="%d" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mm-weather-icon mm-icon-%s">%s</svg>`, size, size, template.HTMLEscapeString(token), pathHTML)) //nolint:gosec // G203: token is escaped and pathHTML comes from a fixed icon table
 }
 
 type hourlyPoint struct {
@@ -462,7 +468,7 @@ func extractHourlyPoints(arg any) []hourlyPoint {
 			pt.temp = 0.0
 		}
 		if pt.icon == "" {
-			pt.icon = "weather-cloudy"
+			pt.icon = weatherIconCloudy
 		}
 		pts = append(pts, pt)
 	}
@@ -621,7 +627,7 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 	}
 
 	sb.WriteString("</svg>")
-	return template.HTML(sb.String())
+	return template.HTML(sb.String()) //nolint:gosec // G203: only numbers, fixed icon paths and HTMLEscapeString labels are interpolated
 }
 
 func precipProbFromMap(v map[string]any) int {

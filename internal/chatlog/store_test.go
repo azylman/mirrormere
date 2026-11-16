@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 // WithClock injects the time source (tests).
@@ -132,10 +134,10 @@ func TestStore_ViewPerNodeAndFallback(t *testing.T) {
 	s.Replace(WidgetKey("w1"), []Message{{Role: RoleAgent, Text: "pushed", At: clk.Now().Add(time.Second)}})
 
 	msgsOf := func(v map[string]any) []string {
-		items := v["messages"].([]any)
+		items := testutil.As[[]any](t, v["messages"])
 		out := make([]string, 0, len(items))
 		for _, m := range items {
-			out = append(out, m.(map[string]any)["text"].(string))
+			out = append(out, testutil.As[string](t, testutil.As[map[string]any](t, m)["text"]))
 		}
 		return out
 	}
@@ -152,7 +154,7 @@ func TestStore_ViewPerNodeAndFallback(t *testing.T) {
 		t.Fatalf("unknown node and other widget: %v", got)
 	}
 	v := s.View("w1", "kitchen")
-	first := v["messages"].([]any)[0].(map[string]any)
+	first := testutil.As[map[string]any](t, testutil.As[[]any](t, v["messages"])[0])
 	if first["author"] != "sam" || first["role"] != RoleHuman || v["updated_at"] == nil {
 		t.Fatalf("unexpected entry %v / %v", first, v)
 	}

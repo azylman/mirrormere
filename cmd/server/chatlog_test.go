@@ -7,13 +7,14 @@ import (
 	"github.com/azylman/mirrormere/internal/chatlog"
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/provider"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 type fakeSnapshots struct{ snap *config.Snapshot }
 
-func (f fakeSnapshots) CurrentSnapshot() *config.Snapshot                 { return f.snap }
-func (f fakeSnapshots) GetWidgetState(string) (any, string, string, bool) { return nil, "", "", false }
-func (f fakeSnapshots) CurrentStatus() config.Status                      { return config.Status{} }
+func (f fakeSnapshots) CurrentSnapshot() *config.Snapshot               { return f.snap }
+func (fakeSnapshots) GetWidgetState(string) (any, string, string, bool) { return nil, "", "", false }
+func (fakeSnapshots) CurrentStatus() config.Status                      { return config.Status{} }
 
 type fakePusher struct {
 	ids []string
@@ -41,10 +42,10 @@ func TestChatLogWiring(t *testing.T) {
 	store := chatlog.NewStore()
 	store.Add(chatlog.NodeKey("kitchen"), chatlog.Message{Role: chatlog.RoleHuman, Text: "hi"})
 	fn := chatLogNodeData(chatSnap(), store)
-	if d, ok := fn("a", "kitchen"); !ok || len(d.(map[string]any)["messages"].([]any)) != 1 {
+	if d, ok := fn("a", "kitchen"); !ok || len(testutil.As[[]any](t, testutil.As[map[string]any](t, d)["messages"])) != 1 {
 		t.Fatalf("kitchen data mismatch: %v, %v", d, ok)
 	}
-	if d, _ := fn("a", "office"); len(d.(map[string]any)["messages"].([]any)) != 0 {
+	if d, _ := fn("a", "office"); len(testutil.As[[]any](t, testutil.As[map[string]any](t, d)["messages"])) != 0 {
 		t.Fatalf("office data leaked kitchen: %v", d)
 	}
 	if _, ok := fn("s", "kitchen"); ok {
@@ -54,7 +55,7 @@ func TestChatLogWiring(t *testing.T) {
 	hook := newChatLogHook(chatSnap(), func() chatLogPusher { return lazyPusher }, chatlog.NewStore())
 	lazyPusher = &fakePusher{}
 	hook()
-	if len(lazyPusher.(*fakePusher).ids) != 2 {
-		t.Fatalf("lazy hook pushed to %v, want 2 widgets", lazyPusher.(*fakePusher).ids)
+	if len(testutil.As[*fakePusher](t, lazyPusher).ids) != 2 {
+		t.Fatalf("lazy hook pushed to %v, want 2 widgets", testutil.As[*fakePusher](t, lazyPusher).ids)
 	}
 }

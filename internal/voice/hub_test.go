@@ -17,9 +17,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/events"
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 // WithSTTClient overrides the STT client implementation.
@@ -354,7 +356,7 @@ func TestDefaultSTTClient_Wyoming(t *testing.T) {
 				if tc.drain {
 					drainMockWyomingRequest(r)
 				}
-				if len(tc.resp) > 0 {
+				if tc.resp != "" {
 					_, _ = conn.Write([]byte(tc.resp))
 				}
 			})
@@ -460,7 +462,7 @@ func TestDefaultBrainClient(t *testing.T) {
 			if tc.wantNodeID != "" {
 				mu.Lock()
 				defer mu.Unlock()
-				if lastBody["node_id"] != tc.wantNodeID || !strings.HasPrefix(lastBody["session_id"].(string), "turn-") || lastBody["device_name"] != nil {
+				if lastBody["node_id"] != tc.wantNodeID || !strings.HasPrefix(testutil.As[string](t, lastBody["session_id"]), "turn-") || lastBody["device_name"] != nil {
 					t.Errorf("unexpected request body: %+v", lastBody)
 				}
 			}

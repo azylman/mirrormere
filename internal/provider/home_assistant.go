@@ -373,12 +373,12 @@ func (p *HomeAssistantProvider) Fetch(ctx context.Context) (any, error) {
 }
 
 // Subscribe returns nil as Home Assistant entities are synchronized via coordinator refresh loops.
-func (p *HomeAssistantProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
+func (*HomeAssistantProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
 	return nil
 }
 
 // Shutdown cleanly stops the provider.
-func (p *HomeAssistantProvider) Shutdown(ctx context.Context) error {
+func (*HomeAssistantProvider) Shutdown(ctx context.Context) error {
 	return nil
 }
 
@@ -517,7 +517,7 @@ func (p *HomeAssistantProvider) FetchLovelaceConfig(ctx context.Context, dashboa
 	}
 
 	reqURL := strings.TrimRight(baseURL, "/") + endpoint
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create lovelace config request: %w", err)
 	}
@@ -570,7 +570,7 @@ func (p *HomeAssistantProvider) HydrateStates(ctx context.Context) (map[string]E
 
 	cleanBase := strings.TrimRight(baseURL, "/")
 	reqURL := cleanBase + "/api/states"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create states request: %w", err)
 	}
@@ -816,7 +816,7 @@ func selectView(views []LovelaceView, selector string) LovelaceView {
 	return views[0]
 }
 
-func (p *HomeAssistantProvider) generateFallbackCards(states map[string]EntityState, explicitEntities []string) []LovelaceCard {
+func (*HomeAssistantProvider) generateFallbackCards(states map[string]EntityState, explicitEntities []string) []LovelaceCard {
 	cards := make([]LovelaceCard, 0)
 
 	if len(explicitEntities) > 0 {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/provider"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 func mkCalSource(name, url, user, pass, token string) provider.CalendarSource {
@@ -163,7 +164,7 @@ func runCalDAVMultiCalendarSubtest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetch failed: %v", err)
 	}
-	snap := res.(provider.CalendarSnapshot)
+	snap := testutil.As[provider.CalendarSnapshot](t, res)
 	if snap.SyncStatus != "partial" || len(snap.Events) != 2 || snap.Events[0].Title != "iCal Standard Feed Event" || snap.Events[1].Title != "CalDAV Synchronized Event" {
 		t.Fatalf("unexpected snapshot: %+v", snap)
 	}

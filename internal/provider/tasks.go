@@ -295,12 +295,12 @@ func (p *TasksProvider) Fetch(ctx context.Context) (any, error) {
 }
 
 // Subscribe returns nil as upstream task providers poll on their configured refresh interval.
-func (p *TasksProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
+func (*TasksProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
 	return nil
 }
 
 // Shutdown cleanly stops the provider.
-func (p *TasksProvider) Shutdown(ctx context.Context) error {
+func (*TasksProvider) Shutdown(ctx context.Context) error {
 	return nil
 }
 

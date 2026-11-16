@@ -10,6 +10,7 @@ import (
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/provider"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 func chatLogSnapshot() *config.Snapshot {
@@ -45,7 +46,7 @@ func TestChatLogWidget_PushValidatesStoresAndBroadcasts(t *testing.T) {
 	if _, err := coord.PushWidgetData(context.Background(), "chat", map[string]any{"messages": []any{map[string]any{"role": "human", "text": "hi"}}}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	if got := store.View("chat", "node")["messages"].([]any); len(got) != 1 || got[0].(map[string]any)["text"] != "hi" {
+	if got := testutil.As[[]any](t, store.View("chat", "node")["messages"]); len(got) != 1 || testutil.As[map[string]any](t, got[0])["text"] != "hi" {
 		t.Fatalf("bad store: %v", got)
 	}
 	if _, ok := bc.waitForPublish(time.Second); !ok {
@@ -57,7 +58,7 @@ func TestChatLogWidget_PushValidatesStoresAndBroadcasts(t *testing.T) {
 			t.Errorf("expected ErrSchemaValidation for %v, got %v", bad, err)
 		}
 	}
-	if _, err := coord.PushWidgetData(context.Background(), "cal", map[string]any{"a": 1}); len(store.View("chat", "")["messages"].([]any)) != 1 || !errors.Is(err, provider.ErrNonHTTPWidgetPushForbidden) {
+	if _, err := coord.PushWidgetData(context.Background(), "cal", map[string]any{"a": 1}); len(testutil.As[[]any](t, store.View("chat", "")["messages"])) != 1 || !errors.Is(err, provider.ErrNonHTTPWidgetPushForbidden) {
 		t.Fatalf("unexpected store state or non-http push error: %v", err)
 	}
 }

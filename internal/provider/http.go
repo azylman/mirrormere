@@ -137,7 +137,7 @@ func compileResponseSchema(widgetType string, schemaMap map[string]any) (*jsonsc
 		return nil, fmt.Errorf("failed to unmarshal response_schema: %w", err)
 	}
 	schemaURL := fmt.Sprintf("schema://widgets/%s/response_schema.json", widgetType)
-	if err := compiler.AddResource(schemaURL, doc); err != nil {
+	if err = compiler.AddResource(schemaURL, doc); err != nil {
 		return nil, fmt.Errorf("failed to add response_schema resource: %w", err)
 	}
 	sch, err := compiler.Compile(schemaURL)
@@ -222,11 +222,11 @@ func (p *HTTPProvider) Fetch(ctx context.Context) (any, error) {
 }
 
 // Subscribe returns nil as HTTP polling does not maintain persistent push connections.
-func (p *HTTPProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
+func (*HTTPProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
 	return nil
 }
 
 // Shutdown cleanly stops the provider.
-func (p *HTTPProvider) Shutdown(ctx context.Context) error {
+func (*HTTPProvider) Shutdown(ctx context.Context) error {
 	return nil
 }

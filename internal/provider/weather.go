@@ -13,6 +13,12 @@ import (
 	"time"
 )
 
+// Weather icon tokens shared by several WMO codes; render maps tokens to SVGs.
+const (
+	weatherIconCloudy = "weather-cloudy"
+	weatherIconSnowy  = "weather-snowy"
+)
+
 const (
 	defaultOpenMeteoBaseURL = "https://api.open-meteo.com/v1/forecast"
 	defaultWeatherTimeout   = 10 * time.Second
@@ -53,7 +59,7 @@ func MapWMOCodeWithDay(code int, isDay int) (string, string) {
 	case 2:
 		return "Partly Cloudy", "weather-partly-cloudy"
 	case 3:
-		return "Overcast", "weather-cloudy"
+		return "Overcast", weatherIconCloudy
 	case 45, 48:
 		return "Fog", "weather-fog"
 	case 51, 53, 55:
@@ -65,19 +71,19 @@ func MapWMOCodeWithDay(code int, isDay int) (string, string) {
 	case 66, 67:
 		return "Freezing Rain", "weather-snowy-rainy"
 	case 71, 73, 75:
-		return "Snow Fall", "weather-snowy"
+		return "Snow Fall", weatherIconSnowy
 	case 77:
-		return "Snow Grains", "weather-snowy"
+		return "Snow Grains", weatherIconSnowy
 	case 80, 81, 82:
 		return "Rain Showers", "weather-pouring"
 	case 85, 86:
-		return "Snow Showers", "weather-snowy"
+		return "Snow Showers", weatherIconSnowy
 	case 95:
 		return "Thunderstorm", "weather-lightning"
 	case 96, 99:
 		return "Thunderstorm with Hail", "weather-lightning-rainy"
 	default:
-		return "Unknown", "weather-cloudy"
+		return "Unknown", weatherIconCloudy
 	}
 }
 
@@ -196,7 +202,7 @@ func NewWeatherProviderWithClient(client *http.Client, baseURL string) *WeatherP
 	return &WeatherProvider{
 		client:  client,
 		baseURL: baseURL,
-		units:   "imperial",
+		units:   unitsImperial,
 		logger:  slog.Default(),
 	}
 }
@@ -241,14 +247,13 @@ func (p *WeatherProvider) Init(ctx context.Context, config map[string]any, opts 
 		return err
 	}
 
-	units := "imperial"
+	units := unitsImperial
 	if u, ok := config["units"].(string); ok && strings.TrimSpace(u) != "" {
 		lower := strings.ToLower(strings.TrimSpace(u))
-		if lower == "metric" || lower == "imperial" {
-			units = lower
-		} else {
+		if lower != unitsMetric && lower != unitsImperial {
 			return fmt.Errorf("invalid units %q: must be 'imperial' or 'metric'", u)
 		}
+		units = lower
 	}
 
 	tz := "UTC"
@@ -283,7 +288,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	tempLabel := "°F"
 	windLabel := "mph"
 
-	if p.units == "metric" {
+	if p.units == unitsMetric {
 		tempUnit = "celsius"
 		windUnit = "kmh"
 		precipUnit = "mm"
@@ -308,7 +313,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	q.Set("timezone", p.timezone)
 	parsedURL.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create weather request: %w", err)
 	}
@@ -414,12 +419,12 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 }
 
 // Subscribe returns nil as Open-Meteo polling does not maintain persistent push connections.
-func (p *WeatherProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
+func (*WeatherProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
 	return nil
 }
 
 // Shutdown cleanly stops the provider.
-func (p *WeatherProvider) Shutdown(ctx context.Context) error {
+func (*WeatherProvider) Shutdown(ctx context.Context) error {
 	return nil
 }
 

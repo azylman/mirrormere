@@ -290,7 +290,7 @@ func assertCallServicePayloadAndContext(ctx context.Context, t *testing.T, p *Ho
 		t.Errorf("expected 0 states for empty response, got %d", len(states))
 	}
 
-	canceledCtx, cancel := context.WithCancel(context.Background())
+	canceledCtx, cancel := context.WithCancel(ctx)
 	cancel()
 	_, err = p.CallServiceWithResponse(canceledCtx, "light", "turn_on", nil)
 	if !errors.Is(err, ErrUpstreamUnavailable) || !strings.Contains(err.Error(), "service call failed") {

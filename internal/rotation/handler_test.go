@@ -47,7 +47,7 @@ func (m *mockController) AdvanceScreen(dir string) (events.ScreenRotateData, err
 }
 func (m *mockController) PauseRotation(d time.Duration) (int, error) { return 0, m.ctrlErr }
 func (m *mockController) ResumeRotation() (int, error)               { return 0, m.ctrlErr }
-func (m *mockController) CurrentScreen() int                         { return 0 }
+func (*mockController) CurrentScreen() int                           { return 0 }
 func (m *mockController) ScreenLayout() ScreenLayoutSnapshot         { return m.layout }
 
 func runRotationEndpointCase(t *testing.T, handlerSelector func(*Handler) http.HandlerFunc, path string, tc rotationCase, totalScreens int) {

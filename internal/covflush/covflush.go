@@ -28,14 +28,14 @@ func WriteArchive(w io.Writer, metaFn, countersFn func(string) error) (retErr er
 	}()
 
 	if metaFn != nil {
-		if err := metaFn(dir); err != nil {
+		if err = metaFn(dir); err != nil {
 			// WriteMetaDir returns an error when binary is not built with -cover.
 			// This is non-fatal for coverage counters capture during unit tests or uninstrumented runs.
 			_ = err
 		}
 	}
 	if countersFn != nil {
-		if err := countersFn(dir); err != nil {
+		if err = countersFn(dir); err != nil {
 			return err
 		}
 	}

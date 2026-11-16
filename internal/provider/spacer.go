@@ -5,7 +5,7 @@ import (
 )
 
 func init() {
-	registerBuiltin("spacer", func() Provider {
+	registerBuiltin(providerSpacer, func() Provider {
 		return NewSpacerProvider()
 	})
 }
@@ -20,21 +20,21 @@ func NewSpacerProvider() *SpacerProvider {
 }
 
 // Init initializes the spacer provider (no-op).
-func (s *SpacerProvider) Init(ctx context.Context, config map[string]any, opts InitOptions) error {
+func (*SpacerProvider) Init(ctx context.Context, config map[string]any, opts InitOptions) error {
 	return nil
 }
 
 // Fetch returns the nominal empty domain data for the spacer tile.
-func (s *SpacerProvider) Fetch(ctx context.Context) (any, error) {
+func (*SpacerProvider) Fetch(ctx context.Context) (any, error) {
 	return map[string]any{}, nil
 }
 
 // Subscribe is a no-op as spacer tiles do not emit dynamic push events.
-func (s *SpacerProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
+func (*SpacerProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
 	return nil
 }
 
 // Shutdown cleans up any resources (no-op).
-func (s *SpacerProvider) Shutdown(ctx context.Context) error {
+func (*SpacerProvider) Shutdown(ctx context.Context) error {
 	return nil
 }

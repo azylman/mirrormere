@@ -20,11 +20,11 @@ type staticSnapshotProvider struct {
 }
 
 func (p *staticSnapshotProvider) CurrentSnapshot() *config.Snapshot { return p.snapshot }
-func (p *staticSnapshotProvider) GetWidgetState(string) (any, string, string, bool) {
+func (*staticSnapshotProvider) GetWidgetState(string) (any, string, string, bool) {
 	return map[string]any{}, "healthy", "", true
 }
 
-func (p *staticSnapshotProvider) CurrentStatus() config.Status {
+func (*staticSnapshotProvider) CurrentStatus() config.Status {
 	return config.Status{ConfigStatus: config.ConfigStatusOK}
 }
 
@@ -78,7 +78,7 @@ func TestWalkingSkeleton_EndToEnd(t *testing.T) {
 	}
 	for _, tc := range tests {
 		rec := httptest.NewRecorder()
-		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.url, nil))
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.url, http.NoBody))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 for %s, got %d", tc.url, rec.Code)
 		}

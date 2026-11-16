@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/events"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 func WithHTTPClient(client *http.Client) CoordinatorOption {
@@ -425,7 +426,7 @@ func TestCoordinator_ForwardAction(t *testing.T) {
 			if receivedAction.ID != tc.id || receivedAction.Action != tc.act {
 				t.Fatalf("received action mismatch: %+v", receivedAction)
 			}
-			if tc.act == ActionSeek && receivedAction.Value.(float64) != 128.5 {
+			if tc.act == ActionSeek && testutil.As[float64](t, receivedAction.Value) != 128.5 {
 				t.Fatalf("seek value mismatch: %v", receivedAction.Value)
 			}
 			mu.Unlock()

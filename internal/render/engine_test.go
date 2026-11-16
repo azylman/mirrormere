@@ -19,6 +19,7 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/render"
 	"github.com/azylman/mirrormere/internal/tasks"
+	"github.com/azylman/mirrormere/internal/testutil"
 	"github.com/azylman/mirrormere/internal/widget"
 )
 
@@ -367,11 +368,11 @@ func TestSanitizeConfig(t *testing.T) {
 			t.Errorf("sensitive key %q leaked", k)
 		}
 	}
-	subMap := got["list"].([]any)[1].(map[string]any)
+	subMap := testutil.As[map[string]any](t, testutil.As[[]any](t, got["list"])[1])
 	if subMap["safe_item"] != "ok" || subMap["show_passed"] != false || subMap["author"] != "Nested Author" || subMap["secret"] != nil || subMap["nested_env"] != nil {
 		t.Errorf("nested slice map sanitization failed: %v", subMap)
 	}
-	nestedMap := got["nested"].(map[string]any)
+	nestedMap := testutil.As[map[string]any](t, got["nested"])
 	if nestedMap["public"] != "show" || nestedMap["bypass_cache"] != true || nestedMap["secret"] != nil || nestedMap["sub_token_env"] != nil {
 		t.Errorf("nested map sanitization failed: %v", nestedMap)
 	}
@@ -538,7 +539,7 @@ func TestChatLogWidget_RendersFromProviderPerNode(t *testing.T) {
 
 	h := render.NewHandler(engine, res)
 	rec := httptest.NewRecorder()
-	h.GetWidgetRender(rec, httptest.NewRequest(http.MethodGet, "/api/widgets/chat/render?node=kitchen", nil), "chat")
+	h.GetWidgetRender(rec, httptest.NewRequest(http.MethodGet, "/api/widgets/chat/render?node=kitchen", http.NoBody), "chat")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "kitchen answer") {
 		t.Errorf("handler render: %d %s", rec.Code, rec.Body.String())
 	}

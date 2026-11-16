@@ -17,13 +17,13 @@ import (
 
 func (h *Hub) recordEdgeTimings(nodeID string, timings EdgeTimings) {
 	if timings.WakeEvalSec > 0 {
-		h.metrics.RecordStageDuration(nodeID, "wake_eval", "success", timings.WakeEvalSec)
+		h.metrics.RecordStageDuration(nodeID, "wake_eval", outcomeSuccess, timings.WakeEvalSec)
 	}
 	if timings.UtteranceSpeechSec > 0 {
-		h.metrics.RecordStageDuration(nodeID, "utterance_speech", "success", timings.UtteranceSpeechSec)
+		h.metrics.RecordStageDuration(nodeID, "utterance_speech", outcomeSuccess, timings.UtteranceSpeechSec)
 	}
 	if timings.UtteranceSilenceSec > 0 {
-		h.metrics.RecordStageDuration(nodeID, "utterance_silence", "success", timings.UtteranceSilenceSec)
+		h.metrics.RecordStageDuration(nodeID, "utterance_silence", outcomeSuccess, timings.UtteranceSilenceSec)
 	}
 }
 
@@ -35,7 +35,7 @@ func (h *Hub) transcribeWithSpeaker(
 	safeSink SSEEventSink,
 ) (string, SpeakerMatch, error) {
 	if h.stt == nil {
-		h.metrics.RecordStageDuration(nodeID, "stt", "error", 0)
+		h.metrics.RecordStageDuration(nodeID, "stt", outcomeError, 0)
 		h.metrics.RecordError(nodeID, "stt", "stt_error")
 		return "", SpeakerMatch{}, ErrSTTFailed
 	}
@@ -67,17 +67,17 @@ func (h *Hub) transcribeWithSpeaker(
 		}
 	}
 	if err != nil {
-		h.metrics.RecordStageDuration(nodeID, "stt", "error", sttDuration)
+		h.metrics.RecordStageDuration(nodeID, "stt", outcomeError, sttDuration)
 		h.metrics.RecordError(nodeID, "stt", "stt_error")
 		if h.coord != nil {
 			h.coord.Transition(StateError, nil, nil, nil, nil)
 		}
-		if sinkErr := safeSink("error", map[string]string{"error": "stt_error", "message": err.Error()}); sinkErr != nil {
+		if sinkErr := safeSink.emitError("stt_error", err.Error()); sinkErr != nil {
 			return "", SpeakerMatch{}, sinkErr
 		}
 		return "", SpeakerMatch{}, fmt.Errorf("%w: %w", ErrSTTFailed, err)
 	}
-	h.metrics.RecordStageDuration(nodeID, "stt", "success", sttDuration)
+	h.metrics.RecordStageDuration(nodeID, "stt", outcomeSuccess, sttDuration)
 	pcmBytes := max(len(wavData)-44, 0)
 	audioSec := float64(pcmBytes) / (16000.0 * 2.0)
 	if audioSec > 0.001 {
@@ -140,7 +140,7 @@ func (h *Hub) synthesizeStreamedSentence(
 	if ttsTimeout <= 0 {
 		ttsTimeout = 10 * time.Second
 	}
-	ttsCtx, stopTTS := newInactivityContext(ctx, ttsTimeout)
+	ttsCtx, resetTTS, stopTTS := newInactivityContext(ctx, ttsTimeout)
 	defer stopTTS()
 	t0 := time.Now()
 	var pushErr error
@@ -148,7 +148,7 @@ func (h *Hub) synthesizeStreamedSentence(
 		if len(tc.Data) == 0 {
 			return nil
 		}
-		ttsCtx.Reset()
+		resetTTS()
 		streamedTTSAny = true
 		if err := streamer.push(tc, text); err != nil {
 			pushErr = err
@@ -187,10 +187,10 @@ type streamAudioCollector struct {
 	streamErr        error
 }
 
-func (c *streamAudioCollector) onAudio(ctx context.Context, chunk BrainAudioChunk, stopThinking func(), streamCtx *inactivityContext) {
+func (c *streamAudioCollector) onAudio(ctx context.Context, chunk BrainAudioChunk, stopThinking func(), resetStream func()) {
 	stopThinking()
 	if chunk.Text != "" {
-		streamCtx.Reset()
+		resetStream()
 	}
 	if c.streamErr != nil || strings.TrimSpace(chunk.Text) == "" {
 		return
@@ -218,7 +218,7 @@ func (h *Hub) finalizeStreamerPlayback(streamer *pcmChunkStreamer, nodeID, engin
 	if finishErr := streamer.finish(); finishErr != nil {
 		return finishErr
 	}
-	h.metrics.RecordStageDuration(nodeID, "tts", "success", totalTTSDuration)
+	h.metrics.RecordStageDuration(nodeID, "tts", outcomeSuccess, totalTTSDuration)
 	if totalTTSDuration > 0.001 && streamChars > 0 {
 		cps := float64(streamChars) / totalTTSDuration
 		h.metrics.RecordTTSCPS(nodeID, engine, cps)
@@ -240,22 +240,22 @@ func (h *Hub) emitStreamedReply(
 	if h.coord != nil {
 		h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
 	}
-	finalStatus := "success"
+	finalStatus := outcomeSuccess
 	if streamer.anySent || len(streamer.pcmBuf) > 0 {
 		if err := h.finalizeStreamerPlayback(streamer, nodeID, engine, totalTTSDuration, streamChars); err != nil {
-			return "error", err
+			return outcomeError, err
 		}
 	} else if h.tts != nil {
 		status, ttsErr := h.synthesizeAndEmitReply(ctx, reply, nodeID, engine, &transcript, safeSink)
 		if ttsErr != nil {
-			return "error", ttsErr
+			return outcomeError, ttsErr
 		}
-		if status == "error" {
-			finalStatus = "error"
+		if status == outcomeError {
+			finalStatus = outcomeError
 		}
 	}
-	if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
-		return "error", err
+	if err := safeSink.emitReply(reply, engine); err != nil {
+		return outcomeError, err
 	}
 	return finalStatus, nil
 }
@@ -274,14 +274,14 @@ func (h *Hub) deliberateStreaming(
 	onStatus func(status string),
 	emitNonStreamingReply func(reply string) error,
 ) (string, error) {
-	streamCtx, stopStream := newInactivityContext(ctx, brainTimeout)
+	streamCtx, resetStream, stopStream := newInactivityContext(ctx, brainTimeout)
 	defer stopStream()
 
 	stopThinking := startThinkingHeartbeat(streamCtx, heartbeatInterval, safeSink)
 	defer stopThinking()
 
 	streamOnStatus := func(status string) {
-		streamCtx.Reset()
+		resetStream()
 		onStatus(status)
 	}
 
@@ -298,7 +298,7 @@ func (h *Hub) deliberateStreaming(
 
 	brainStart := time.Now()
 	reply, err := streamingBrain.AskStreaming(streamCtx, askReq, streamOnStatus, func(chunk BrainAudioChunk) {
-		col.onAudio(ctx, chunk, stopThinking, streamCtx)
+		col.onAudio(ctx, chunk, stopThinking, resetStream)
 	})
 	brainDuration, recordBrain := brainStageSeconds(turnBrain, time.Since(brainStart))
 	stopThinking()
@@ -306,10 +306,10 @@ func (h *Hub) deliberateStreaming(
 		err = col.streamErr
 	}
 	if err != nil {
-		return "error", h.recordBrainStageError(ctx, streamCtx, nodeID, brainDuration, err, safeSink)
+		return outcomeError, h.recordBrainStageError(ctx, streamCtx, nodeID, brainDuration, err, safeSink)
 	}
 	if recordBrain {
-		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
+		h.metrics.RecordStageDuration(nodeID, "brain", outcomeSuccess, brainDuration)
 	}
 	h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
 
@@ -317,9 +317,9 @@ func (h *Hub) deliberateStreaming(
 		return h.emitStreamedReply(ctx, reply, transcript, nodeID, engine, col.streamer, col.totalTTSDuration, col.streamChars, safeSink)
 	}
 	if err := emitNonStreamingReply(reply); err != nil {
-		return "error", err
+		return outcomeError, err
 	}
-	return "success", nil
+	return outcomeSuccess, nil
 }
 
 func (h *Hub) deliberateUnary(
@@ -333,14 +333,14 @@ func (h *Hub) deliberateUnary(
 	onStatus func(status string),
 	emitNonStreamingReply func(reply string) error,
 ) error {
-	brainCtx, stopBrain := newInactivityContext(ctx, brainTimeout)
+	brainCtx, resetBrain, stopBrain := newInactivityContext(ctx, brainTimeout)
 	defer stopBrain()
 
 	stopThinking := startThinkingHeartbeat(brainCtx, heartbeatInterval, safeSink)
 	defer stopThinking()
 
 	unaryOnStatus := func(status string) {
-		brainCtx.Reset()
+		resetBrain()
 		onStatus(status)
 	}
 
@@ -352,7 +352,7 @@ func (h *Hub) deliberateUnary(
 		return h.recordBrainStageError(ctx, brainCtx, nodeID, brainDuration, err, safeSink)
 	}
 	if recordBrain {
-		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
+		h.metrics.RecordStageDuration(nodeID, "brain", outcomeSuccess, brainDuration)
 	}
 	h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
 
@@ -372,7 +372,7 @@ func (h *Hub) recordTTSSynthesisError(
 	} else {
 		slog.Warn("TTS synthesis failed", "node_id", nodeID, "error", ttsErr)
 	}
-	h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
+	h.metrics.RecordStageDuration(nodeID, "tts", outcomeError, ttsDuration)
 	errType := "tts_error"
 	if isTimeoutError(ttsCtx, ctx, ttsErr) {
 		errType = "tts_timeout"
@@ -381,7 +381,7 @@ func (h *Hub) recordTTSSynthesisError(
 	if midStream && h.coord != nil {
 		h.coord.Transition(StateError, nil, nil, nil, nil)
 	}
-	if sinkErr := safeSink("error", map[string]string{"error": errType, "message": ttsErr.Error()}); sinkErr != nil {
+	if sinkErr := safeSink.emitError(errType, ttsErr.Error()); sinkErr != nil {
 		return sinkErr
 	}
 	if midStream {

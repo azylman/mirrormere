@@ -63,8 +63,8 @@ func (n *nonFlusher) WriteHeader(c int)           { n.code = c }
 
 type failFlusher struct{ nonFlusher }
 
-func (f *failFlusher) Write([]byte) (int, error) { return 0, errors.New("e") }
-func (f *failFlusher) Flush()                    {}
+func (*failFlusher) Write([]byte) (int, error) { return 0, errors.New("e") }
+func (*failFlusher) Flush()                    {}
 
 type hookStateProvider struct {
 	StateProvider
@@ -119,7 +119,7 @@ func TestHandler_MethodsAndValidation(t *testing.T) {
 				ff := &failFlusher{nonFlusher{h: make(http.Header)}}
 				nf, w = &ff.nonFlusher, ff
 			}
-			Handler(hub).ServeHTTP(w, httptest.NewRequest(tc.method, "/api/events", nil))
+			Handler(hub).ServeHTTP(w, httptest.NewRequest(tc.method, "/api/events", http.NoBody))
 			code, body := rec.Code, rec.BodyString()
 			if nf != nil {
 				code, body = nf.code, nf.buf.String()
@@ -166,7 +166,7 @@ func setupReplayRequest(tc replayTC, evt1ID, evt2ID string) (context.Context, co
 		reqPath += evt1ID
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(http.MethodGet, reqPath, nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, reqPath, http.NoBody).WithContext(ctx)
 	if tc.hk != "" {
 		hVal := evt1ID
 		if tc.n == "unknown_id_fallback" {
@@ -230,7 +230,7 @@ func TestHandler_LiveStreamingAndHeartbeat(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rec := newFlushingRecorder()
-	go Handler(hub).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx))
+	go Handler(hub).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events", http.NoBody).WithContext(ctx))
 
 	rec.wait(2)
 	hub.Publish(EventStyleReload, []byte(`{"file":"custom.css"}`))
@@ -248,7 +248,7 @@ func TestHandler_SlowConsumerDisconnect(t *testing.T) {
 	defer hub.Close()
 	blockCh := make(chan struct{})
 	rec := &slowWriterRecorder{flushingRecorder: newFlushingRecorder(), blockCh: blockCh, entered: make(chan struct{}, 1), liveBlock: true}
-	go Handler(hub).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events", nil))
+	go Handler(hub).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events", http.NoBody))
 
 	rec.wait(2)
 	hub.Publish(EventWidgetUpdate, []byte("slow_1"))

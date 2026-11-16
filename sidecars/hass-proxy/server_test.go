@@ -48,8 +48,8 @@ func (n *nonFlusher) WriteHeader(c int) { n.code = c }
 
 type errFlusher struct{ nonFlusher }
 
-func (e *errFlusher) Write([]byte) (int, error) { return 0, errors.New("simulated write error") }
-func (e *errFlusher) Flush()                    {}
+func (*errFlusher) Write([]byte) (int, error) { return 0, errors.New("simulated write error") }
+func (*errFlusher) Flush()                    {}
 
 // SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
 func SetWriteCountersDirForTest(fn func(string) error) func() {
@@ -139,7 +139,7 @@ func TestServer_HealthzAndBuild(t *testing.T) {
 	srv := NewServer(&mockHAClient{}, nil)
 	for _, m := range []string{http.MethodGet, http.MethodHead, http.MethodPost} {
 		rec := httptest.NewRecorder()
-		srv.ServeHTTP(rec, httptest.NewRequest(m, "/healthz", nil))
+		srv.ServeHTTP(rec, httptest.NewRequest(m, "/healthz", http.NoBody))
 		want := http.StatusOK
 		if m == http.MethodPost {
 			want = http.StatusMethodNotAllowed
@@ -174,7 +174,7 @@ func TestCoverageFlushEndpoint(t *testing.T) {
 			})()
 			srv := NewServer(&mockHAClient{}, nil)
 			rec := httptest.NewRecorder()
-			srv.ServeHTTP(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", nil))
+			srv.ServeHTTP(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", http.NoBody))
 			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
 				t.Fatalf("code=%d want %d, body=%q want %q", rec.Code, tc.wantCode, rec.Body.String(), tc.wantSub)
 			}

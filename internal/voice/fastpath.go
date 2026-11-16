@@ -69,11 +69,11 @@ func NewDefaultFastPathClient(url string, timeout time.Duration) *DefaultFastPat
 // reported as a miss or error so the caller falls through to the brain.
 func (c *DefaultFastPathClient) Try(ctx context.Context, ask AskRequest, onAudio func(chunk BrainAudioChunk)) FastPathResult {
 	body, err := json.Marshal(map[string]string{
-		"text":    ask.Prompt,
-		"speaker": ask.Speaker,
-		"node":    ask.NodeID,
-		"turn_id": ask.SessionID,
-		"tts":     "none",
+		"text":       ask.Prompt,
+		speakerField: ask.Speaker,
+		"node":       ask.NodeID,
+		"turn_id":    ask.SessionID,
+		"tts":        "none",
 	})
 	if err != nil {
 		return FastPathResult{Outcome: fastPathError, Reason: "marshal: " + err.Error()}

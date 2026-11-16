@@ -16,6 +16,7 @@ import (
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/tasks"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 type mockBroadcaster struct {
@@ -197,7 +198,7 @@ func waitForPayload(t *testing.T, b *mockBroadcaster, id, key, state string) pro
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
 		if evt, ok := b.waitForPublish(200 * time.Millisecond); ok {
 			var p provider.WidgetPayload
-			if json.Unmarshal(evt.Data, &p) == nil && (id == "" || p.WidgetID == id) && (state == "" || p.State == state) && (key == "" || (p.Data != nil && p.Data.(map[string]any)[key] != nil)) {
+			if json.Unmarshal(evt.Data, &p) == nil && (id == "" || p.WidgetID == id) && (state == "" || p.State == state) && (key == "" || (p.Data != nil && testutil.As[map[string]any](t, p.Data)[key] != nil)) {
 				return p
 			}
 		}
@@ -283,7 +284,7 @@ func TestProviderCoordinator_ZeroPollingOptimizations(t *testing.T) {
 		coord := newCoord(nil, b, s, mkSnap("", map[string]*domain.Package{tc.typ: mkPkg(tc.typ, tc.typ, 0, nil)}, mkWidget(tc.id, tc.typ, 30, nil)))
 		p, ok := coord.Cache().Get(tc.id)
 		d, st, _, sOk := s.getState(tc.id)
-		if !ok || p.State != provider.StateHealthy || !sOk || st != provider.StateHealthy || len(p.Data.(map[string]any)) != 0 || len(d.(map[string]any)) != 0 || len(b.getEvents()) != 1 || coord.RefreshWidget(tc.id) == nil {
+		if !ok || p.State != provider.StateHealthy || !sOk || st != provider.StateHealthy || len(testutil.As[map[string]any](t, p.Data)) != 0 || len(testutil.As[map[string]any](t, d)) != 0 || len(b.getEvents()) != 1 || coord.RefreshWidget(tc.id) == nil {
 			t.Fatalf("unexpected state or error for %s", tc.id)
 		}
 		_ = coord.Stop()
@@ -341,7 +342,7 @@ func assertCoordinatorStockDegradedAndRecovery(t *testing.T) {
 	refresh(t, coordStocks, "stock-tile")
 	waitSignal(t, mockStocks.fetchSignal, "first failure fetch")
 	p2 := waitForState(t, coordStocks.Cache(), "stock-tile", provider.StateDegraded)
-	if _, ok := bStocks.waitForPublish(2 * time.Second); !ok || p2.Timestamp != lkgTimestamp || p2.Data.(map[string]any)["price"] != 150.0 {
+	if _, ok := bStocks.waitForPublish(2 * time.Second); !ok || p2.Timestamp != lkgTimestamp || testutil.As[map[string]any](t, p2.Data)["price"] != 150.0 {
 		t.Fatalf("expected preserved LKG data, got %+v", p2)
 	}
 	eventsCountDegraded := len(bStocks.getEvents())
@@ -360,7 +361,7 @@ func assertCoordinatorStockDegradedAndRecovery(t *testing.T) {
 	mockStocks.setFetch(func(ctx context.Context) (any, error) { return map[string]any{"price": 155.0}, nil })
 	refresh(t, coordStocks, "stock-tile")
 	p3 := waitForState(t, coordStocks.Cache(), "stock-tile", provider.StateHealthy)
-	if p3.Data.(map[string]any)["price"] != 155.0 {
+	if testutil.As[map[string]any](t, p3.Data)["price"] != 155.0 {
 		t.Fatalf("expected price 155.0, got %v", p3.Data)
 	}
 }
@@ -414,7 +415,7 @@ func assertCoordinatorStreamingProvider(t *testing.T) {
 	if d, ok := pStream.Data.(map[string]any); !ok || d["stream_event"] != "alert_fired" {
 		t.Fatalf("unexpected broadcast data: %v", pStream.Data)
 	}
-	if pCached, ok := coordStream.Cache().Get("streaming-tile"); !ok || pCached.Data.(map[string]any)["stream_event"] != "alert_fired" {
+	if pCached, ok := coordStream.Cache().Get("streaming-tile"); !ok || testutil.As[map[string]any](t, pCached.Data)["stream_event"] != "alert_fired" {
 		t.Fatalf("unexpected cached data: %+v", pCached)
 	}
 }
@@ -442,7 +443,7 @@ func assertCoordinatorDynamicProviderUpdate(t *testing.T) {
 	}
 	waitForPayload(t, bDyn, "tile-dyn", "", provider.StateError)
 	pAfter, ok := coordDyn.Cache().Get("tile-dyn")
-	if !ok || (pAfter.State == provider.StateHealthy && pAfter.Data.(map[string]any)["city"] == "Old-Tokyo-Data") || coordDyn.Cache().GetStatusMap()["w-remove-me"] != "" {
+	if !ok || (pAfter.State == provider.StateHealthy && testutil.As[map[string]any](t, pAfter.Data)["city"] == "Old-Tokyo-Data") || coordDyn.Cache().GetStatusMap()["w-remove-me"] != "" {
 		t.Fatal("stale push resurrected purged cache entry with old domain data or removal failed")
 	}
 	waitSignal(t, mockP2.subscribeSignal, "mockP2 subscribe")
@@ -451,7 +452,7 @@ func assertCoordinatorDynamicProviderUpdate(t *testing.T) {
 	if d, ok := pDyn.Data.(map[string]any); !ok || d["city"] != "New-Paris-Data" {
 		t.Fatalf("unexpected broadcast city: %v", pDyn.Data)
 	}
-	if pFinal, ok := coordDyn.Cache().Get("tile-dyn"); !ok || pFinal.State != provider.StateHealthy || pFinal.Data.(map[string]any)["city"] != "New-Paris-Data" {
+	if pFinal, ok := coordDyn.Cache().Get("tile-dyn"); !ok || pFinal.State != provider.StateHealthy || testutil.As[map[string]any](t, pFinal.Data)["city"] != "New-Paris-Data" {
 		t.Fatalf("expected New-Paris-Data, got %+v", pFinal)
 	}
 }
@@ -644,7 +645,7 @@ func assertPushWidgetDataSuccess(t *testing.T) (*provider.ProviderCoordinator, m
 	if cached, ok := coord.Cache().Get("tile-custom"); !ok || cached.State != provider.StateHealthy {
 		t.Fatalf("cached invalid: %v, %+v", ok, cached)
 	}
-	if sinkData, sinkState, _, found := s.getState("tile-custom"); !found || sinkState != provider.StateHealthy || sinkData.(map[string]any)["temperature"] != 23.5 {
+	if sinkData, sinkState, _, found := s.getState("tile-custom"); !found || sinkState != provider.StateHealthy || testutil.As[map[string]any](t, sinkData)["temperature"] != 23.5 {
 		t.Fatalf("stateSink invalid: %v, %s, %v", found, sinkState, sinkData)
 	}
 	if evt, ok := b.waitForPublish(time.Second); !ok || evt.Type != events.EventWidgetUpdate {
@@ -734,7 +735,7 @@ func assertPushWidgetPhotosSuccess(t *testing.T) (*provider.ProviderCoordinator,
 	if cached, found := coord.Cache().Get("tile-ember"); !found || cached.State != provider.StateHealthy {
 		t.Fatalf("cached invalid: %v, %+v", found, cached)
 	}
-	if sinkData, sinkState, _, found := s.getState("tile-ember"); !found || sinkState != provider.StateHealthy || sinkData.(*provider.PhotoSnapshot).AlbumName != "Ember Vacation" {
+	if sinkData, sinkState, _, found := s.getState("tile-ember"); !found || sinkState != provider.StateHealthy || testutil.As[*provider.PhotoSnapshot](t, sinkData).AlbumName != "Ember Vacation" {
 		t.Fatalf("stateSink invalid: %v, %s, %v", found, sinkState, sinkData)
 	}
 	if evt, found := b.waitForPublish(time.Second); !found || evt.Type != events.EventWidgetUpdate {

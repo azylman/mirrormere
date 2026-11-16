@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/config"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 func assertEq[T comparable](t *testing.T, label string, got, want T) {
@@ -256,7 +257,7 @@ func assertConfigLocationAndThemeProps(t *testing.T, cfg *config.Config, tc vali
 	if tc.wantForecastLoc != "" {
 		for _, w := range cfg.Display.Widgets {
 			if w.Type == "weather-forecast" && w.Config != nil {
-				assertEq(t, "forecast loc", w.Config["location_name"].(string), tc.wantForecastLoc)
+				assertEq(t, "forecast loc", testutil.As[string](t, w.Config["location_name"]), tc.wantForecastLoc)
 			}
 		}
 	}
@@ -374,7 +375,7 @@ func TestLoad(t *testing.T) {
 	assertEq(t, "Secrets[token]", cfg.Display.Widgets[0].Secrets["token"], "sys-token-val")
 
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
+	if err = os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	loaded, err := config.Load(path)

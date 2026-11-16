@@ -58,7 +58,7 @@ func NewTodoistAdapter(cfg TodoistAdapterConfig) (*TodoistAdapter, error) {
 	}, nil
 }
 
-func (a *TodoistAdapter) Name() string { return "todoist" }
+func (*TodoistAdapter) Name() string { return "todoist" }
 
 // flexibleString supports unmarshaling JSON values that can be strings, numbers, or null.
 type flexibleString string
@@ -515,7 +515,7 @@ func (a *TodoistAdapter) CompleteItem(ctx context.Context, itemID string) error 
 	}
 
 	targetURL := fmt.Sprintf("%s/api/v1/tasks/%s/close", a.baseURL, url.PathEscape(itemID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("failed to create http request: %w", err)
 	}

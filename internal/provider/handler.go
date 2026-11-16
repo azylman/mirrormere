@@ -49,7 +49,7 @@ func (h *PushHandler) PostWidgetPush(w http.ResponseWriter, r *http.Request, wid
 	}
 
 	var rawDoc any
-	if err := json.Unmarshal(bodyBytes, &rawDoc); err != nil {
+	if err = json.Unmarshal(bodyBytes, &rawDoc); err != nil {
 		h.writeErrorJSON(w, http.StatusBadRequest, "invalid JSON payload: "+err.Error())
 		return
 	}
@@ -100,7 +100,7 @@ func (h *PushHandler) PostWidgetPhotos(w http.ResponseWriter, r *http.Request, w
 		h.writeErrorJSON(w, http.StatusBadRequest, "failed to read request body: "+err.Error())
 		return
 	}
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+	if err = json.Unmarshal(bodyBytes, &req); err != nil {
 		h.writeErrorJSON(w, http.StatusBadRequest, "invalid JSON payload: "+err.Error())
 		return
 	}

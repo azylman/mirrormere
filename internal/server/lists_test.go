@@ -55,7 +55,7 @@ func TestDefaultListsHandler_CompleteListItem(t *testing.T) {
 			}
 			h := server.NewDefaultListsHandler(opts...)
 			rec := httptest.NewRecorder()
-			h.CompleteListItem(rec, httptest.NewRequest(tc.method, "/api/lists/"+tc.listID+"/items/"+tc.itemID+"/complete", nil), tc.listID, tc.itemID)
+			h.CompleteListItem(rec, httptest.NewRequest(tc.method, "/api/lists/"+tc.listID+"/items/"+tc.itemID+"/complete", http.NoBody), tc.listID, tc.itemID)
 			if rec.Code != tc.wantCode {
 				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
 			}

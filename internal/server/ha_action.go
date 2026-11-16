@@ -218,7 +218,7 @@ func (h *DefaultWidgetActionHandler) proxyDirectHA(w http.ResponseWriter, r *htt
 	})
 }
 
-func (h *DefaultWidgetActionHandler) parseRequest(w http.ResponseWriter, r *http.Request) (string, string, map[string]any, error) {
+func (*DefaultWidgetActionHandler) parseRequest(w http.ResponseWriter, r *http.Request) (string, string, map[string]any, error) {
 	if r.Body == nil {
 		return "", "", nil, errors.New("request body is required")
 	}
@@ -296,7 +296,7 @@ func extractServiceData(req WidgetActionRequest) map[string]any {
 	return serviceData
 }
 
-func (h *DefaultWidgetActionHandler) mapActionError(err error) (int, string) {
+func (*DefaultWidgetActionHandler) mapActionError(err error) (int, string) {
 	if err == nil {
 		return http.StatusOK, ""
 	}

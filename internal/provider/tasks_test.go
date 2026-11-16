@@ -34,8 +34,8 @@ type mockCompleterAdapter struct {
 	err      error
 }
 
-func (m *mockCompleterAdapter) Name() string { return "mock-completer" }
-func (m *mockCompleterAdapter) FetchList(_ context.Context) (*tasks.List, []tasks.ListItem, error) {
+func (*mockCompleterAdapter) Name() string { return "mock-completer" }
+func (*mockCompleterAdapter) FetchList(_ context.Context) (*tasks.List, []tasks.ListItem, error) {
 	return &tasks.List{ID: "test"}, nil, nil
 }
 

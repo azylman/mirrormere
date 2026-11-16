@@ -63,7 +63,9 @@ func sseHandler(events ...string) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/event-stream")
 		for i := 0; i+1 < len(events); i += 2 {
 			_, _ = w.Write([]byte("event: " + events[i] + "\ndata: " + events[i+1] + "\n\n"))
-			w.(http.Flusher).Flush()
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
 		}
 	}
 }
@@ -143,7 +145,7 @@ func TestFastPath_Outcomes(t *testing.T) {
 
 type streamingBrainStub struct{ called bool }
 
-func (s *streamingBrainStub) Ask(context.Context, AskRequest, func(string)) (string, error) {
+func (*streamingBrainStub) Ask(context.Context, AskRequest, func(string)) (string, error) {
 	return "", nil
 }
 

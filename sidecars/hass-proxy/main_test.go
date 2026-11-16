@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 type runWithReadyCase struct {
@@ -83,7 +85,7 @@ func TestRunWithReady(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	_ = os.WriteFile(configPath, []byte("server:\n  host: 127.0.0.1\n  port: 8095\nhomeassistant:\n  url: http://127.0.0.1:8123\n"), 0o600)
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
-	port := ln.Addr().(*net.TCPAddr).Port
+	port := testutil.As[*net.TCPAddr](t, ln.Addr()).Port
 	defer ln.Close()
 	collideConfig := filepath.Join(tmpDir, "collide.yaml")
 	_ = os.WriteFile(collideConfig, []byte(fmt.Sprintf("server:\n  host: 127.0.0.1\n  port: %d\nhomeassistant:\n  url: http://127.0.0.1:8123\n", port)), 0o600)

@@ -46,19 +46,19 @@ type CalendarSnapshot struct {
 
 // CalendarSource defines configuration for a single upstream calendar feed.
 type CalendarSource struct {
-	Name           string `json:"name" yaml:"name"`
-	Type           string `json:"type,omitempty" yaml:"type,omitempty"` // "ical" (default) or "caldav"
-	URL            string `json:"url,omitempty" yaml:"url,omitempty"`
-	URLEnv         string `json:"url_env,omitempty" yaml:"url_env,omitempty"`
-	Color          string `json:"color,omitempty" yaml:"color,omitempty"`
-	Enabled        bool   `json:"enabled" yaml:"enabled"`
+	Name           string `json:"name"                      yaml:"name"`
+	Type           string `json:"type,omitempty"            yaml:"type,omitempty"` // "ical" (default) or "caldav"
+	URL            string `json:"url,omitempty"             yaml:"url,omitempty"`
+	URLEnv         string `json:"url_env,omitempty"         yaml:"url_env,omitempty"`
+	Color          string `json:"color,omitempty"           yaml:"color,omitempty"`
+	Enabled        bool   `json:"enabled"                   yaml:"enabled"`
 	StripRecurring bool   `json:"strip_recurring,omitempty" yaml:"strip_recurring,omitempty"`
-	Username       string `json:"username,omitempty" yaml:"username,omitempty"`
-	UsernameEnv    string `json:"username_env,omitempty" yaml:"username_env,omitempty"`
-	Password       string `json:"password,omitempty" yaml:"password,omitempty"`
-	PasswordEnv    string `json:"password_env,omitempty" yaml:"password_env,omitempty"`
-	Token          string `json:"token,omitempty" yaml:"token,omitempty"`
-	TokenEnv       string `json:"token_env,omitempty" yaml:"token_env,omitempty"`
+	Username       string `json:"username,omitempty"        yaml:"username,omitempty"`
+	UsernameEnv    string `json:"username_env,omitempty"    yaml:"username_env,omitempty"`
+	Password       string `json:"password,omitempty"        yaml:"password,omitempty"`
+	PasswordEnv    string `json:"password_env,omitempty"    yaml:"password_env,omitempty"`
+	Token          string `json:"token,omitempty"           yaml:"token,omitempty"`
+	TokenEnv       string `json:"token_env,omitempty"       yaml:"token_env,omitempty"`
 }
 
 const (
@@ -70,11 +70,11 @@ const (
 
 // CalendarConfig defines the full instance configuration for calendar providers.
 type CalendarConfig struct {
-	WindowDaysPast   int              `json:"window_days_past,omitempty" yaml:"window_days_past,omitempty"`
+	WindowDaysPast   int              `json:"window_days_past,omitempty"   yaml:"window_days_past,omitempty"`
 	WindowDaysFuture int              `json:"window_days_future,omitempty" yaml:"window_days_future,omitempty"`
-	View             string           `json:"view" yaml:"view"`
-	StripRecurring   bool             `json:"strip_recurring,omitempty" yaml:"strip_recurring,omitempty"`
-	Calendars        []CalendarSource `json:"calendars" yaml:"calendars"`
+	View             string           `json:"view"                         yaml:"view"`
+	StripRecurring   bool             `json:"strip_recurring,omitempty"    yaml:"strip_recurring,omitempty"`
+	Calendars        []CalendarSource `json:"calendars"                    yaml:"calendars"`
 }
 
 // CalendarProvider fetches, parses, expands recurrence rules, and normalizes iCal feeds.
@@ -406,7 +406,7 @@ func (p *CalendarProvider) fetchCalendar(ctx context.Context, source CalendarSou
 		targetURL = "https://" + after
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("invalid request URL: %w", err)
 	}
@@ -482,7 +482,7 @@ func isAllDayProperty(dtStartProp *ical.IANAProperty) bool {
 	}
 	if valParam, ok := dtStartProp.ICalParameters["VALUE"]; ok {
 		for _, v := range valParam {
-			if strings.ToUpper(v) == "DATE" {
+			if strings.EqualFold(v, "DATE") {
 				return true
 			}
 		}
@@ -897,11 +897,11 @@ func sanitizeID(uid string) string {
 }
 
 // Subscribe satisfies Provider interface (no-op for pull-based calendar feeds).
-func (p *CalendarProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
+func (*CalendarProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error {
 	return nil
 }
 
 // Shutdown gracefully satisfies Provider interface.
-func (p *CalendarProvider) Shutdown(ctx context.Context) error {
+func (*CalendarProvider) Shutdown(ctx context.Context) error {
 	return nil
 }

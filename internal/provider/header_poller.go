@@ -168,7 +168,7 @@ func (p *HeaderWeatherPoller) FetchOnce(ctx context.Context) (*events.HeaderWeat
 
 	tempUnit := "fahrenheit"
 	unitLabel := "F"
-	if strings.ToLower(strings.TrimSpace(cfg.Units)) == "metric" {
+	if strings.ToLower(strings.TrimSpace(cfg.Units)) == unitsMetric {
 		tempUnit = "celsius"
 		unitLabel = "C"
 	}
@@ -190,7 +190,7 @@ func (p *HeaderWeatherPoller) FetchOnce(ctx context.Context) (*events.HeaderWeat
 	}
 	parsedURL.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create header weather request: %w", err)
 	}

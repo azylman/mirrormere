@@ -56,7 +56,7 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 				h = display.NewHandler()
 			}
 			rec := httptest.NewRecorder()
-			h.GetDisplay(rec, httptest.NewRequest(tc.method, "/display", nil))
+			h.GetDisplay(rec, httptest.NewRequest(tc.method, "/display", http.NoBody))
 			if rec.Code != tc.wantCode {
 				t.Fatalf("code: got %d, want %d", rec.Code, tc.wantCode)
 			}
@@ -223,7 +223,7 @@ func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 			legacyOpt := display.WithUIProvider(func() string { return "legacy" })
 			h := buildTemplateHandlerForMode(t, tc.mode, tmpl, legacyOpt, tc.wantGetter)
 			rec := httptest.NewRecorder()
-			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, http.NoBody))
 			if tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub) {
 				t.Fatalf("body missing %q: %s", tc.wantSub, rec.Body.String())
 			}
@@ -303,7 +303,7 @@ func TestGetStatic(t *testing.T) {
 				targetH = hFallback
 			}
 			rec := httptest.NewRecorder()
-			targetH.GetStatic(rec, httptest.NewRequest(tc.method, "/static/"+tc.path, nil), tc.path)
+			targetH.GetStatic(rec, httptest.NewRequest(tc.method, "/static/"+tc.path, http.NoBody), tc.path)
 			if rec.Code != tc.wantCode {
 				t.Fatalf("code: got %d, want %d", rec.Code, tc.wantCode)
 			}
@@ -330,7 +330,7 @@ func TestVoiceWaveformProvider(t *testing.T) {
 		t.Fatal("voice waveform without provider should be nil")
 	}
 	rec := httptest.NewRecorder()
-	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", nil))
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", http.NoBody))
 	if strings.Contains(rec.Body.String(), "<wave") {
 		t.Fatalf("waveform rendered without provider: %s", rec.Body.String())
 	}
@@ -341,7 +341,7 @@ func TestVoiceWaveformProvider(t *testing.T) {
 		t.Fatal("voice waveform getter did not return provider value")
 	}
 	rec = httptest.NewRecorder()
-	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", nil))
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", http.NoBody))
 	body := rec.Body.String()
 	if !strings.Contains(body, `url="http://127.0.0.1:8765/levels"`) || !strings.Contains(body, `gain="2.2"`) {
 		t.Fatalf("waveform data missing from template: %s", body)
@@ -350,7 +350,7 @@ func TestVoiceWaveformProvider(t *testing.T) {
 	disabled := &display.VoiceWaveformTemplateData{Enabled: false, LevelsURL: "http://127.0.0.1:8765/levels", Gain: 2.2}
 	h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return disabled }))
 	rec = httptest.NewRecorder()
-	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", nil))
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", http.NoBody))
 	if strings.Contains(rec.Body.String(), "<wave") {
 		t.Fatalf("disabled waveform rendered: %s", rec.Body.String())
 	}
@@ -389,7 +389,7 @@ func TestGetDisplay_UIShellSelection(t *testing.T) {
 				display.WithTimezoneProvider(func() string { return "UTC" }),
 			)
 			rec := httptest.NewRecorder()
-			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?"+tc.query, nil))
+			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?"+tc.query, http.NoBody))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("code: got %d, want 200", rec.Code)
 			}
@@ -425,7 +425,7 @@ func TestGetDisplay_PerfScriptGatedByQuery(t *testing.T) {
 				display.WithLocalTemplatePath(""),
 			)
 			rec := httptest.NewRecorder()
-			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, http.NoBody))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("code: got %d, want 200", rec.Code)
 			}
@@ -444,13 +444,13 @@ func TestGetDisplay_ReactShellMissingAndHead(t *testing.T) {
 		display.WithReactTemplatePath("/no/such/react"), display.WithLocalReactTemplatePath("/no/such/local"),
 	)
 	rec := httptest.NewRecorder()
-	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?ui=react", nil))
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?ui=react", http.NoBody))
 	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "display template not found") {
 		t.Fatalf("missing react shell: code %d body %q", rec.Code, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()
-	h.GetDisplay(rec, httptest.NewRequest(http.MethodHead, "/display?ui=react", nil))
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodHead, "/display?ui=react", http.NoBody))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("HEAD missing react shell: code %d, want 404", rec.Code)
 	}
@@ -466,7 +466,7 @@ func TestGetDisplay_ReactShellRepoTemplate(t *testing.T) {
 		display.WithRemoteURLProvider(func() string { return "http://remote.example/display" }),
 	)
 	rec := httptest.NewRecorder()
-	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?ui=react", nil))
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?ui=react", http.NoBody))
 	body := rec.Body.String()
 	for _, want := range []string{
 		`<div id="root"></div>`,
@@ -510,7 +510,7 @@ func TestGetDisplay_ReactPerfScriptGatedByQuery(t *testing.T) {
 				display.WithTemplateContent([]byte("<h1>legacy</h1>")),
 			)
 			rec := httptest.NewRecorder()
-			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, http.NoBody))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("code: got %d, want 200", rec.Code)
 			}

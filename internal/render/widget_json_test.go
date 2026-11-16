@@ -18,6 +18,7 @@ import (
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/render"
+	"github.com/azylman/mirrormere/internal/testutil"
 	"github.com/azylman/mirrormere/internal/widget"
 )
 
@@ -97,7 +98,7 @@ func TestHandler_GetWidgetJSON_Errors(t *testing.T) {
 				h = render.NewHandler(nil, nil)
 			}
 			rec := httptest.NewRecorder()
-			h.GetWidgetJSON(rec, httptest.NewRequest(tc.method, tc.path, nil), tc.widgetID)
+			h.GetWidgetJSON(rec, httptest.NewRequest(tc.method, tc.path, http.NoBody), tc.widgetID)
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.wantStatus, rec.Body.String())
 			}
@@ -124,7 +125,7 @@ func TestHandler_GetWidgetJSON_Fields(t *testing.T) {
 	handler := render.NewHandler(engine, &mockResolver{packages: pkgs})
 
 	rec := httptest.NewRecorder()
-	handler.GetWidgetJSON(rec, httptest.NewRequest(http.MethodGet, "/api/widgets/w1", nil), "w1")
+	handler.GetWidgetJSON(rec, httptest.NewRequest(http.MethodGet, "/api/widgets/w1", http.NoBody), "w1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -173,19 +174,19 @@ func TestHandler_GetWidgetJSON_HeadAndNodeData(t *testing.T) {
 	handler := render.NewHandler(engine, &mockResolver{packages: pkgs})
 
 	head := httptest.NewRecorder()
-	handler.GetWidgetJSON(head, httptest.NewRequest(http.MethodHead, "/api/widgets/w1", nil), "w1")
+	handler.GetWidgetJSON(head, httptest.NewRequest(http.MethodHead, "/api/widgets/w1", http.NoBody), "w1")
 	if head.Code != http.StatusOK || head.Body.Len() != 0 {
 		t.Errorf("HEAD: status=%d len=%d", head.Code, head.Body.Len())
 	}
 
 	node := httptest.NewRecorder()
-	handler.GetWidgetJSON(node, httptest.NewRequest(http.MethodGet, "/api/widgets/w1?node=kitchen", nil), "w1")
+	handler.GetWidgetJSON(node, httptest.NewRequest(http.MethodGet, "/api/widgets/w1?node=kitchen", http.NoBody), "w1")
 	if got := decodeWidgetJSON(t, node.Body.Bytes()).Data; !reflect.DeepEqual(got, map[string]any{"node": "kitchen"}) {
 		t.Errorf("node data = %v, want kitchen override", got)
 	}
 
 	shared := httptest.NewRecorder()
-	handler.GetWidgetJSON(shared, httptest.NewRequest(http.MethodGet, "/api/widgets/w1?node=den", nil), "w1")
+	handler.GetWidgetJSON(shared, httptest.NewRequest(http.MethodGet, "/api/widgets/w1?node=den", http.NoBody), "w1")
 	if got := decodeWidgetJSON(t, shared.Body.Bytes()).Data; reflect.DeepEqual(got, map[string]any{"node": "kitchen"}) || got == nil {
 		t.Errorf("unmatched node should keep shared data, got %v", got)
 	}
@@ -202,7 +203,7 @@ func TestHandler_GetWidgetJSON_CalendarViewModel(t *testing.T) {
 	fetch := func(t *testing.T, path string) map[string]any {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		handler.GetWidgetJSON(rec, httptest.NewRequest(http.MethodGet, path, nil), "cal-1")
+		handler.GetWidgetJSON(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody), "cal-1")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: status = %d: %s", path, rec.Code, rec.Body.String())
 		}
@@ -219,12 +220,12 @@ func TestHandler_GetWidgetJSON_CalendarViewModel(t *testing.T) {
 			t.Fatalf("view_model missing %q: %v", key, base)
 		}
 	}
-	if base["active_view"] != "week" || base["month"].(map[string]any)["month"] != float64(9) {
+	if base["active_view"] != "week" || testutil.As[map[string]any](t, base["month"])["month"] != float64(9) {
 		t.Errorf("default view_model: active_view=%v month=%v", base["active_view"], base["month"])
 	}
 
 	dated := fetch(t, "/api/widgets/cal-1?date=2026-11-20")
-	if dated["month"].(map[string]any)["month"] != float64(11) || dated["month"].(map[string]any)["year"] != float64(2026) {
+	if testutil.As[map[string]any](t, dated["month"])["month"] != float64(11) || testutil.As[map[string]any](t, dated["month"])["year"] != float64(2026) {
 		t.Errorf("date override did not move month view: %v", dated["month"])
 	}
 	if reflect.DeepEqual(base["week"], dated["week"]) {
@@ -262,7 +263,7 @@ func TestEngine_WidgetContext(t *testing.T) {
 	if _, ok := ctxOut.Config["token"]; ok {
 		t.Errorf("sensitive key leaked: %v", ctxOut.Config)
 	}
-	nested := ctxOut.Config["nested"].(map[string]any)
+	nested := testutil.As[map[string]any](t, ctxOut.Config["nested"])
 	if _, ok := nested["password"]; ok || nested["keep"] != 1 {
 		t.Errorf("nested sanitization wrong: %v", nested)
 	}
@@ -356,7 +357,7 @@ func TestHandler_GetWidgetJSON_MatchesHydration(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			rec := httptest.NewRecorder()
-			handler.GetWidgetJSON(rec, httptest.NewRequest(http.MethodGet, "/api/widgets/"+id, nil), id)
+			handler.GetWidgetJSON(rec, httptest.NewRequest(http.MethodGet, "/api/widgets/"+id, http.NoBody), id)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 			}

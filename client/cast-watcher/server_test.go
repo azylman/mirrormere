@@ -140,7 +140,7 @@ func TestActionServer_HandleHealthz(t *testing.T) {
 		{http.MethodHead, http.StatusOK, false},
 		{http.MethodPost, http.StatusMethodNotAllowed, false},
 	} {
-		req := httptest.NewRequest(tc.method, "/healthz", nil)
+		req := httptest.NewRequest(tc.method, "/healthz", http.NoBody)
 		rec := httptest.NewRecorder()
 		server.mux.ServeHTTP(rec, req)
 		if rec.Code != tc.wantCode || (tc.hasBody && !strings.Contains(rec.Body.String(), "YouTube")) || (!tc.hasBody && rec.Body.Len() > 0) {
@@ -151,9 +151,9 @@ func TestActionServer_HandleHealthz(t *testing.T) {
 
 type errResponseWriter struct{ header http.Header }
 
-func (e *errResponseWriter) Header() http.Header        { return e.header }
-func (e *errResponseWriter) Write([]byte) (int, error)  { return 0, errors.New("simulated write error") }
-func (e *errResponseWriter) WriteHeader(statusCode int) {}
+func (e *errResponseWriter) Header() http.Header      { return e.header }
+func (*errResponseWriter) Write([]byte) (int, error)  { return 0, errors.New("simulated write error") }
+func (*errResponseWriter) WriteHeader(statusCode int) {}
 
 func TestWriteJSON_Error(t *testing.T) {
 	t.Parallel()
@@ -180,7 +180,7 @@ func TestActionServer_HandleCoverageFlush(t *testing.T) {
 				return os.WriteFile(filepath.Join(dir, "covcounters.test"), []byte("cov"), 0o600)
 			})()
 			rec := httptest.NewRecorder()
-			server.mux.ServeHTTP(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", nil))
+			server.mux.ServeHTTP(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", http.NoBody))
 			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
 				t.Fatalf("got code %d body %q, want %d %q", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
 			}

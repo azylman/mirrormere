@@ -126,7 +126,7 @@ func TestCastClient_HeartbeatPingAndPong(t *testing.T) {
 	defer s1.Close()
 	client.conn, client.connected = c1, true
 
-	go client.handleHeartbeatMessage(CastMessage{SourceID: "sender-test", Namespace: NamespaceHeartbeat, PayloadUTF8: `{"type":"PING"}`})
+	go client.handleHeartbeatMessage(t.Context(), CastMessage{SourceID: "sender-test", Namespace: NamespaceHeartbeat, PayloadUTF8: `{"type":"PING"}`})
 
 	msg, err := DecodeCastMessage(s1)
 	if err != nil || !strings.Contains(msg.PayloadUTF8, "PONG") || msg.DestinationID != "sender-test" {
@@ -370,7 +370,7 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 		for {
 			select {
 			case fn := <-client.dispatchCh:
-				fn()
+				fn(t.Context())
 			default:
 				return
 			}
@@ -396,9 +396,9 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 
 	for _, step := range steps {
 		if step.trigger {
-			client.dispatchTrigger()
+			client.dispatchTrigger(t.Context())
 		} else {
-			client.handleMediaMessage(CastMessage{PayloadUTF8: step.payload})
+			client.handleMediaMessage(t.Context(), CastMessage{PayloadUTF8: step.payload})
 		}
 		drain()
 		mu.Lock()
@@ -501,7 +501,7 @@ func TestCastClient_SupervisorReconnect(t *testing.T) {
 
 type errConn struct{ net.Conn }
 
-func (e *errConn) Close() error { return errors.New("conn close failure") }
+func (*errConn) Close() error { return errors.New("conn close failure") }
 
 func TestCastClient_LifecycleAndEdgeCases(t *testing.T) {
 	client := NewCastClient(ClientConfig{})
@@ -524,10 +524,10 @@ func TestCastClient_LifecycleAndEdgeCases(t *testing.T) {
 
 	cQueue := NewCastClient(ClientConfig{})
 	for range 64 {
-		cQueue.dispatchCh <- func() {}
+		cQueue.dispatchCh <- func(context.Context) {}
 	}
 	called := make(chan struct{})
-	cQueue.queueDispatch(func() { close(called) })
+	cQueue.queueDispatch(t.Context(), func(context.Context) { close(called) })
 	<-called
 
 	var capturedTrigger map[string]any
@@ -539,22 +539,22 @@ func TestCastClient_LifecycleAndEdgeCases(t *testing.T) {
 	}))
 	defer ts.Close()
 	cDefaults := NewCastClient(ClientConfig{CoreURL: ts.URL})
-	cDefaults.dispatchTrigger()
+	cDefaults.dispatchTrigger(t.Context())
 	if capturedTrigger["stream_url"] != "http://localhost:1984/api/webrtc?src=cast" {
 		t.Errorf("unexpected default stream_url: %v", capturedTrigger["stream_url"])
 	}
 
-	if err := cDefaults.sendMessage(CastMessage{PayloadUTF8: string(make([]byte, MaxPayloadSize+100))}); err == nil {
+	if err := cDefaults.sendMessageContext(t.Context(), CastMessage{PayloadUTF8: string(make([]byte, MaxPayloadSize+100))}); err == nil {
 		t.Error("expected error for oversized frame")
 	}
 
-	cDefaults.handleReceiverMessage(CastMessage{Namespace: NamespaceReceiver, PayloadUTF8: `{"type":"OTHER"}`})
-	cDefaults.handleReceiverMessage(CastMessage{Namespace: NamespaceReceiver, PayloadUTF8: `{invalid`})
-	cDefaults.handleHeartbeatMessage(CastMessage{Namespace: NamespaceHeartbeat, PayloadUTF8: `{"type":"UNKNOWN"}`})
-	cDefaults.handleHeartbeatMessage(CastMessage{PayloadUTF8: `{"type":"PING"}`})
-	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[]}`})
-	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{invalid`})
-	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":10,"playerState":"IDLE","idleReason":"FINISHED"}]}`})
+	cDefaults.handleReceiverMessage(t.Context(), CastMessage{Namespace: NamespaceReceiver, PayloadUTF8: `{"type":"OTHER"}`})
+	cDefaults.handleReceiverMessage(t.Context(), CastMessage{Namespace: NamespaceReceiver, PayloadUTF8: `{invalid`})
+	cDefaults.handleHeartbeatMessage(t.Context(), CastMessage{Namespace: NamespaceHeartbeat, PayloadUTF8: `{"type":"UNKNOWN"}`})
+	cDefaults.handleHeartbeatMessage(t.Context(), CastMessage{PayloadUTF8: `{"type":"PING"}`})
+	cDefaults.handleMediaMessage(t.Context(), CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[]}`})
+	cDefaults.handleMediaMessage(t.Context(), CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{invalid`})
+	cDefaults.handleMediaMessage(t.Context(), CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":10,"playerState":"IDLE","idleReason":"FINISHED"}]}`})
 	if cDefaults.playerState != "idle" {
 		t.Errorf("expected idle state, got %s", cDefaults.playerState)
 	}
@@ -562,13 +562,13 @@ func TestCastClient_LifecycleAndEdgeCases(t *testing.T) {
 	downServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadGateway) }))
 	cFail := NewCastClient(ClientConfig{CoreURL: downServer.URL, HTTPClient: downServer.Client()})
 	cFail.lastReportedPlayerState, cFail.lastReportedTitle, cFail.lastTriggered = "playing", "Ep 1", true
-	cFail.dispatchTrigger()
-	cFail.dispatchDismiss()
-	cFail.dispatchPlayerState("playing")
+	cFail.dispatchTrigger(t.Context())
+	cFail.dispatchDismiss(t.Context())
+	cFail.dispatchPlayerState(t.Context(), "playing")
 	if cFail.lastReportedPlayerState != "" || cFail.lastTriggered {
 		t.Errorf("expected state reset on 502 webhook failure")
 	}
 	downServer.Close()
-	cFail.postToCore(downServer.URL+"/api/video/state", []byte(`{}`), "state")
-	cFail.postToCore(downServer.URL+"/api/video/trigger", []byte(`{}`), "trigger")
+	cFail.postToCore(t.Context(), downServer.URL+"/api/video/state", []byte(`{}`), "state")
+	cFail.postToCore(t.Context(), downServer.URL+"/api/video/trigger", []byte(`{}`), "trigger")
 }

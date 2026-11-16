@@ -68,7 +68,7 @@ func NewGTasksAdapter(cfg GTasksAdapterConfig) (*GTasksAdapter, error) {
 
 var _ Completer = (*GTasksAdapter)(nil)
 
-func (a *GTasksAdapter) Name() string { return "gtasks" }
+func (*GTasksAdapter) Name() string { return "gtasks" }
 
 type gtasksListMetadata struct {
 	ID      string `json:"id"`

@@ -16,7 +16,7 @@ import (
 )
 
 func doServerReq(srv *server.Server, method, path string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, nil)
+	req := httptest.NewRequest(method, path, http.NoBody)
 	rec := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rec, req)
 	return rec
@@ -141,8 +141,8 @@ func TestServer_Lifecycle(t *testing.T) {
 
 	select {
 	case <-srv.Ready():
-	case err := <-errCh:
-		t.Fatalf("server failed to start: %v", err)
+	case serveErr := <-errCh:
+		t.Fatalf("server failed to start: %v", serveErr)
 	case <-time.After(2 * time.Second):
 		t.Fatal("server start timed out")
 	}

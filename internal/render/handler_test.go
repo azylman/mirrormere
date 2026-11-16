@@ -125,7 +125,7 @@ func TestHandler_GetWidgetRender(t *testing.T) {
 				h = render.NewHandler(nil, nil)
 			}
 			rec := httptest.NewRecorder()
-			h.GetWidgetRender(rec, httptest.NewRequest(tc.method, tc.path, nil), tc.widgetID)
+			h.GetWidgetRender(rec, httptest.NewRequest(tc.method, tc.path, http.NoBody), tc.widgetID)
 			assertWidgetRenderResponse(t, rec, tc)
 		})
 	}
@@ -171,7 +171,7 @@ func TestHandler_GetWidgetAsset(t *testing.T) {
 				h = render.NewHandler(nil, nil)
 			}
 			rec := httptest.NewRecorder()
-			h.GetWidgetAsset(rec, httptest.NewRequest(tc.method, "/widget-types/"+tc.widgetType+"/assets/"+tc.assetPath, nil), tc.widgetType, tc.assetPath)
+			h.GetWidgetAsset(rec, httptest.NewRequest(tc.method, "/widget-types/"+tc.widgetType+"/assets/"+tc.assetPath, http.NoBody), tc.widgetType, tc.assetPath)
 			if rec.Code != tc.wantStatus || (tc.wantBody != "" && !strings.Contains(rec.Body.String(), tc.wantBody)) {
 				t.Fatalf("status = %d (want %d), body = %q", rec.Code, tc.wantStatus, rec.Body.String())
 			}
@@ -236,7 +236,7 @@ func TestHandler_ServeStyle(t *testing.T) {
 				h.SetCSSPath(tc.setPath)
 			}
 			rec := httptest.NewRecorder()
-			h.ServeStyle(rec, httptest.NewRequest(tc.method, "/style.css", nil))
+			h.ServeStyle(rec, httptest.NewRequest(tc.method, "/style.css", http.NoBody))
 			if rec.Code != tc.wantStatus || (tc.wantEmpty && rec.Body.Len() != 0) || (tc.wantBody != "" && rec.Body.String() != tc.wantBody) {
 				t.Fatalf("status=%d (want %d), body=%q", rec.Code, tc.wantStatus, rec.Body.String())
 			}

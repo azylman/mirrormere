@@ -113,7 +113,7 @@ func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "id and action are required")
 		return
 	}
-	if req.ID != "chromecast" {
+	if req.ID != overlayID {
 		writeJSONError(w, http.StatusNotFound, "stream not active")
 		return
 	}
@@ -135,7 +135,7 @@ func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		writeActionError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "ok"})
 }
 
 func (s *ActionServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +151,7 @@ func (s *ActionServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.client.GetStatus()
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "chromecast_connected": st.Connected, "app_id": st.AppID, "player_state": st.PlayerState})
+	writeJSON(w, http.StatusOK, map[string]any{statusKey: "ok", "chromecast_connected": st.Connected, "app_id": st.AppID, "player_state": st.PlayerState})
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
@@ -189,7 +189,7 @@ func (s *ActionServer) handleCoverageFlush(w http.ResponseWriter, r *http.Reques
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"status": "error", "error": msg})
+	writeJSON(w, status, map[string]string{statusKey: "error", "error": msg})
 }
 
 func extractTargetTime(val any) (float64, error) {

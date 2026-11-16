@@ -13,6 +13,7 @@ import (
 
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/server"
+	"github.com/azylman/mirrormere/internal/testutil"
 	"github.com/azylman/mirrormere/internal/voice"
 )
 
@@ -232,7 +233,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 
 			code := recRec.Code
 			if tc.nonFlusher {
-				code = rec.(*nonFlusherResponseWriter).code
+				code = testutil.As[*nonFlusherResponseWriter](t, rec).code
 			}
 			if code != tc.wantCode {
 				t.Fatalf("code = %d, want %d", code, tc.wantCode)

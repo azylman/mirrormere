@@ -32,6 +32,27 @@ const (
 	SourceSender         = "sender-0"
 )
 
+// Cast media player states as reported (lowercased) in MEDIA_STATUS and
+// forwarded to Core.
+const (
+	playerStateIdle      = "idle"
+	playerStatePlaying   = "playing"
+	playerStatePaused    = "paused"
+	playerStateBuffering = "buffering"
+)
+
+const (
+	// overlayID is the video overlay ID cast-watcher owns in Core.
+	overlayID = "chromecast"
+	// typeKey is the message type field shared by Cast payloads and Core
+	// webhook bodies.
+	typeKey = "type"
+	// castRequestIDKey is the Cast protocol request correlation field.
+	castRequestIDKey = "requestId"
+	// statusKey is the JSON field of the HTTP status responses.
+	statusKey = "status"
+)
+
 var (
 	ErrNotConnected         = errors.New("chromecast not connected")
 	ErrNoActiveMediaSession = errors.New("no active media session on chromecast")
@@ -93,7 +114,7 @@ type CastClient struct {
 
 	wakeMu       sync.Mutex
 	lastWakeTime time.Time
-	dispatchCh   chan func()
+	dispatchCh   chan func(context.Context)
 	stopOnce     sync.Once
 }
 
@@ -110,7 +131,8 @@ func NewCastClient(cfg ClientConfig) *CastClient {
 	dialer := cfg.Dialer
 	if dialer == nil {
 		dialer = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return (&tls.Dialer{Config: &tls.Config{InsecureSkipVerify: true}}).DialContext(ctx, network, addr)
+			// Cast receivers present self-signed device certificates with no CA chain to verify against.
+			return (&tls.Dialer{Config: &tls.Config{InsecureSkipVerify: true}}).DialContext(ctx, network, addr) //nolint:gosec // G402: Cast device certs are self-signed by protocol
 		}
 	}
 	if cfg.HeartbeatInterval <= 0 {
@@ -129,7 +151,7 @@ func NewCastClient(cfg ClientConfig) *CastClient {
 		cfg.WakeDelay = 1500 * time.Millisecond
 	}
 
-	return &CastClient{cfg: cfg, logger: logger, client: httpClient, dialer: dialer, dispatchCh: make(chan func(), 64)}
+	return &CastClient{cfg: cfg, logger: logger, client: httpClient, dialer: dialer, dispatchCh: make(chan func(context.Context), 64)}
 }
 
 // Start begins background connection monitoring and Core webhook worker routines.
@@ -242,13 +264,13 @@ func (c *CastClient) SendMediaAction(ctx context.Context, action string) error {
 		cmd = "PAUSE"
 	case "toggle_playback":
 		cmd = "PLAY"
-		if curState == "playing" {
+		if curState == playerStatePlaying {
 			cmd = "PAUSE"
 		}
 	case "rewind":
 		c.mu.RLock()
 		pos := c.lastPosition
-		if c.playerState == "playing" && !c.lastPositionTime.IsZero() {
+		if c.playerState == playerStatePlaying && !c.lastPositionTime.IsZero() {
 			pos += time.Since(c.lastPositionTime).Seconds()
 		}
 		c.mu.RUnlock()
@@ -256,7 +278,7 @@ func (c *CastClient) SendMediaAction(ctx context.Context, action string) error {
 	case "fast_forward":
 		c.mu.RLock()
 		pos := c.lastPosition
-		if c.playerState == "playing" && !c.lastPositionTime.IsZero() {
+		if c.playerState == playerStatePlaying && !c.lastPositionTime.IsZero() {
 			pos += time.Since(c.lastPositionTime).Seconds()
 		}
 		c.mu.RUnlock()
@@ -264,7 +286,7 @@ func (c *CastClient) SendMediaAction(ctx context.Context, action string) error {
 	default:
 		return fmt.Errorf("%w: %s", ErrInvalidAction, action)
 	}
-	return c.sendJSONContext(ctx, transportID, NamespaceMedia, map[string]any{"type": cmd, "requestId": c.reqCounter.Add(1), "mediaSessionId": mediaSessionID})
+	return c.sendJSONContext(ctx, transportID, NamespaceMedia, map[string]any{typeKey: cmd, castRequestIDKey: c.reqCounter.Add(1), "mediaSessionId": mediaSessionID})
 }
 
 // Seek commands the active Chromecast media session to jump to targetTime in seconds.
@@ -276,7 +298,7 @@ func (c *CastClient) Seek(ctx context.Context, targetTime float64) error {
 	if err != nil {
 		return err
 	}
-	if err := c.sendJSONContext(ctx, transportID, NamespaceMedia, map[string]any{"type": "SEEK", "requestId": c.reqCounter.Add(1), "mediaSessionId": mediaSessionID, "currentTime": targetTime}); err != nil {
+	if err := c.sendJSONContext(ctx, transportID, NamespaceMedia, map[string]any{typeKey: "SEEK", castRequestIDKey: c.reqCounter.Add(1), "mediaSessionId": mediaSessionID, "currentTime": targetTime}); err != nil {
 		return err
 	}
 	c.mu.Lock()
@@ -290,7 +312,7 @@ func (c *CastClient) Seek(ctx context.Context, targetTime float64) error {
 func (c *CastClient) Wake(ctx context.Context) error {
 	c.mu.RLock()
 	notConnected := !c.connected || c.conn == nil
-	notIdle := c.appID != "" || strings.EqualFold(c.playerState, "playing") || strings.EqualFold(c.playerState, "buffering")
+	notIdle := c.appID != "" || strings.EqualFold(c.playerState, playerStatePlaying) || strings.EqualFold(c.playerState, playerStateBuffering)
 	c.mu.RUnlock()
 	if notConnected {
 		return ErrNotConnected
@@ -302,7 +324,7 @@ func (c *CastClient) Wake(ctx context.Context) error {
 	c.wakeMu.Lock()
 	defer c.wakeMu.Unlock()
 	c.mu.RLock()
-	notIdle = c.appID != "" || strings.EqualFold(c.playerState, "playing") || strings.EqualFold(c.playerState, "buffering")
+	notIdle = c.appID != "" || strings.EqualFold(c.playerState, playerStatePlaying) || strings.EqualFold(c.playerState, playerStateBuffering)
 	c.mu.RUnlock()
 	if notIdle || (!c.lastWakeTime.IsZero() && time.Since(c.lastWakeTime) < 5*time.Second) {
 		return nil
@@ -310,7 +332,7 @@ func (c *CastClient) Wake(ctx context.Context) error {
 	c.lastWakeTime = time.Now()
 
 	reqID := c.reqCounter.Add(1)
-	if err := c.sendJSONContext(ctx, DestinationReceiver, NamespaceReceiver, map[string]any{"type": "LAUNCH", "appId": "CC1AD845", "requestId": reqID}); err != nil {
+	if err := c.sendJSONContext(ctx, DestinationReceiver, NamespaceReceiver, map[string]any{typeKey: "LAUNCH", "appId": "CC1AD845", castRequestIDKey: reqID}); err != nil {
 		return err
 	}
 	wakeDelay := c.cfg.WakeDelay
@@ -323,10 +345,10 @@ func (c *CastClient) Wake(ctx context.Context) error {
 	case <-time.After(wakeDelay):
 	}
 
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	stopCtx, stopCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer stopCancel()
 	stopReqID := c.reqCounter.Add(1)
-	if err := c.sendJSONContext(stopCtx, DestinationReceiver, NamespaceReceiver, map[string]any{"type": "STOP", "requestId": stopReqID}); err != nil {
+	if err := c.sendJSONContext(stopCtx, DestinationReceiver, NamespaceReceiver, map[string]any{typeKey: "STOP", castRequestIDKey: stopReqID}); err != nil {
 		return err
 	}
 	c.logger.Info("[CastWatcher] Triggered on-demand Chromecast HDMI wake pulse")
@@ -357,7 +379,7 @@ func (c *CastClient) supervisorLoop(ctx context.Context) {
 
 		var jitter time.Duration
 		if b := int64(backoff / 4); b > 0 {
-			jitter = time.Duration(rand.Int63n(b))
+			jitter = time.Duration(rand.Int63n(b)) //nolint:gosec // G404: reconnect jitter only needs spread, not unpredictability
 		}
 		select {
 		case <-ctx.Done():
@@ -396,7 +418,7 @@ func (c *CastClient) connectAndServe(ctx context.Context) error {
 
 	heartbeatDone := make(chan struct{})
 	defer close(heartbeatDone)
-	go c.heartbeatAndWatchdog(conn, heartbeatDone)
+	go c.heartbeatAndWatchdog(ctx, conn, heartbeatDone)
 
 	for {
 		msg, err := DecodeCastMessage(conn)
@@ -409,11 +431,11 @@ func (c *CastClient) connectAndServe(ctx context.Context) error {
 		c.mu.Lock()
 		c.lastMessageTime = time.Now()
 		c.mu.Unlock()
-		c.handleIncomingMessage(msg)
+		c.handleIncomingMessage(ctx, msg)
 	}
 }
 
-func (c *CastClient) heartbeatAndWatchdog(conn net.Conn, done <-chan struct{}) {
+func (c *CastClient) heartbeatAndWatchdog(ctx context.Context, conn net.Conn, done <-chan struct{}) {
 	ticker := time.NewTicker(c.cfg.HeartbeatInterval)
 	defer ticker.Stop()
 
@@ -430,7 +452,7 @@ func (c *CastClient) heartbeatAndWatchdog(conn net.Conn, done <-chan struct{}) {
 				c.closeConn(conn)
 				return
 			}
-			if err := c.sendMessage(newCastMsg(DestinationHeartbeat, NamespaceHeartbeat, `{"type":"PING"}`)); err != nil {
+			if err := c.sendMessageContext(ctx, newCastMsg(DestinationHeartbeat, NamespaceHeartbeat, `{"type":"PING"}`)); err != nil {
 				c.logger.Warn("[CastWatcher] Failed to send heartbeat PING", "error", err)
 				c.closeConn(conn)
 				return
@@ -439,20 +461,20 @@ func (c *CastClient) heartbeatAndWatchdog(conn net.Conn, done <-chan struct{}) {
 	}
 }
 
-func (c *CastClient) handleIncomingMessage(msg CastMessage) {
+func (c *CastClient) handleIncomingMessage(ctx context.Context, msg CastMessage) {
 	switch msg.Namespace {
 	case NamespaceHeartbeat:
-		c.handleHeartbeatMessage(msg)
+		c.handleHeartbeatMessage(ctx, msg)
 	case NamespaceReceiver:
-		c.handleReceiverMessage(msg)
+		c.handleReceiverMessage(ctx, msg)
 	case NamespaceMedia:
-		c.handleMediaMessage(msg)
+		c.handleMediaMessage(ctx, msg)
 	}
 }
 
-func (c *CastClient) handleHeartbeatMessage(msg CastMessage) {
+func (c *CastClient) handleHeartbeatMessage(ctx context.Context, msg CastMessage) {
 	if strings.Contains(msg.PayloadUTF8, `"PING"`) {
-		c.sendBestEffort(newCastMsg(msg.SourceID, NamespaceHeartbeat, `{"type":"PONG"}`))
+		c.sendBestEffort(ctx, newCastMsg(msg.SourceID, NamespaceHeartbeat, `{"type":"PONG"}`))
 	}
 }
 
@@ -467,7 +489,7 @@ type receiverStatusPayload struct {
 	} `json:"status"`
 }
 
-func (c *CastClient) handleReceiverMessage(msg CastMessage) {
+func (c *CastClient) handleReceiverMessage(ctx context.Context, msg CastMessage) {
 	var payload receiverStatusPayload
 	if err := json.Unmarshal([]byte(msg.PayloadUTF8), &payload); err != nil || payload.Type != "RECEIVER_STATUS" {
 		return
@@ -489,15 +511,15 @@ func (c *CastClient) handleReceiverMessage(msg CastMessage) {
 		if activeTransportID != prevTransportID {
 			c.logger.Info("[CastWatcher] Active cast app detected", "app_id", activeAppID, "transport_id", activeTransportID)
 			go func(tid string) {
-				c.sendBestEffort(newCastMsg(tid, NamespaceConnection, `{"type":"CONNECT"}`))
+				c.sendBestEffort(ctx, newCastMsg(tid, NamespaceConnection, `{"type":"CONNECT"}`))
 				reqID := c.reqCounter.Add(1)
-				c.sendBestEffort(newCastMsg(tid, NamespaceMedia, fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, reqID)))
+				c.sendBestEffort(ctx, newCastMsg(tid, NamespaceMedia, fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, reqID)))
 			}(activeTransportID)
 		}
 		if !c.lastTriggered {
 			c.lastTriggered = true
 			c.mu.Unlock()
-			c.queueDispatch(func() { c.dispatchTrigger() })
+			c.queueDispatch(ctx, c.dispatchTrigger)
 			return
 		}
 	} else if prevAppID != "" || c.lastTriggered {
@@ -506,7 +528,7 @@ func (c *CastClient) handleReceiverMessage(msg CastMessage) {
 		c.lastTriggered = false
 		c.resetMediaStateLocked()
 		c.mu.Unlock()
-		c.queueDispatch(func() { c.dispatchDismiss() })
+		c.queueDispatch(ctx, c.dispatchDismiss)
 		return
 	}
 	c.mu.Unlock()
@@ -679,7 +701,7 @@ func (c *CastClient) shouldDispatchActiveMediaLocked(item mediaStatusItem, norma
 	}
 
 	var expectedTime float64
-	if prevPlayerState == "playing" && !c.lastPositionTime.IsZero() {
+	if prevPlayerState == playerStatePlaying && !c.lastPositionTime.IsZero() {
 		expectedTime = c.lastPosition + time.Since(c.lastPositionTime).Seconds()
 	} else {
 		expectedTime = c.lastPosition
@@ -687,22 +709,22 @@ func (c *CastClient) shouldDispatchActiveMediaLocked(item mediaStatusItem, norma
 	return math.Abs(item.CurrentTime-expectedTime) > 5.0
 }
 
-func (c *CastClient) handleIdleMediaLocked(item mediaStatusItem, prevPlayerState string) bool {
+func (c *CastClient) handleIdleMediaLocked(ctx context.Context, item mediaStatusItem, prevPlayerState string) bool {
 	reason := strings.ToUpper(strings.TrimSpace(item.IdleReason))
 	isTerminalIdle := item.MediaSessionID == 0 || reason == "FINISHED" || reason == "CANCELLED" || reason == "INTERRUPTED" || reason == "ERROR"
 	if !isTerminalIdle {
 		return false
 	}
 	c.resetMediaStateLocked()
-	c.playerState = "idle"
-	c.lastReportedPlayerState = "idle"
-	if prevPlayerState != "idle" {
-		c.queueDispatch(func() { c.dispatchPlayerState("idle") })
+	c.playerState = playerStateIdle
+	c.lastReportedPlayerState = playerStateIdle
+	if prevPlayerState != playerStateIdle {
+		c.queueDispatch(ctx, func(ctx context.Context) { c.dispatchPlayerState(ctx, playerStateIdle) })
 	}
 	return true
 }
 
-func (c *CastClient) handleActiveMediaLocked(item mediaStatusItem, normalizedState, prevPlayerState, prevTitle string) {
+func (c *CastClient) handleActiveMediaLocked(ctx context.Context, item mediaStatusItem, normalizedState, prevPlayerState, prevTitle string) {
 	c.playerState = normalizedState
 	if !c.shouldDispatchActiveMediaLocked(item, normalizedState, prevPlayerState, prevTitle) {
 		return
@@ -713,10 +735,10 @@ func (c *CastClient) handleActiveMediaLocked(item mediaStatusItem, normalizedSta
 	c.lastReportedMediaSessionID = c.mediaSessionID
 	c.lastPosition = item.CurrentTime
 	c.lastPositionTime = time.Now()
-	c.queueDispatch(func() { c.dispatchPlayerState(normalizedState) })
+	c.queueDispatch(ctx, func(ctx context.Context) { c.dispatchPlayerState(ctx, normalizedState) })
 }
 
-func (c *CastClient) handleMediaMessage(msg CastMessage) {
+func (c *CastClient) handleMediaMessage(ctx context.Context, msg CastMessage) {
 	var payload mediaStatusPayload
 	if err := json.Unmarshal([]byte(msg.PayloadUTF8), &payload); err != nil || payload.Type != "MEDIA_STATUS" || len(payload.Status) == 0 {
 		return
@@ -731,15 +753,11 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 	c.updateMediaMetadataLocked(item)
 
 	switch normalizedState {
-	case "idle":
-		c.handleIdleMediaLocked(item, prevPlayerState)
-	case "playing", "paused", "buffering":
-		c.handleActiveMediaLocked(item, normalizedState, prevPlayerState, prevTitle)
+	case playerStateIdle:
+		c.handleIdleMediaLocked(ctx, item, prevPlayerState)
+	case playerStatePlaying, playerStatePaused, playerStateBuffering:
+		c.handleActiveMediaLocked(ctx, item, normalizedState, prevPlayerState, prevTitle)
 	}
-}
-
-func (c *CastClient) sendMessage(msg CastMessage) error {
-	return c.sendMessageContext(context.Background(), msg)
 }
 
 func (c *CastClient) sendMessageContext(ctx context.Context, msg CastMessage) error {
@@ -762,19 +780,22 @@ func (c *CastClient) sendMessageContext(ctx context.Context, msg CastMessage) er
 	if d, ok := ctx.Deadline(); ok {
 		deadline = d
 	}
-	if err := conn.SetWriteDeadline(deadline); err != nil {
+	if err = conn.SetWriteDeadline(deadline); err != nil {
 		return err
 	}
 	_, err = conn.Write(frame)
 	return err
 }
 
-func (c *CastClient) queueDispatch(fn func()) {
+// queueDispatch hands fn to the dispatch worker, which runs it with the
+// client's lifetime context. When the queue is full fn runs in its own
+// goroutine under ctx instead.
+func (c *CastClient) queueDispatch(ctx context.Context, fn func(context.Context)) {
 	select {
 	case c.dispatchCh <- fn:
 	default:
 		c.logger.Warn("[CastWatcher] Dispatch channel full, executing webhook synchronously in goroutine")
-		go fn()
+		go fn(ctx)
 	}
 }
 
@@ -784,18 +805,18 @@ func (c *CastClient) dispatchWorker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case fn := <-c.dispatchCh:
-			fn()
+			fn(ctx)
 		}
 	}
 }
 
-func (c *CastClient) postJSON(endpoint string, payload any, op string) {
+func (c *CastClient) postJSON(ctx context.Context, endpoint string, payload any, op string) {
 	if data, err := json.Marshal(payload); err == nil {
-		c.postToCore(strings.TrimRight(c.cfg.CoreURL, "/")+"/api/video/"+endpoint, data, op)
+		c.postToCore(ctx, strings.TrimRight(c.cfg.CoreURL, "/")+"/api/video/"+endpoint, data, op)
 	}
 }
 
-func (c *CastClient) dispatchTrigger() {
+func (c *CastClient) dispatchTrigger(ctx context.Context) {
 	streamURL := c.cfg.StreamURL
 	if streamURL == "" {
 		streamURL = "http://localhost:1984/api/webrtc?src=cast"
@@ -805,7 +826,7 @@ func (c *CastClient) dispatchTrigger() {
 		controlURL = "http://cast-watcher:8090/action"
 	}
 	payload := map[string]any{
-		"id": "chromecast", "type": "webrtc", "priority": "persistent",
+		"id": overlayID, typeKey: "webrtc", "priority": "persistent",
 		"stream_url": streamURL, "controllable": true, "control_url": controlURL,
 	}
 	c.mu.RLock()
@@ -828,14 +849,14 @@ func (c *CastClient) dispatchTrigger() {
 		payload["position"] = position
 		payload["position_updated_at"] = posUpdatedAt
 	}
-	c.postJSON("trigger", payload, "trigger")
+	c.postJSON(ctx, "trigger", payload, "trigger")
 }
 
-func (c *CastClient) dispatchDismiss() {
-	c.postJSON("dismiss", map[string]any{"id": "chromecast"}, "dismiss")
+func (c *CastClient) dispatchDismiss(ctx context.Context) {
+	c.postJSON(ctx, "dismiss", map[string]any{"id": overlayID}, "dismiss")
 }
 
-func (c *CastClient) dispatchPlayerState(state string) {
+func (c *CastClient) dispatchPlayerState(ctx context.Context, state string) {
 	c.mu.RLock()
 	title, series, season, episode := c.lastTitle, c.lastSeries, c.lastSeason, c.lastEpisode
 	duration, position, posTime := c.lastDuration, c.lastPosition, c.lastPositionTime
@@ -844,15 +865,15 @@ func (c *CastClient) dispatchPlayerState(state string) {
 	if !posTime.IsZero() {
 		posUpdatedAt = posTime.UnixMilli()
 	}
-	c.postJSON("state", map[string]any{
-		"id": "chromecast", "player_state": state, "title": title, "series": series,
+	c.postJSON(ctx, "state", map[string]any{
+		"id": overlayID, "player_state": state, "title": title, "series": series,
 		"season": season, "episode": episode, "position": position, "duration": duration,
 		"position_updated_at": posUpdatedAt,
 	}, "state")
 }
 
-func (c *CastClient) postToCore(targetURL string, payload []byte, operation string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (c *CastClient) postToCore(ctx context.Context, targetURL string, payload []byte, operation string) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(payload))
 	if err != nil {
@@ -889,8 +910,8 @@ func (c *CastClient) closeConn(conn net.Conn) {
 	}
 }
 
-func (c *CastClient) sendBestEffort(msg CastMessage) {
-	if err := c.sendMessage(msg); err != nil {
+func (c *CastClient) sendBestEffort(ctx context.Context, msg CastMessage) {
+	if err := c.sendMessageContext(ctx, msg); err != nil {
 		c.logger.Debug("[CastWatcher] Best-effort message send failed", "namespace", msg.Namespace, "error", err)
 	}
 }

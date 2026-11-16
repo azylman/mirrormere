@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -52,7 +53,7 @@ func (l *Loader) LoadPackage(widgetType string) (*domain.Package, error) {
 	return nil, fmt.Errorf("widget package '%s' not found", widgetType)
 }
 
-func (l *Loader) loadPackageFromDir(pkgDir, widgetType, source string) (*domain.Package, error) {
+func (*Loader) loadPackageFromDir(pkgDir, widgetType, source string) (*domain.Package, error) {
 	if !CheckPackageCompleteness(pkgDir) {
 		return nil, fmt.Errorf("widget package at %s is incomplete: missing required file manifest.yaml (or views/widget.html); overriding a widget type requires a complete package", pkgDir)
 	}
@@ -98,7 +99,7 @@ func CheckPackageCompleteness(pkgDir string) bool {
 }
 
 // ApplyDefaults applies manifest default_dimensions and refresh intervals to widget instances in cfg.
-func (l *Loader) ApplyDefaults(cfg *config.Config, registry map[string]*domain.Package) error {
+func (*Loader) ApplyDefaults(cfg *config.Config, registry map[string]*domain.Package) error {
 	if cfg == nil {
 		return fmt.Errorf("configuration cannot be nil")
 	}

@@ -10,12 +10,30 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// Prometheus naming shared by every voice metric.
+const (
+	metricsNamespace = "mirrormere"
+	metricsSubsystem = "voice"
+	labelNodeID      = "node_id"
+	labelStatus      = "status"
+	labelVoice       = "voice"
+	// unknownLabel replaces label values that are missing or unbounded.
+	unknownLabel = "unknown"
+)
+
+// Turn and stage outcomes recorded in the status label and returned by the
+// hub's turn helpers.
+const (
+	outcomeSuccess = "success"
+	outcomeError   = "error"
+)
+
 var nodeIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 // SanitizeNodeID enforces bounded alphanumeric label values.
 func SanitizeNodeID(nodeID string) string {
 	if !nodeIDRegex.MatchString(nodeID) {
-		return "unknown"
+		return unknownLabel
 	}
 	return nodeID
 }
@@ -59,96 +77,96 @@ func newMetrics(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		stageDuration: factory.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: "mirrormere",
-				Subsystem: "voice",
+				Namespace: metricsNamespace,
+				Subsystem: metricsSubsystem,
 				Name:      "stage_duration_seconds",
 				Help:      "Duration of voice pipeline stages in seconds.",
 				Buckets:   []float64{0.01, 0.025, 0.05, 0.1, 0.15, 0.25, 0.35, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0},
 			},
-			[]string{"node_id", "stage", "status"},
+			[]string{labelNodeID, "stage", labelStatus},
 		),
 		ambientRMS: factory.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Namespace: "mirrormere",
-				Subsystem: "voice",
+				Namespace: metricsNamespace,
+				Subsystem: metricsSubsystem,
 				Name:      "ambient_rms_dbfs",
 				Help:      "Ambient background sound level reported by the edge client in dBFS.",
 			},
-			[]string{"node_id"},
+			[]string{labelNodeID},
 		),
 		lastSeen: factory.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Namespace: "mirrormere",
-				Subsystem: "voice",
+				Namespace: metricsNamespace,
+				Subsystem: metricsSubsystem,
 				Name:      "edge_last_seen_timestamp_seconds",
 				Help:      "Unix timestamp in seconds of the most recent heartbeat from an edge client.",
 			},
-			[]string{"node_id"},
+			[]string{labelNodeID},
 		),
 		falseWakes: factory.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: "mirrormere",
-				Subsystem: "voice",
+				Namespace: metricsNamespace,
+				Subsystem: metricsSubsystem,
 				Name:      "false_wakes_total",
 				Help:      "Total number of false wake detections aborted on the edge client.",
 			},
-			[]string{"node_id"},
+			[]string{labelNodeID},
 		),
 		playbackDuration: factory.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: "mirrormere",
-				Subsystem: "voice",
+				Namespace: metricsNamespace,
+				Subsystem: metricsSubsystem,
 				Name:      "playback_duration_seconds",
 				Help:      "Audio playback duration on the edge device in seconds.",
 				Buckets:   []float64{0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 30.0},
 			},
-			[]string{"node_id"},
+			[]string{labelNodeID},
 		),
 		turnsTotal: factory.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: "mirrormere",
-				Subsystem: "voice",
+				Namespace: metricsNamespace,
+				Subsystem: metricsSubsystem,
 				Name:      "turns_total",
 				Help:      "Total number of voice interaction turns processed.",
 			},
-			[]string{"node_id", "status"},
+			[]string{labelNodeID, labelStatus},
 		),
 		errorsTotal: factory.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: "mirrormere",
-				Subsystem: "voice",
+				Namespace: metricsNamespace,
+				Subsystem: metricsSubsystem,
 				Name:      "errors_total",
 				Help:      "Total number of voice pipeline errors partitioned by stage and error type.",
 			},
-			[]string{"node_id", "stage", "error_type"},
+			[]string{labelNodeID, "stage", "error_type"},
 		),
 		sttRTF: factory.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Namespace: "mirrormere",
-				Subsystem: "voice",
+				Namespace: metricsNamespace,
+				Subsystem: metricsSubsystem,
 				Name:      "stt_rtf",
 				Help:      "Speech-to-Text Real-Time Factor (inference duration / audio duration).",
 			},
-			[]string{"node_id", "engine"},
+			[]string{labelNodeID, "engine"},
 		),
 		ttsCPS: factory.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Namespace: "mirrormere",
-				Subsystem: "voice",
+				Namespace: metricsNamespace,
+				Subsystem: metricsSubsystem,
 				Name:      "tts_chars_per_second",
 				Help:      "Text-to-Speech synthesis speed in characters per second.",
 			},
-			[]string{"node_id", "voice"},
+			[]string{labelNodeID, labelVoice},
 		),
 	}
 
-	for _, status := range []string{"success", "error"} {
+	for _, status := range []string{outcomeSuccess, outcomeError} {
 		m.turnsTotal.WithLabelValues("cockpit", status).Add(0)
 	}
 	m.falseWakes.WithLabelValues("cockpit").Add(0)
 	for _, stage := range []string{"wake_eval", "stt", "brain", "tts", "deliberation"} {
 		m.errorsTotal.WithLabelValues("cockpit", stage, "none").Add(0)
-		for _, status := range []string{"success", "error", "timeout"} {
+		for _, status := range []string{outcomeSuccess, outcomeError, "timeout"} {
 			m.stageDuration.WithLabelValues("cockpit", stage, status)
 		}
 	}
@@ -241,7 +259,7 @@ func (m *Metrics) RecordSTTRTF(nodeID, engine string, rtf float64) {
 		return
 	}
 	if engine == "" {
-		engine = "unknown"
+		engine = unknownLabel
 	}
 	m.sttRTF.WithLabelValues(SanitizeNodeID(nodeID), engine).Set(rtf)
 }
@@ -255,7 +273,7 @@ func (m *Metrics) RecordTTSCPS(nodeID, voice string, cps float64) {
 		return
 	}
 	if voice == "" {
-		voice = "unknown"
+		voice = unknownLabel
 	}
 	m.ttsCPS.WithLabelValues(SanitizeNodeID(nodeID), voice).Set(cps)
 }

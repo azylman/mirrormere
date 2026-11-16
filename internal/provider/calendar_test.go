@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/provider"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 func icsDoc(events ...string) string {
@@ -36,7 +37,7 @@ func fetchTestCalendar(t *testing.T, ics string, refTime time.Time, cfgOverrides
 	if err != nil {
 		return provider.CalendarSnapshot{}, err
 	}
-	return res.(provider.CalendarSnapshot), nil
+	return testutil.As[provider.CalendarSnapshot](t, res), nil
 }
 
 func TestCalendarProvider_Init_Validations(t *testing.T) {
@@ -274,7 +275,7 @@ func runCalendarStripRecurringSubtest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s fetch failed: %v", tc.name, err)
 		}
-		snap := res.(provider.CalendarSnapshot)
+		snap := testutil.As[provider.CalendarSnapshot](t, res)
 		if len(snap.Events) != tc.wantCount {
 			t.Errorf("%s: got %d events, want %d", tc.name, len(snap.Events), tc.wantCount)
 		}
@@ -319,7 +320,7 @@ func TestCalendarProvider_Fetch_MultiFeedAndErrors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fetch failed: %v", err)
 		}
-		snap := res.(provider.CalendarSnapshot)
+		snap := testutil.As[provider.CalendarSnapshot](t, res)
 		if snap.SyncStatus != "partial" || len(snap.Events) != 1 || snap.Events[0].Title != "Work Meeting" {
 			t.Fatalf("unexpected snapshot: %+v", snap)
 		}
@@ -443,7 +444,7 @@ func TestCalendarProvider_Sorting(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fetch failed: %v", err)
 		}
-		snap := res.(provider.CalendarSnapshot)
+		snap := testutil.As[provider.CalendarSnapshot](t, res)
 		expected := []string{"Monday Evening Dinner", "Wednesday Game Night", "Weekend Bachelorette Party", "Brunch with Bridesmaids"}
 		for i, exp := range expected {
 			if snap.Events[i].Title != exp {
