@@ -776,6 +776,7 @@
 
       const streamUrl = options.streamUrl || (win && win.MIRRORMERE_CAST_STREAM_URL) || (btn.dataset && btn.dataset.streamUrl) || '';
       const controlUrl = options.controlUrl || (win && win.MIRRORMERE_CAST_CONTROL_URL) || (btn.dataset && btn.dataset.controlUrl) || '';
+      const remoteUrl = String(options.remoteUrl || (win && win.MIRRORMERE_REMOTE_URL) || (btn.dataset && btn.dataset.remoteUrl) || (doc && doc.body && doc.body.dataset && doc.body.dataset.remoteUrl) || '').trim().replace(/\/+$/, '');
       const streamId = options.streamId || (btn.dataset && btn.dataset.streamId) || 'chromecast';
       const streamType = options.type || (btn.dataset && btn.dataset.type) || 'webrtc';
 
@@ -785,6 +786,14 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: streamId, action: 'wake' }),
         }).catch((err) => console.warn('[MirrormereDisplay] Header video wake failed:', err));
+      }
+
+      if (remoteUrl && fetchFn) {
+        fetchFn(`${remoteUrl}/key`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'wakeup' }),
+        }).catch((err) => console.warn('[MirrormereDisplay] Header video remote wake failed:', err));
       }
 
       const payload = {

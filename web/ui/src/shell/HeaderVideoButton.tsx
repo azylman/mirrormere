@@ -7,10 +7,19 @@ export interface HeaderVideoButtonProps {
   streamId?: string;
   streamUrl?: string;
   controlUrl?: string;
+  remoteUrl?: string;
   type?: string;
   priority?: string;
   controllable?: boolean;
   fetchFn?: typeof fetch;
+}
+
+function resolveRemoteUrl(propsRemoteUrl?: string, datasetRemoteUrl?: string): string {
+  const winRemoteUrl =
+    typeof window !== 'undefined'
+      ? (window as unknown as { MIRRORMERE_REMOTE_URL?: string }).MIRRORMERE_REMOTE_URL
+      : undefined;
+  return (propsRemoteUrl ?? datasetRemoteUrl ?? winRemoteUrl ?? '').trim().replace(/\/+$/, '');
 }
 
 export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
@@ -28,6 +37,7 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
   const streamId = props.streamId ?? dataset?.streamId ?? 'chromecast';
   const streamUrl = props.streamUrl ?? dataset?.streamUrl ?? '';
   const controlUrl = props.controlUrl ?? dataset?.controlUrl ?? '';
+  const remoteUrl = resolveRemoteUrl(props.remoteUrl, dataset?.remoteUrl);
   const streamType = props.type ?? dataset?.type ?? 'webrtc';
   const priority = props.priority ?? 'persistent';
   const controllable = props.controllable ?? true;
@@ -115,6 +125,16 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
       });
     }
 
+    if (remoteUrl && fetchFn) {
+      fetchFn(`${remoteUrl}/key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'wakeup' }),
+      }).catch((err: unknown) => {
+        console.warn('[MirrormereDisplay] Header video remote wake failed:', err);
+      });
+    }
+
     const payload: Record<string, unknown> = {
       id: streamId,
       stream_url: streamUrl,
@@ -178,6 +198,7 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
         data-stream-id={streamId || undefined}
         data-stream-url={streamUrl || undefined}
         data-control-url={controlUrl || undefined}
+        data-remote-url={remoteUrl || undefined}
         data-type={streamType || undefined}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}

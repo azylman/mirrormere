@@ -283,7 +283,9 @@ describe('HeaderVideoButton component', () => {
     delete document.body.dataset.streamId;
     delete document.body.dataset.streamUrl;
     delete document.body.dataset.controlUrl;
+    delete document.body.dataset.remoteUrl;
     delete document.body.dataset.type;
+    delete (window as unknown as { MIRRORMERE_REMOTE_URL?: string }).MIRRORMERE_REMOTE_URL;
   });
 
   it('renders null when headerVideo dataset is not true', () => {
@@ -530,5 +532,84 @@ describe('HeaderVideoButton component', () => {
     // Only api/video/trigger called since controlUrl is empty
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith('api/video/trigger', expect.any(Object));
+  });
+
+  it('dispatches non-blocking remote wakeup pulse when remoteUrl is configured', async () => {
+    document.body.dataset.remoteUrl = 'http://remote.local:21981/';
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/key')) {
+        return Promise.resolve({ ok: true, status: 200 });
+      }
+      return Promise.resolve({ ok: true, status: 200 });
+    });
+
+    const { container } = render(
+      <HeaderVideoButton
+        fetchFn={fetchMock as unknown as typeof fetch}
+      />,
+    );
+    const btn = container.querySelector('#header-video-btn') as HTMLButtonElement;
+    expect(btn.getAttribute('data-remote-url')).toBe('http://remote.local:21981');
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://remote.local:21981/key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'wakeup' }),
+    });
+  });
+
+  it('logs warning when remote wakeup pulse fails without failing video trigger', async () => {
+    (window as unknown as { MIRRORMERE_REMOTE_URL?: string }).MIRRORMERE_REMOTE_URL = 'http://kiosk-remote:8080';
+    useDisplayStore.setState({
+      video: { mode: 'widgets', primary: null, pip: null },
+    });
+    let triggerResolve: (val: { ok: boolean; status: number }) => void;
+    const triggerPromise = new Promise<{ ok: boolean; status: number }>((resolve) => {
+      triggerResolve = resolve;
+    });
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/key')) {
+        return Promise.reject(new Error('Remote offline'));
+      }
+      if (url === 'api/video/trigger') {
+        return triggerPromise;
+      }
+      return Promise.resolve({ ok: true, status: 200 });
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const { container } = render(
+      <HeaderVideoButton
+        fetchFn={fetchMock as unknown as typeof fetch}
+      />,
+    );
+    const btn = container.querySelector('#header-video-btn') as HTMLButtonElement;
+    expect(btn.getAttribute('data-remote-url')).toBe('http://kiosk-remote:8080');
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://kiosk-remote:8080/key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'wakeup' }),
+    });
+    expect(fetchMock).toHaveBeenCalledWith('api/video/trigger', expect.any(Object));
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[MirrormereDisplay] Header video remote wake failed:',
+      expect.any(Error),
+    );
+    expect(btn.classList.contains('loading')).toBe(true);
+    expect(btn.classList.contains('error')).toBe(false);
+
+    await act(async () => {
+      triggerResolve!({ ok: true, status: 200 });
+    });
   });
 });
