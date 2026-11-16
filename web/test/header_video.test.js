@@ -349,4 +349,95 @@ describe('Header Video Action Button', () => {
 
     ctrl.destroy();
   });
+
+  test('dispatches non-blocking remote wakeup pulse when remoteUrl is configured in options or window', async () => {
+    delete require.cache[require.resolve('../static/js/display.js')];
+    const display = require('../static/js/display.js');
+
+    const btn = createMockButton({
+      streamUrl: 'http://custom-host:1984/stream',
+      controlUrl: 'http://custom-sidecar:8090/wake',
+      streamId: 'custom-cam',
+      remoteUrl: 'http://remote.local:21981/',
+    });
+
+    const fetchCalls = [];
+    const fetchMock = async (url, opts) => {
+      fetchCalls.push({ url, opts, body: opts && opts.body ? JSON.parse(opts.body) : null });
+      return { ok: true, status: 200 };
+    };
+
+    const ctrl = display.setupHeaderVideo({
+      button: btn,
+      fetch: fetchMock,
+      forceNew: true,
+    });
+
+    btn.dispatchEvent({ type: 'click' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.equal(fetchCalls.length, 3, 'must issue wake action, remote wake, and video trigger');
+
+    const remoteWakeCall = fetchCalls.find((c) => c.url === 'http://remote.local:21981/key');
+    assert.ok(remoteWakeCall, 'remote wake call must be issued');
+    assert.equal(remoteWakeCall.opts.method, 'POST');
+    assert.deepEqual(remoteWakeCall.body, { key: 'wakeup' });
+
+    ctrl.destroy();
+  });
+
+  test('logs warning when remote wake request fails without failing video trigger', async () => {
+    delete require.cache[require.resolve('../static/js/display.js')];
+    const display = require('../static/js/display.js');
+
+    const btn = createMockButton({
+      streamUrl: 'http://custom-host:1984/stream',
+      streamId: 'custom-cam',
+    });
+
+    const mockWin = {
+      MIRRORMERE_REMOTE_URL: 'http://kiosk-remote:8080',
+    };
+
+    const warnings = [];
+    const origWarn = console.warn;
+    console.warn = (...args) => warnings.push(args);
+
+    try {
+      const fetchCalls = [];
+      const fetchMock = async (url, opts) => {
+        fetchCalls.push({ url, opts });
+        if (url.includes('/key')) {
+          throw new Error('Remote down');
+        }
+        return { ok: true, status: 200 };
+      };
+
+      const ctrl = display.setupHeaderVideo({
+        button: btn,
+        window: mockWin,
+        fetch: fetchMock,
+        forceNew: true,
+      });
+
+      btn.dispatchEvent({ type: 'click' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      assert.equal(fetchCalls.length, 2, 'must issue remote wake and video trigger');
+      const remoteWakeCall = fetchCalls.find((c) => c.url === 'http://kiosk-remote:8080/key');
+      assert.ok(remoteWakeCall, 'remote wake call must be issued');
+
+      const triggerCall = fetchCalls.find((c) => c.url === 'api/video/trigger');
+      assert.ok(triggerCall, 'api/video/trigger must succeed');
+
+      const remoteWarn = warnings.find((w) => w[0] === '[MirrormereDisplay] Header video remote wake failed:');
+      assert.ok(remoteWarn, 'remote wake failure must log warning');
+
+      assert.equal(btn.classList.contains('error'), false, 'button must not enter error state');
+
+      ctrl.destroy();
+    } finally {
+      console.warn = origWarn;
+    }
+  });
 });
