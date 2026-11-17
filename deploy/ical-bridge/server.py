@@ -1293,15 +1293,20 @@ def control_music_playback(body):
         active_spk = MUSIC_STATE["active_speaker"]
         queue = list(MUSIC_STATE["queue"])
         q_idx = MUSIC_STATE["queue_index"]
-
-    if action == "shuffle":
-        with MUSIC_STATE_LOCK:
+        if action == "shuffle":
             new_shuffle = not bool(MUSIC_STATE.get("shuffle", False))
             MUSIC_STATE["shuffle"] = new_shuffle
-            if new_shuffle and len(queue) > q_idx + 2:
-                remaining = queue[q_idx + 1 :]
-                random.shuffle(remaining)
-                MUSIC_STATE["queue"] = queue[: q_idx + 1] + remaining
+            if new_shuffle and queue:
+                try:
+                    clamped_idx = max(0, min(int(q_idx), len(queue) - 1))
+                except (ValueError, TypeError):
+                    clamped_idx = 0
+                if len(queue) > clamped_idx + 2:
+                    remaining = queue[clamped_idx + 1 :]
+                    random.shuffle(remaining)
+                    MUSIC_STATE["queue"] = queue[: clamped_idx + 1] + remaining
+
+    if action == "shuffle":
         return True, get_music_dashboard_state()
 
     if _is_local_speaker(active_spk):

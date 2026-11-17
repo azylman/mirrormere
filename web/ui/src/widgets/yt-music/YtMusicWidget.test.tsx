@@ -57,6 +57,7 @@ const mockSearchResults = {
 beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => {});
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
 });
 
 describe('YtMusicWidget', () => {
@@ -163,6 +164,7 @@ describe('YtMusicWidget', () => {
     vi.stubGlobal('fetch', fetchMock);
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => {});
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
   });
   afterEach(() => {
     cleanup();
@@ -555,6 +557,14 @@ describe('YtMusicWidget', () => {
     });
     // Test transport controls and volume slider in full Now Playing view
     fireEvent.click(container.querySelector('#btn-shuffle')!);
+    await waitFor(() => {
+      const shuffleCall = fetchMock.mock.calls.find((c) => {
+        if (!String(c[0]).includes('/music/control')) return false;
+        const b = JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>;
+        return b.action === 'shuffle' && b.speaker === 'media_player.living_room_speaker';
+      });
+      expect(shuffleCall).toBeDefined();
+    });
     fireEvent.click(container.querySelector('#btn-prev')!);
     fireEvent.click(container.querySelector('#btn-next')!);
     fireEvent.change(container.querySelector('#vol-slider')!, { target: { value: '60' } });
@@ -975,6 +985,125 @@ describe('YtMusicWidget', () => {
       expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
       expect(audio.getAttribute('src')).toBeNull();
       expect(audio.getAttribute('data-video-id')).toBeNull();
+    });
+  });
+
+  it('recovers from bounded premature ended events by reloading stream and advances to next after retries exhaust', async () => {
+    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+    const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => {});
+    const localPlayingState: MusicState = { ...mockPlayingState, active_speaker: 'this_device' };
+    fetchMock.mockImplementation(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/music/state')) return new Response(JSON.stringify(localPlayingState), { status: 200 });
+      return new Response(JSON.stringify({ state: localPlayingState }), { status: 200 });
+    });
+
+    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const audio = await waitFor(() => {
+      const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
+      expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
+      return el;
+    });
+
+    playSpy.mockClear();
+    loadSpy.mockClear();
+    Object.defineProperty(audio, 'duration', { value: 180, configurable: true });
+    Object.defineProperty(audio, 'currentTime', { value: 45, writable: true, configurable: true });
+
+    // Retry 1: reloads stream, preserves resume time, calls play without posting next
+    fireEvent.ended(audio);
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(audio.currentTime).toBe(45);
+    expect(
+      fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes('/music/control') && (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action === 'next',
+      ),
+    ).toBeUndefined();
+
+    // Retry 2: bounded retry reloads stream again without posting next
+    fireEvent.ended(audio);
+    expect(loadSpy).toHaveBeenCalledTimes(2);
+    expect(playSpy).toHaveBeenCalledTimes(2);
+    expect(
+      fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes('/music/control') && (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action === 'next',
+      ),
+    ).toBeUndefined();
+
+    // Retry 3: exceeds MAX_PREMATURE_END_RETRIES -> advances to next on multi-track queue
+    fireEvent.ended(audio);
+    await waitFor(() => {
+      const nextCall = fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes('/music/control') && (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action === 'next',
+      );
+      expect(nextCall).toBeDefined();
+    });
+  });
+
+  it('posts stop when bounded premature ended retries exhaust on a single-track queue', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+    const singleTrackState: MusicState = {
+      ...mockPlayingState,
+      active_speaker: 'this_device',
+      queue: [itemAt(mockPlayingState.queue, 0)],
+    };
+    fetchMock.mockImplementation(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/music/state')) return new Response(JSON.stringify(singleTrackState), { status: 200 });
+      return new Response(JSON.stringify({ state: singleTrackState }), { status: 200 });
+    });
+
+    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const audio = await waitFor(() => {
+      const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
+      expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
+      return el;
+    });
+
+    Object.defineProperty(audio, 'duration', { value: 180, configurable: true });
+    Object.defineProperty(audio, 'currentTime', { value: 45, writable: true, configurable: true });
+
+    fireEvent.ended(audio);
+    fireEvent.ended(audio);
+    fireEvent.ended(audio);
+
+    await waitFor(() => {
+      const stopCall = fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes('/music/control') && (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action === 'stop',
+      );
+      expect(stopCall).toBeDefined();
+    });
+  });
+
+  it('recovers with next/stop when play() rejects during premature ended retry', async () => {
+    const localPlayingState: MusicState = { ...mockPlayingState, active_speaker: 'this_device' };
+    fetchMock.mockImplementation(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/music/state')) return new Response(JSON.stringify(localPlayingState), { status: 200 });
+      return new Response(JSON.stringify({ state: localPlayingState }), { status: 200 });
+    });
+
+    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const audio = await waitFor(() => {
+      const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
+      expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
+      return el;
+    });
+
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementationOnce(async () => {
+      throw new Error('autoplay blocked');
+    });
+    Object.defineProperty(audio, 'duration', { value: 180, configurable: true });
+    Object.defineProperty(audio, 'currentTime', { value: 45, writable: true, configurable: true });
+
+    fireEvent.ended(audio);
+
+    await waitFor(() => {
+      const nextCall = fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes('/music/control') && (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action === 'next',
+      );
+      expect(nextCall).toBeDefined();
     });
   });
 

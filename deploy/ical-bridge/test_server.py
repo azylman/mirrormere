@@ -959,6 +959,51 @@ class TestHandlerEndpoints(unittest.TestCase):
             mock_shuffle.assert_not_called()
             self.assertEqual(srv.MUSIC_STATE["queue"], [t0, t1, t3, t2])
 
+    def test_control_music_playback_shuffle_atomic_lock_and_index_clamping(self):
+        t0 = {"video_id": "vid00000000", "title": "Track 0", "artist": "A0"}
+        t1 = {"video_id": "vid11111111", "title": "Track 1", "artist": "A1"}
+        t2 = {"video_id": "vid22222222", "title": "Track 2", "artist": "A2"}
+        t3 = {"video_id": "vid33333333", "title": "Track 3", "artist": "A3"}
+
+        class _CountingLock:
+            def __init__(self, inner):
+                self._inner = inner
+                self.enter_count = 0
+
+            def __enter__(self):
+                self.enter_count += 1
+                return self._inner.__enter__()
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return self._inner.__exit__(exc_type, exc_val, exc_tb)
+
+        counting_lock = _CountingLock(srv.MUSIC_STATE_LOCK)
+        with (
+            patch.object(srv, "MUSIC_STATE_LOCK", counting_lock),
+            patch.dict(
+                srv.MUSIC_STATE,
+                {
+                    "active_speaker": "this_device",
+                    "local_state": "playing",
+                    "local_volume": 35,
+                    "playing_video_id": "vid00000000",
+                    "queue": [t0, t1, t2, t3],
+                    "queue_index": -2,
+                    "playlist_title": "Test Playlist",
+                    "shuffle": False,
+                },
+            ),
+            patch("random.shuffle", side_effect=lambda lst: lst.reverse()),
+            patch.object(srv, "get_music_dashboard_state", return_value={"ok": True}),
+        ):
+            ok, st = srv.control_music_playback({"action": "shuffle"})
+            self.assertTrue(ok)
+            self.assertEqual(st, {"ok": True})
+            # Single lock acquisition covers reading live queue/index and mutating shuffle/queue
+            self.assertEqual(counting_lock.enter_count, 1)
+            # Negative queue_index clamps to 0, preserving t0 and shuffling remaining [t1, t2, t3]
+            self.assertEqual(srv.MUSIC_STATE["queue"], [t0, t3, t2, t1])
+
 
 if __name__ == "__main__":
     unittest.main()

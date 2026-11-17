@@ -188,12 +188,18 @@ function YtMusicMediaGrid({
   );
 }
 
+const MAX_PREMATURE_END_RETRIES = 2;
+interface PrematureEndRetryState { videoId: string; count: number }
+
 function useYtMusicLocalAudio(
-  audioRef: React.RefObject<HTMLAudioElement | null>, shouldPlayLocal: boolean, isPrimaryInstance: boolean,
-  isLocalSpeaker: boolean, np: NowPlaying, activeVideoId: string | undefined, apiBase: string,
+  audioRef: React.RefObject<HTMLAudioElement | null>, retryRef: { current: PrematureEndRetryState },
+  shouldPlayLocal: boolean, isPrimaryInstance: boolean, isLocalSpeaker: boolean,
+  np: NowPlaying, activeVideoId: string | undefined, apiBase: string,
 ): void {
   'use no memo';
   useEffect(() => {
+    if (!shouldPlayLocal || !activeVideoId) retryRef.current = { videoId: '', count: 0 };
+    else if (retryRef.current.videoId !== activeVideoId) retryRef.current = { videoId: activeVideoId, count: 0 };
     const audio = audioRef.current;
     if (!audio) return;
     audio.volume = Math.max(0, Math.min(1, (typeof np.volume === 'number' ? np.volume : 35) / 100));
@@ -213,7 +219,30 @@ function useYtMusicLocalAudio(
         audio.removeAttribute('data-video-id');
       }
     }
-  }, [audioRef, shouldPlayLocal, isPrimaryInstance, isLocalSpeaker, np.state, np.volume, activeVideoId, apiBase]);
+  }, [audioRef, retryRef, shouldPlayLocal, isPrimaryInstance, isLocalSpeaker, np.state, np.volume, activeVideoId, apiBase]);
+}
+
+function handleLocalAudioEnded(
+  el: HTMLAudioElement, retryRef: { current: PrematureEndRetryState }, shouldPlayLocal: boolean,
+  activeVideoId: string | undefined, apiBase: string, queueLen: number, postControl: (action: string) => Promise<void>,
+): void {
+  const isPremature = Number.isFinite(el.duration) && el.duration > 30 && el.currentTime > 0 && el.duration - el.currentTime > 8;
+  if (isPremature && shouldPlayLocal && activeVideoId) {
+    const retries = retryRef.current.videoId === activeVideoId ? retryRef.current.count : 0;
+    if (retries < MAX_PREMATURE_END_RETRIES) {
+      retryRef.current = { videoId: activeVideoId, count: retries + 1 };
+      const resumeTime = el.currentTime;
+      el.src = `${apiBase}/music/stream/${encodeURIComponent(activeVideoId)}.m4a`;
+      if (typeof el.load === 'function') el.load();
+      try { el.currentTime = resumeTime; } catch { /* ignore read-only test stubs */ }
+      const p = el.play();
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-misused-promises -- jsdom's play() returns undefined, not a Promise
+      if (p && typeof p.catch === 'function') p.catch(() => { retryRef.current = { videoId: '', count: 0 }; void postControl(queueLen > 1 ? 'next' : 'stop'); });
+      return;
+    }
+  }
+  retryRef.current = { videoId: '', count: 0 };
+  void postControl(isPremature && queueLen <= 1 ? 'stop' : 'next');
 }
 
 function resolveApiBase(config?: Record<string, unknown>): string {
@@ -244,6 +273,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   const [startingPlayback, setStartingPlayback] = useState(false);
   const [userBrowsing, setUserBrowsing] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const prematureEndRetryRef = useRef<{ videoId: string; count: number }>({ videoId: '', count: 0 });
 
   const emberAccounts = useEmberAccounts();
   const [stateData, setStateData] = useMusicStatePolling(apiBase, isActive, selectedAccountId);
@@ -396,7 +426,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   const activeVideoId = resolveActiveVideoId(np, stateData.queue);
   const shouldPlayLocal = isPrimaryInstance && isLocalSpeaker && np.state === 'playing' && Boolean(activeVideoId);
 
-  useYtMusicLocalAudio(audioRef, shouldPlayLocal, isPrimaryInstance, isLocalSpeaker, np, activeVideoId, apiBase);
+  useYtMusicLocalAudio(audioRef, prematureEndRetryRef, shouldPlayLocal, isPrimaryInstance, isLocalSpeaker, np, activeVideoId, apiBase);
 
   return (
     <div className="widget-yt-music">
@@ -404,11 +434,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
         ref={audioRef}
         id="ytm-local-audio"
         preload="none"
-        onEnded={(e) => {
-          const el = e.currentTarget;
-          if (Number.isFinite(el.duration) && el.duration > 30 && el.currentTime > 0 && el.duration - el.currentTime > 8) return;
-          void postControl('next');
-        }}
+        onEnded={(e) => { handleLocalAudioEnded(e.currentTarget, prematureEndRetryRef, shouldPlayLocal, activeVideoId, apiBase, stateData.queue?.length ?? 0, postControl); }}
         style={{ display: 'none' }}
       />
       {showNowPlaying ? (
