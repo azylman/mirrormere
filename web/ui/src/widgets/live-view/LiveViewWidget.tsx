@@ -20,6 +20,27 @@ import {
 
 export { activeAutoLiveStreams, computeStaggerDelayMs, parseLiveViewConfig, type LiveViewConfig };
 
+function isContinuousMjpegUrl(
+  streamType: LiveViewConfig['stream_type'],
+  streamUrl: string,
+  refreshIntervalSeconds?: number,
+): boolean {
+  if (streamType !== 'mjpeg' || !streamUrl) return false;
+  const raw = (streamUrl.split(/[?#]/)[0] ?? '').toLowerCase();
+  let path = raw;
+  try {
+    path = new URL(raw, 'http://localhost').pathname.toLowerCase();
+  } catch {
+    /* keep raw path */
+  }
+  if (path.includes('/hearth-api/cameras/') || path.includes('/snapshot')) return false;
+  return (
+    /(?:^|[/_.-])mjp(?:e)?g(?:$|[/_.-])/.test(path) ||
+    refreshIntervalSeconds === undefined ||
+    refreshIntervalSeconds <= 0
+  );
+}
+
 export function LiveViewWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
   const isCurrentPane = useIsCurrentPane();
@@ -144,10 +165,18 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     }
   };
 
+  const isContinuousMjpegStream = isContinuousMjpegUrl(streamType, streamUrl, refreshIntervalSeconds);
+  const clearMjpeg = streamType !== 'mjpeg' || isContinuousMjpegStream;
+
   const shouldPlay =
     isCurrentPane && isDocumentVisible && isIntersecting && videoMode !== 'video' && !isIdle && Boolean(streamUrl);
   const shouldBackgroundRefresh =
-    !isCurrentPane && isDocumentVisible && videoMode !== 'video' && Boolean(streamUrl) && streamType === 'mjpeg';
+    !isCurrentPane &&
+    isDocumentVisible &&
+    videoMode !== 'video' &&
+    Boolean(streamUrl) &&
+    streamType === 'mjpeg' &&
+    !isContinuousMjpegStream;
   const windowSec = autoLiveOnMotionSeconds ?? 0;
   const canPollMotion = shouldPlay && streamType === 'mjpeg' && Boolean(expandStreamUrl) && windowSec > 0;
   const activeAutoLive = useAutoLiveMotion(
@@ -156,7 +185,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
 
   useEffect(() => {
     if (!shouldPlay) {
-      stopDecoders(streamType !== 'mjpeg');
+      stopDecoders(clearMjpeg);
       return;
     }
     const epoch = ++epochRef.current;
@@ -173,7 +202,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     if (effectiveType === 'mjpeg') {
       if (imgRef.current) imgRef.current.src = streamUrl;
       const intervalSec = refreshIntervalSeconds ?? 15;
-      if (intervalSec <= 0) return () => { stopDecoders(false); };
+      if (intervalSec <= 0) return () => { stopDecoders(clearMjpeg); };
       const intervalMs = intervalSec * 1000;
       const staggerMs = computeStaggerDelayMs(id, staggerIndex, 1600);
       let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -186,7 +215,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
       return () => {
         clearTimeout(timeoutId);
         if (intervalId) clearInterval(intervalId);
-        stopDecoders(false);
+        stopDecoders(clearMjpeg);
       };
     }
     if (effectiveType === 'hls') {
@@ -196,7 +225,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
         videoRef.current.src = effectiveUrl;
         videoRef.current.play().catch(() => { /* autoplay can be refused; the element stays paused */ });
       }
-      return () => { stopDecoders(streamType !== 'mjpeg'); };
+      return () => { stopDecoders(clearMjpeg); };
     }
 
     const startWebRTC = async () => {
@@ -235,8 +264,8 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     };
 
     void startWebRTC();
-    return () => { stopDecoders(streamType !== 'mjpeg'); };
-  }, [shouldPlay, streamUrl, streamType, expandStreamUrl, activeAutoLive, id, refreshIntervalSeconds, staggerIndex]);
+    return () => { stopDecoders(clearMjpeg); };
+  }, [shouldPlay, streamUrl, streamType, expandStreamUrl, activeAutoLive, id, refreshIntervalSeconds, staggerIndex, clearMjpeg]);
 
   useEffect(() => {
     if (!shouldBackgroundRefresh) return;

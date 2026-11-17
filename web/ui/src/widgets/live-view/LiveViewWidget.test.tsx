@@ -1590,7 +1590,7 @@ describe('LiveViewWidget component', () => {
   it('promotes mjpeg stream to inline WebRTC when /hearth-api/cameras reports auto_live and falls back to static img after 60s of calm', async () => {
     activeAutoLiveStreams.clear();
     const nowEpoch = Math.floor(Date.now() / 1000);
-    let cameraPayload: Record<string, unknown> = {
+    const cameraPayload: Record<string, unknown> = {
       cameras: [{ id: 'front', stream_url: '/hearth-api/cameras/front/stream', auto_live: true, last_event_epoch: nowEpoch }],
     };
 
@@ -1637,21 +1637,22 @@ describe('LiveViewWidget component', () => {
     const promotedPc = lastPeerConnection;
     expect(promotedPc?.closed).toBe(false);
 
-    // Non-OK poll is ignored gracefully while calm timer remains active, then empty catalog demotes
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 503, text: async () => '' });
+    // Non-OK polls are ignored gracefully while calm timer remains active up to the 60s deadline
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503, text: async () => '' });
     await act(async () => { vi.advanceTimersByTime(5_000); });
     expect(video.style.display).toBe('');
+    expect(promotedPc?.closed).toBe(false);
 
-    cameraPayload = {
-      cameras: [{ id: 'front', stream_url: '/other', auto_live: false, last_event_epoch: nowEpoch - 65 }],
-    };
-    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => ({
-      ok: true, status: 200,
-      text: async () => JSON.stringify(url === '/hearth-api/cameras' ? cameraPayload : {}),
-    }));
-
+    // Advance to just before the 60s calm deadline (59s total since promotion): playback still persists
     await act(async () => {
-      vi.advanceTimersByTime(55_000);
+      vi.advanceTimersByTime(54_000);
+    });
+    expect(video.style.display).toBe('');
+    expect(promotedPc?.closed).toBe(false);
+
+    // Advance past the 60s calm deadline: calm timer demotes back to static img without any catalog response
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
     });
 
     await vi.waitFor(() => {
@@ -1659,10 +1660,75 @@ describe('LiveViewWidget component', () => {
       expect(img.style.display).toBe('');
       expect(promotedPc?.closed).toBe(true);
     });
+  });
 
-    // Empty catalog poll also keeps demoted cleanly
-    cameraPayload = {};
-    await act(async () => { vi.advanceTimersByTime(5_000); });
+  it('clears continuous MJPEG img.src when off-pane or document hidden while preserving finite snapshot polling', () => {
+    seedWidget({
+      stream_url: 'https://cam.example.com/mjpeg',
+      stream_type: 'mjpeg',
+      title: 'Continuous Cam',
+    });
+
+    const { container, rerender } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe('https://cam.example.com/mjpeg');
+
+    // Off-pane tears down continuous MJPEG stream by clearing img.src
+    rerender(
+      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+    expect(img.getAttribute('src')).toBeNull();
+
+    // Returning to active pane resumes the continuous MJPEG stream
+    rerender(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+    expect(img.getAttribute('src')).toBe('https://cam.example.com/mjpeg');
+
+    // Document hidden also tears down continuous MJPEG stream
+    act(() => {
+      useDisplayStore.getState().setDocumentVisible(false);
+    });
+    expect(img.getAttribute('src')).toBeNull();
+
+    // Reset visibility and switch to finite /hearth-api/cameras/... snapshot polling
+    act(() => {
+      useDisplayStore.getState().setDocumentVisible(true);
+    });
+    seedWidget({
+      stream_url: '/hearth-api/cameras/porch/stream',
+      stream_type: 'mjpeg',
+      title: 'Snapshot Cam',
+      stagger_index: 0,
+    });
+    rerender(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/porch/stream');
+
+    // Finite snapshot polling preserves img.src when off-pane or document hidden
+    rerender(
+      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/porch/stream');
+
+    act(() => {
+      useDisplayStore.getState().setDocumentVisible(false);
+    });
+    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/porch/stream');
   });
 
   it('enforces max_auto_live_streams concurrency cap of 2 when 3 widgets receive motion and demotes on off-pane', async () => {
