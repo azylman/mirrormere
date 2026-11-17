@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SCHOOL_DAY_THRESHOLDS,
+  type DailyWeatherManifest,
   type SchoolDayThresholds,
   resolveBirthdayOverride,
   resolveBirthdayPackSpriteUrl,
   resolveCharacterPackSpriteUrl,
   resolveClothingConditionState,
+  resolveDailyManifestSpriteUrl,
+  resolveUSHolidaySpriteUrl,
   selectDailyVariantIndex,
 } from './schoolDayPack';
 
@@ -373,5 +376,133 @@ describe('schoolDayPack utilities', () => {
       resolveCharacterPackSpriteUrl('ghibli', 'cold_puffer', 1, '2026-10-15', true),
     ).toBe('/static/ui/assets/weather-packs/ghibli/cold_puffer_v1.jpg');
   });
+
+  describe('resolveUSHolidaySpriteUrl', () => {
+    it('returns holiday sprite URL when holiday matches date and state is supported', () => {
+      expect(resolveUSHolidaySpriteUrl('ghibli', 'hot_dress', '2026-07-04')).toBe(
+        '/static/ui/assets/weather-packs/ghibli/holiday_july_4th_hot_dress.jpg',
+      );
+      expect(resolveUSHolidaySpriteUrl('ghibli', 'cold_puffer', '2026-12-25')).toBe(
+        '/static/ui/assets/weather-packs/ghibli/holiday_christmas_cold_puffer.jpg',
+      );
+    });
+
+    it('returns undefined when state is not supported on that holiday', () => {
+      expect(resolveUSHolidaySpriteUrl('ghibli', 'hot_dress', '2026-12-25')).toBeUndefined();
+    });
+
+    it('returns undefined when date is not a US holiday or undefined', () => {
+      expect(resolveUSHolidaySpriteUrl('ghibli', 'cold_puffer', '2026-10-15')).toBeUndefined();
+      expect(resolveUSHolidaySpriteUrl('ghibli', 'cold_puffer', undefined)).toBeUndefined();
+    });
+
+    it('supports custom assetsBase', () => {
+      expect(
+        resolveUSHolidaySpriteUrl('ghibli', 'hot_dress', '2026-07-04', '/custom/base'),
+      ).toBe('/custom/base/ghibli/holiday_july_4th_hot_dress.jpg');
+    });
+  });
+
+  describe('resolveDailyManifestSpriteUrl', () => {
+    const validManifest: DailyWeatherManifest = {
+      target_date: '2026-11-17',
+      theme_title: 'Studio Ghibli Autumn',
+      style_label: 'Watercolor Storybook',
+      slots: {
+        morning: 'daily_2026-11-17_morning.jpg',
+        afternoon: './daily_2026-11-17_afternoon.jpg',
+        evening: '/custom/path/evening.jpg',
+      },
+    };
+
+    it('resolves relative filename under assetsBase and packName when target_date matches', () => {
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, '2026-11-17', 'morning'),
+      ).toBe('/static/ui/assets/weather-packs/ghibli_pack/daily_2026-11-17_morning.jpg');
+    });
+
+    it('strips leading ./ from relative filenames', () => {
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, '2026-11-17', 'afternoon'),
+      ).toBe('/static/ui/assets/weather-packs/ghibli_pack/daily_2026-11-17_afternoon.jpg');
+    });
+
+    it('passes through absolute paths directly', () => {
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, '2026-11-17', 'evening'),
+      ).toBe('/custom/path/evening.jpg');
+    });
+
+    it('passes through http and https URLs directly', () => {
+      const httpManifest: DailyWeatherManifest = {
+        target_date: '2026-11-17',
+        slots: {
+          morning: 'http://example.com/morning.jpg',
+          afternoon: 'https://cdn.example.com/afternoon.png',
+        },
+      };
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', httpManifest, '2026-11-17', 'morning'),
+      ).toBe('http://example.com/morning.jpg');
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', httpManifest, '2026-11-17', 'afternoon'),
+      ).toBe('https://cdn.example.com/afternoon.png');
+    });
+
+    it('supports custom assetsBase', () => {
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, '2026-11-17', 'morning', '/custom/assets'),
+      ).toBe('/custom/assets/ghibli_pack/daily_2026-11-17_morning.jpg');
+    });
+
+    it('returns undefined when target_date does not match dateStr (stale manifest)', () => {
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, '2026-11-18', 'morning'),
+      ).toBeUndefined();
+    });
+
+    it('rejects path traversal containing .. and returns undefined', () => {
+      const traversalManifest: DailyWeatherManifest = {
+        target_date: '2026-11-17',
+        slots: {
+          morning: '../escape/secret.jpg',
+          afternoon: 'sub/../../secret.jpg',
+          evening: '..',
+        },
+      };
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', traversalManifest, '2026-11-17', 'morning'),
+      ).toBeUndefined();
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', traversalManifest, '2026-11-17', 'afternoon'),
+      ).toBeUndefined();
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', traversalManifest, '2026-11-17', 'evening'),
+      ).toBeUndefined();
+    });
+
+    it('returns undefined when slot is missing or empty/whitespace', () => {
+      const sparseManifest: DailyWeatherManifest = {
+        target_date: '2026-11-17',
+        slots: {
+          morning: '   ',
+        },
+      };
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', sparseManifest, '2026-11-17', 'morning'),
+      ).toBeUndefined();
+      expect(
+        resolveDailyManifestSpriteUrl('ghibli_pack', sparseManifest, '2026-11-17', 'afternoon'),
+      ).toBeUndefined();
+    });
+
+    it('returns undefined when manifest, target_date, or dateStr is missing', () => {
+      expect(resolveDailyManifestSpriteUrl('ghibli_pack', undefined, '2026-11-17', 'morning')).toBeUndefined();
+      expect(resolveDailyManifestSpriteUrl('ghibli_pack', null, '2026-11-17', 'morning')).toBeUndefined();
+      expect(resolveDailyManifestSpriteUrl('ghibli_pack', {}, '2026-11-17', 'morning')).toBeUndefined();
+      expect(resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, undefined, 'morning')).toBeUndefined();
+    });
+  });
 });
+
 
