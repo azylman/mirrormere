@@ -123,6 +123,18 @@ display:
     #     type: chat-log
     #     dimensions: [3, 2]
 
+    # Interactive 3D Floorplan (type floorplan-3d). Renders a generic multi-floor
+    # Three.js architectural shell with room cameras, furniture primitives, and
+    # Home Assistant entity state bindings from inline `floors`/`layout` or a
+    # local JSON file served via `layout_url` (falls back to a 2-room demo studio
+    # when unconfigured):
+    #   - id: home-floorplan
+    #     type: floorplan-3d
+    #     dimensions: [4, 2]
+    #     config:
+    #       layout_url: "/static/floorplan-layout.json"
+    #       # Or define `floors`, `cameraPresets`, and `haBindings` inline.
+
     - id: calendar-pad
       type: spacer
       dimensions: [3, 2]
