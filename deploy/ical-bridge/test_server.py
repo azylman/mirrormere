@@ -920,6 +920,807 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertEqual(ctype, "audio/mp4")
             self.assertEqual(hdrs["User-Agent"], "YtDlpUA/1.0")
 
+    def test_camera_catalog_and_bedroom_cam_mapping(self):
+        target = srv.resolve_camera_target("bedroom_cam")
+        self.assertIsNotNone(target)
+        self.assertEqual(target["id"], "bedroom_cam")
+        self.assertEqual(target["entity_id"], "camera.bedroom_bedroom_camera")
+        self.assertEqual(target["title"], "Bedroom Cam")
+
+        alias_target = srv.resolve_camera_target("camera.bedroom_bedroom_camera")
+        self.assertIsNotNone(alias_target)
+        self.assertEqual(alias_target["id"], "bedroom_cam")
+
+        mock_states = [
+            {
+                "entity_id": "camera.bedroom_bedroom_camera",
+                "state": "streaming",
+                "attributes": {"friendly_name": "Bedroom camera"},
+            },
+            {
+                "entity_id": "camera.nursery_cam",
+                "state": "streaming",
+                "attributes": {"friendly_name": "Nursery Cam"},
+            },
+        ]
+        with (
+            patch.dict(srv.CACHE, {}, clear=True),
+            patch.object(srv, "_ha_request", return_value=mock_states),
+        ):
+            h = self._create_handler("GET", "/hearth-api/cameras", client_ip="127.0.0.1")
+            h.do_GET()
+            h.send_response.assert_called_with(200)
+            body = json.loads(h.wfile.getvalue().decode("utf-8"))
+            self.assertIn("cameras", body)
+            bedroom_entries = [c for c in body["cameras"] if c["id"] == "bedroom_cam"]
+            self.assertEqual(len(bedroom_entries), 1)
+            self.assertEqual(bedroom_entries[0]["entity_id"], "camera.bedroom_bedroom_camera")
+            self.assertEqual(bedroom_entries[0]["state"], "streaming")
+            self.assertEqual(bedroom_entries[0]["title"], "Bedroom Cam")
+
+    def test_camera_snapshot_and_webrtc_endpoints(self):
+        fake_jpeg = b"\xff\xd8\xff\xe0fake_jpeg_bytes"
+        with patch.object(srv, "fetch_camera_snapshot", return_value=(fake_jpeg, "image/jpeg")):
+            h_snap = self._create_handler(
+                "GET", "/hearth-api/cameras/bedroom_cam/snapshot", client_ip="127.0.0.1"
+            )
+            h_snap.do_GET()
+            h_snap.send_response.assert_called_with(200)
+            self.assertEqual(h_snap.wfile.getvalue(), fake_jpeg)
+
+            h_stream = self._create_handler(
+                "GET", "/hearth-api/cameras/bedroom_cam/stream", client_ip="127.0.0.1"
+            )
+            h_stream.do_GET()
+            h_stream.send_response.assert_called_with(200)
+            self.assertEqual(h_stream.wfile.getvalue(), fake_jpeg)
+
+        with patch.object(
+            srv, "exchange_camera_webrtc", return_value=(True, "v=0\r\nsdp_answer", 200)
+        ):
+            offer = b"v=0\r\nsdp_offer"
+            h_rtc = self._create_handler(
+                "POST",
+                "/hearth-api/cameras/bedroom_cam/webrtc",
+                headers={"Content-Length": str(len(offer)), "Content-Type": "application/sdp"},
+                body=offer,
+                client_ip="127.0.0.1",
+            )
+            h_rtc.do_POST()
+            h_rtc.send_response.assert_called_with(200)
+            self.assertEqual(h_rtc.wfile.getvalue(), b"v=0\r\nsdp_answer")
+
+    def test_camera_last_good_frame_retained_on_nest_placeholder(self):
+        good_jpeg = b"\xff\xd8\xff\xe0good_camera_frame_bytes\xff\xd9"
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+        self.assertEqual(len(placeholder_png), srv.HA_NEST_PLACEHOLDER_LEN)
+
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+        }
+
+        def make_resp(payload, ctype="image/jpeg"):
+            r = MagicMock()
+            r.read.return_value = payload
+            r.headers = {"Content-Type": ctype}
+            r.__enter__.return_value = r
+            r.__exit__.return_value = False
+            return r
+
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+        ):
+            # 1. First fetch succeeds with a real JPEG frame and populates both caches
+            with patch("urllib.request.urlopen", return_value=make_resp(good_jpeg, "image/jpeg")):
+                data1, ctype1 = srv.fetch_camera_snapshot("doorbell", force_refresh=True)
+                self.assertEqual(data1, good_jpeg)
+                self.assertEqual(ctype1, "image/jpeg")
+                self.assertIn("doorbell", srv.CAMERA_LAST_GOOD_FRAME)
+                self.assertEqual(srv.CAMERA_LAST_GOOD_FRAME["doorbell"][1], good_jpeg)
+
+            # 2. Subsequent fetch gets 2689-byte Nest placeholder from HA, go2rtc times out,
+            # and camera_proxy_stream fails -> returns retained CAMERA_LAST_GOOD_FRAME
+            cold_urls = []
+
+            def cold_urlopen(req, timeout=5):
+                url = req.full_url if hasattr(req, "full_url") else str(req)
+                cold_urls.append(url)
+                if "/api/camera_proxy/" in url:
+                    return make_resp(placeholder_png, "image/png")
+                raise TimeoutError("upstream timeout")
+
+            with patch("urllib.request.urlopen", side_effect=cold_urlopen):
+                data2, ctype2 = srv.fetch_camera_snapshot("doorbell", force_refresh=True)
+                self.assertEqual(data2, good_jpeg)
+                self.assertEqual(ctype2, "image/jpeg")
+                self.assertNotEqual(len(data2), srv.HA_NEST_PLACEHOLDER_LEN)
+                self.assertTrue(any("/api/camera_proxy/" in u for u in cold_urls))
+                self.assertFalse(
+                    any(
+                        "/api/frame.jpeg" in u or "/api/camera_proxy_stream/" in u
+                        for u in cold_urls
+                    )
+                )
+
+    def test_camera_proxy_stream_multipart_jpeg_fallback(self):
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+        stream_jpeg = b"\xff\xd8\xff\xe0multipart_extracted_jpeg_payload\xff\xd9"
+        multipart_stream = (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n"
+            b"Content-Length: "
+            + str(len(stream_jpeg)).encode("ascii")
+            + b"\r\n\r\n"
+            + stream_jpeg
+            + b"\r\n--frame\r\n"
+        )
+
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+        }
+
+        def stream_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/camera_proxy/" in url:
+                r = MagicMock()
+                r.read.return_value = placeholder_png
+                r.headers = {"Content-Type": "image/png"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/frame.jpeg" in url:
+                raise TimeoutError("go2rtc timeout")
+            if "/api/camera_proxy_stream/" in url:
+                bio = io.BytesIO(multipart_stream)
+                r = MagicMock()
+                r.read.side_effect = bio.read
+                r.headers = {"Content-Type": "multipart/x-mixed-replace; boundary=frame"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch("urllib.request.urlopen", side_effect=stream_urlopen),
+        ):
+            data, ctype = srv.fetch_camera_snapshot("front_yard_camera", force_refresh=True)
+            self.assertEqual(data, stream_jpeg)
+            self.assertEqual(ctype, "image/jpeg")
+            self.assertIn("front_yard_camera", srv.CAMERA_LAST_GOOD_FRAME)
+            self.assertEqual(srv.CAMERA_LAST_GOOD_FRAME["front_yard_camera"][1], stream_jpeg)
+
+    def test_warm_camera_snapshots_once_staggered(self):
+        fake_cams = [
+            {
+                "id": "doorbell",
+                "entity_id": "camera.doorbell",
+                "battery": True,
+                "event_driven": True,
+                "event_entities": ["event.doorbell_motion"],
+            },
+            {
+                "id": "front_yard_camera",
+                "entity_id": "camera.front_yard_camera",
+                "event_driven": True,
+                "event_entities": ["event.front_yard_camera_motion"],
+            },
+            {
+                "id": "nursery_cam",
+                "entity_id": "camera.nursery_cam",
+                "event_driven": True,
+                "event_entities": ["event.nursery_cam_motion"],
+            },
+        ]
+        good_jpeg = b"\xff\xd8\xff\xe0warm_jpeg\xff\xd9"
+        called = []
+
+        def fake_fetch(cam_id, force_refresh=False):
+            called.append((cam_id, force_refresh))
+            return good_jpeg, "image/jpeg"
+
+        srv.CAMERA_WARMER_STOP_EVENT.clear()
+        with (
+            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.object(srv, "_get_configured_cameras", return_value=fake_cams),
+            patch.object(srv, "_has_camera_event_changed", return_value=False),
+            patch.object(srv, "fetch_camera_snapshot", side_effect=fake_fetch),
+            patch.object(srv.CAMERA_WARMER_STOP_EVENT, "wait", return_value=False) as mock_wait,
+        ):
+            # On cold start with unchanged events: doorbell (battery=True) is skipped,
+            # while wired cameras with no cached frame yet are warmed once.
+            warmed = srv.warm_camera_snapshots_once(stagger_sec=1.5)
+            self.assertEqual(warmed, ["front_yard_camera", "nursery_cam"])
+            self.assertEqual(
+                called,
+                [
+                    ("front_yard_camera", True),
+                    ("nursery_cam", True),
+                ],
+            )
+            self.assertEqual(mock_wait.call_count, 1)
+            mock_wait.assert_called_with(1.5)
+
+    def test_battery_camera_event_gated_snapshot_and_warmer_skip(self):
+        target = srv.resolve_camera_target("doorbell")
+        self.assertIsNotNone(target)
+        self.assertTrue(target["battery"])
+        self.assertTrue(target["event_driven"])
+        self.assertEqual(
+            target["event_entities"], ["event.doorbell_motion", "event.doorbell_chime"]
+        )
+
+        good_jpeg_1 = b"\xff\xd8\xff\xe0doorbell_frame_1\xff\xd9"
+        good_jpeg_2 = b"\xff\xd8\xff\xe0doorbell_frame_2\xff\xd9"
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+        }
+
+        motion_ts = ["2026-11-12T18:00:00+00:00"]
+        chime_ts = ["2026-11-12T17:00:00+00:00"]
+        active_stream_hits = []
+        ha_proxy_frame = [None]
+
+        def make_resp(payload, ctype="image/jpeg"):
+            r = MagicMock()
+            r.read.return_value = payload
+            r.headers = {"Content-Type": ctype}
+            r.__enter__.return_value = r
+            r.__exit__.return_value = False
+            return r
+
+        def fake_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/states/event.doorbell_motion" in url:
+                return make_resp(
+                    json.dumps({"state": motion_ts[0]}).encode("utf-8"), "application/json"
+                )
+            if "/api/states/event.doorbell_chime" in url:
+                return make_resp(
+                    json.dumps({"state": chime_ts[0]}).encode("utf-8"), "application/json"
+                )
+            if "/api/camera_proxy/camera.doorbell" in url:
+                if ha_proxy_frame[0] is not None:
+                    return make_resp(ha_proxy_frame[0], "image/jpeg")
+                return make_resp(placeholder_png, "image/png")
+            if "/api/frame.jpeg" in url or "/api/camera_proxy_stream/" in url:
+                active_stream_hits.append(url)
+                return make_resp(good_jpeg_1, "image/jpeg")
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_EVENT_STATE, {}, clear=True),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            # 1. Cold start: first check records initial HA event state and returns False.
+            # HA camera_proxy returns placeholder, and zero active stream hits occur.
+            data0, ctype0 = srv.fetch_camera_snapshot("doorbell", force_refresh=False)
+            self.assertEqual(data0, placeholder_png)
+            self.assertEqual(ctype0, "image/png")
+            self.assertEqual(len(active_stream_hits), 0)
+
+            # 2. Event timestamp changes: HA camera_proxy serves a non-placeholder frame.
+            # Returns fresh frame and stores it in CAMERA_LAST_GOOD_FRAME without hitting go2rtc.
+            motion_ts[0] = "2026-11-12T18:02:00+00:00"
+            ha_proxy_frame[0] = good_jpeg_1
+            data1, ctype1 = srv.fetch_camera_snapshot("doorbell", force_refresh=False)
+            self.assertEqual(data1, good_jpeg_1)
+            self.assertEqual(ctype1, "image/jpeg")
+            self.assertEqual(len(active_stream_hits), 0)
+            self.assertIn("doorbell", srv.CAMERA_LAST_GOOD_FRAME)
+
+            # Expire short-lived CAMERA_SNAP_CACHE to simulate next frontend poll (15s/30s later)
+            srv.CAMERA_SNAP_CACHE.clear()
+            ha_proxy_frame[0] = None
+
+            # 3. Repeated fetch_camera_snapshot when event.doorbell_motion has NOT changed:
+            # must return retained frame and NEVER hit go2rtc or /api/camera_proxy_stream/
+            data2, ctype2 = srv.fetch_camera_snapshot("doorbell", force_refresh=False)
+            self.assertEqual(data2, good_jpeg_1)
+            self.assertEqual(ctype2, "image/jpeg")
+            self.assertEqual(len(active_stream_hits), 0)
+
+            # 4. warm_camera_snapshots_once when event has NOT changed:
+            # must skip battery camera and NEVER hit go2rtc or /api/camera_proxy_stream/
+            srv.CAMERA_WARMER_STOP_EVENT.clear()
+            with patch.object(
+                srv,
+                "_get_configured_cameras",
+                return_value=[srv.DEFAULT_CAMERAS[0]],
+            ):
+                warmed = srv.warm_camera_snapshots_once(stagger_sec=0)
+                self.assertEqual(warmed, [])
+                self.assertEqual(len(active_stream_hits), 0)
+
+            # 5. Event timestamp changes, but HA camera proxy returns placeholder:
+            # must return retained CAMERA_LAST_GOOD_FRAME and NEVER hit go2rtc or stream!
+            motion_ts[0] = "2026-11-12T18:05:00+00:00"
+            ha_proxy_frame[0] = None
+            srv.CAMERA_SNAP_CACHE.clear()
+            data3, ctype3 = srv.fetch_camera_snapshot("doorbell", force_refresh=True)
+            self.assertEqual(data3, good_jpeg_1)
+            self.assertEqual(ctype3, "image/jpeg")
+            self.assertEqual(len(active_stream_hits), 0)
+
+            # 6. Event timestamp changes again and HA camera proxy provides new frame:
+            # warmer passively refreshes battery camera without any active stream hits
+            motion_ts[0] = "2026-11-12T18:10:00+00:00"
+            ha_proxy_frame[0] = good_jpeg_2
+            with patch.object(
+                srv,
+                "_get_configured_cameras",
+                return_value=[srv.DEFAULT_CAMERAS[0]],
+            ):
+                warmed2 = srv.warm_camera_snapshots_once(stagger_sec=0)
+                self.assertEqual(warmed2, ["doorbell"])
+                self.assertEqual(srv.CAMERA_LAST_GOOD_FRAME["doorbell"][1], good_jpeg_2)
+                self.assertEqual(len(active_stream_hits), 0)
+
+    def test_all_nine_nest_cameras_event_driven_passive_caching(self):
+        expected_events = {
+            "doorbell": ["event.doorbell_motion", "event.doorbell_chime"],
+            "front_yard_camera": ["event.front_yard_camera_motion"],
+            "sideyard_stairs": ["event.sideyard_stairs_motion"],
+            "deck_camera": ["event.deck_camera_motion"],
+            "top_of_the_hill": ["event.top_of_the_hill_motion"],
+            "nursery_cam": ["event.nursery_cam_motion"],
+            "porch_cam": ["event.porch_cam_motion"],
+            "bedroom_cam": ["event.bedroom_bedroom_camera_motion"],
+            "kitchen_hub": ["event.kitchen_hub_motion"],
+        }
+
+        for cam_id, ents in expected_events.items():
+            target = srv.resolve_camera_target(cam_id)
+            self.assertIsNotNone(target, f"Missing target for {cam_id}")
+            self.assertTrue(target["event_driven"], f"{cam_id} must be event_driven")
+            self.assertEqual(
+                target["event_entities"], ents, f"Mismatched event_entities for {cam_id}"
+            )
+            self.assertEqual(target["battery"], cam_id == "doorbell")
+
+        cached_jpeg = b"\xff\xd8\xff\xe0cached_wired_frame\xff\xd9"
+        fresh_jpeg = b"\xff\xd8\xff\xe0fresh_motion_frame\xff\xd9"
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+        }
+
+        nursery_motion_ts = ["2026-11-12T18:00:00+00:00"]
+        upstream_hits = []
+
+        def make_resp(payload, ctype="image/jpeg"):
+            r = MagicMock()
+            r.read.return_value = payload
+            r.headers = {"Content-Type": ctype}
+            r.__enter__.return_value = r
+            r.__exit__.return_value = False
+            return r
+
+        def fake_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/states/event.nursery_cam_motion" in url:
+                return make_resp(
+                    json.dumps({"state": nursery_motion_ts[0]}).encode("utf-8"), "application/json"
+                )
+            if "/api/camera_proxy/" in url:
+                upstream_hits.append(url)
+                return make_resp(placeholder_png, "image/png")
+            if "/api/frame.jpeg" in url or "/api/camera_proxy_stream/" in url:
+                upstream_hits.append(url)
+                return make_resp(fresh_jpeg, "image/jpeg")
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(
+                srv.CAMERA_LAST_GOOD_FRAME,
+                {"nursery_cam": (srv.time.time() - 120, cached_jpeg, "image/jpeg")},
+                clear=True,
+            ),
+            patch.dict(srv.CAMERA_LAST_EVENT_STATE, {}, clear=True),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            # 1. First check with existing CAMERA_LAST_GOOD_FRAME: records baseline event timestamp
+            # and returns cached_jpeg immediately without hitting camera_proxy, go2rtc, or camera_proxy_stream
+            data1, ctype1 = srv.fetch_camera_snapshot("nursery_cam", force_refresh=False)
+            self.assertEqual(data1, cached_jpeg)
+            self.assertEqual(ctype1, "image/jpeg")
+            self.assertEqual(upstream_hits, [])
+
+            # 2. Second check with unchanged event timestamp: still zero upstream camera hits
+            data2, ctype2 = srv.fetch_camera_snapshot("nursery_cam", force_refresh=False)
+            self.assertEqual(data2, cached_jpeg)
+            self.assertEqual(upstream_hits, [])
+
+            # 3. Warmer loop with unchanged event timestamp and cached frame present: skips camera
+            nursery_cfg = [c for c in srv.DEFAULT_CAMERAS if c["id"] == "nursery_cam"]
+            with patch.object(srv, "_get_configured_cameras", return_value=nursery_cfg):
+                warmed = srv.warm_camera_snapshots_once(stagger_sec=0)
+                self.assertEqual(warmed, [])
+                self.assertEqual(upstream_hits, [])
+
+            # 4. Motion event timestamp changes -> fetches fresh frame and updates CAMERA_LAST_GOOD_FRAME
+            nursery_motion_ts[0] = "2026-11-12T18:03:00+00:00"
+            data3, ctype3 = srv.fetch_camera_snapshot("nursery_cam", force_refresh=False)
+            self.assertEqual(data3, fresh_jpeg)
+            self.assertEqual(ctype3, "image/jpeg")
+            self.assertGreaterEqual(len(upstream_hits), 1)
+
+    def test_active_refresh_hybrid_wired_vs_battery_doorbell(self):
+        cached_wired_jpeg = b"\xff\xd8\xff\xe0cached_wired_frame\xff\xd9"
+        fresh_wired_jpeg = b"\xff\xd8\xff\xe0fresh_active_wired_frame\xff\xd9"
+        cached_doorbell_jpeg = b"\xff\xd8\xff\xe0cached_doorbell_frame\xff\xd9"
+        fresh_doorbell_jpeg = b"\xff\xd8\xff\xe0fresh_doorbell_event_frame\xff\xd9"
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+            "CAMERA_ACTIVE_INTERVAL_SEC": 25.0,
+        }
+
+        doorbell_motion_ts = ["2026-11-12T18:00:00+00:00"]
+        doorbell_chime_ts = ["2026-11-12T18:00:00+00:00"]
+        nursery_motion_ts = ["2026-11-12T18:00:00+00:00"]
+        upstream_hits = []
+        ha_doorbell_proxy_payload = [placeholder_png]
+
+        def make_resp(payload, ctype="image/jpeg"):
+            r = MagicMock()
+            r.read.return_value = payload
+            r.headers = {"Content-Type": ctype}
+            r.__enter__.return_value = r
+            r.__exit__.return_value = False
+            return r
+
+        def fake_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/states/event.doorbell_motion" in url:
+                return make_resp(
+                    json.dumps({"state": doorbell_motion_ts[0]}).encode("utf-8"), "application/json"
+                )
+            if "/api/states/event.doorbell_chime" in url:
+                return make_resp(
+                    json.dumps({"state": doorbell_chime_ts[0]}).encode("utf-8"), "application/json"
+                )
+            if "/api/states/event.nursery_cam_motion" in url:
+                return make_resp(
+                    json.dumps({"state": nursery_motion_ts[0]}).encode("utf-8"), "application/json"
+                )
+            if "/api/camera_proxy/camera.doorbell" in url:
+                upstream_hits.append(url)
+                ctype = (
+                    "image/jpeg" if ha_doorbell_proxy_payload[0] != placeholder_png else "image/png"
+                )
+                return make_resp(ha_doorbell_proxy_payload[0], ctype)
+            if "/api/camera_proxy/" in url:
+                upstream_hits.append(url)
+                return make_resp(placeholder_png, "image/png")
+            if "/api/frame.jpeg" in url or "/api/camera_proxy_stream/" in url:
+                upstream_hits.append(url)
+                if "doorbell" in url:
+                    return make_resp(fresh_doorbell_jpeg, "image/jpeg")
+                return make_resp(fresh_wired_jpeg, "image/jpeg")
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        now = srv.time.time()
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(
+                srv.CAMERA_LAST_GOOD_FRAME,
+                {
+                    "nursery_cam": (now - 10.0, cached_wired_jpeg, "image/jpeg"),
+                    "doorbell": (now - 120.0, cached_doorbell_jpeg, "image/jpeg"),
+                },
+                clear=True,
+            ),
+            patch.dict(srv.CAMERA_LAST_EVENT_STATE, {}, clear=True),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            # 1. Wired camera with active_refresh=True when cached snapshot is fresh (< 25s old):
+            # serves cached bytes without re-waking the stream
+            d1, c1 = srv.fetch_camera_snapshot(
+                "nursery_cam", force_refresh=False, active_refresh=True
+            )
+            self.assertEqual(d1, cached_wired_jpeg)
+            self.assertEqual(c1, "image/jpeg")
+            self.assertEqual(upstream_hits, [])
+
+            # 2. Age wired camera cache past active_interval_sec (30s old >= 25s):
+            # active_refresh=True wakes wired camera and captures a fresh frame even with no HA motion event
+            srv.CAMERA_LAST_GOOD_FRAME["nursery_cam"] = (
+                now - 30.0,
+                cached_wired_jpeg,
+                "image/jpeg",
+            )
+            srv.CAMERA_SNAP_CACHE.clear()
+            d2, c2 = srv.fetch_camera_snapshot(
+                "nursery_cam", force_refresh=False, active_refresh=True
+            )
+            self.assertEqual(d2, fresh_wired_jpeg)
+            self.assertEqual(c2, "image/jpeg")
+            self.assertGreaterEqual(len(upstream_hits), 1)
+            self.assertEqual(srv.CAMERA_LAST_GOOD_FRAME["nursery_cam"][1], fresh_wired_jpeg)
+
+            # 3. Subsequent active_refresh=True call right after refresh serves newly cached frame without re-waking
+            upstream_hits.clear()
+            srv.CAMERA_SNAP_CACHE.clear()
+            d3, c3 = srv.fetch_camera_snapshot(
+                "nursery_cam", force_refresh=False, active_refresh=True
+            )
+            self.assertEqual(d3, fresh_wired_jpeg)
+            self.assertEqual(upstream_hits, [])
+
+            # 4. Battery camera (front_doorbell / doorbell) with active_refresh=True and stale cache (120s old):
+            # MUST NOT wake stream on timer when no HA event occurred
+            upstream_hits.clear()
+            srv.CAMERA_SNAP_CACHE.clear()
+            d_bat1, c_bat1 = srv.fetch_camera_snapshot(
+                "front_doorbell", force_refresh=False, active_refresh=True
+            )
+            self.assertEqual(d_bat1, cached_doorbell_jpeg)
+            self.assertEqual(c_bat1, "image/jpeg")
+            self.assertEqual(upstream_hits, [])
+
+            # Repeated active_refresh=True with unchanged HA event timestamps still never wakes battery camera
+            d_bat2, c_bat2 = srv.fetch_camera_snapshot(
+                "doorbell", force_refresh=False, active_refresh=True
+            )
+            self.assertEqual(d_bat2, cached_doorbell_jpeg)
+            self.assertEqual(upstream_hits, [])
+
+            # 5. When HA doorbell chime/motion event advances:
+            # battery camera only checks HA /api/camera_proxy/ and NEVER hits go2rtc or /api/camera_proxy_stream/
+            doorbell_chime_ts[0] = "2026-11-12T18:05:00+00:00"
+            upstream_hits.clear()
+            # Case A: HA camera_proxy returns placeholder -> retains cached_doorbell_jpeg, zero go2rtc hits
+            d_bat3, c_bat3 = srv.fetch_camera_snapshot(
+                "front_doorbell", force_refresh=False, active_refresh=True
+            )
+            self.assertEqual(d_bat3, cached_doorbell_jpeg)
+            self.assertEqual(c_bat3, "image/jpeg")
+            self.assertEqual(
+                upstream_hits,
+                ["http://198.51.100.10:8123/api/camera_proxy/camera.doorbell"],
+            )
+            self.assertFalse(
+                any(
+                    "/api/frame.jpeg" in u or "/api/camera_proxy_stream/" in u
+                    for u in upstream_hits
+                )
+            )
+
+            # Case B: HA camera_proxy returns fresh frame -> serves fresh_doorbell_jpeg, zero go2rtc hits
+            doorbell_motion_ts[0] = "2026-11-12T18:06:00+00:00"
+            upstream_hits.clear()
+            ha_doorbell_proxy_payload[0] = fresh_doorbell_jpeg
+            srv.CAMERA_SNAP_CACHE.clear()
+            d_bat4, c_bat4 = srv.fetch_camera_snapshot(
+                "front_doorbell", force_refresh=False, active_refresh=True
+            )
+            self.assertEqual(d_bat4, fresh_doorbell_jpeg)
+            self.assertEqual(c_bat4, "image/jpeg")
+            self.assertEqual(
+                upstream_hits,
+                ["http://198.51.100.10:8123/api/camera_proxy/camera.doorbell"],
+            )
+            self.assertFalse(
+                any(
+                    "/api/frame.jpeg" in u or "/api/camera_proxy_stream/" in u
+                    for u in upstream_hits
+                )
+            )
+
+        # 6. Verify HTTP handler parses ?active=1 on both /hearth-api/cameras/<key>/snapshot and /hearth-api/camera/snapshot/<key>
+        with patch.object(
+            srv, "fetch_camera_snapshot", return_value=(fresh_wired_jpeg, "image/jpeg")
+        ) as mock_fetch:
+            h1 = self._create_handler(
+                "GET", "/hearth-api/cameras/nursery_cam/snapshot?active=1", client_ip="127.0.0.1"
+            )
+            h1.do_GET()
+            h1.send_response.assert_called_with(200)
+            mock_fetch.assert_called_with("nursery_cam", force_refresh=False, active_refresh=True)
+
+            h2 = self._create_handler(
+                "GET",
+                "/hearth-api/camera/snapshot/front_doorbell?active=true",
+                client_ip="127.0.0.1",
+            )
+            h2.do_GET()
+            h2.send_response.assert_called_with(200)
+            mock_fetch.assert_called_with(
+                "front_doorbell", force_refresh=False, active_refresh=True
+            )
+
+            h3 = self._create_handler(
+                "GET", "/hearth-api/cameras/nursery_cam/snapshot?active=0", client_ip="127.0.0.1"
+            )
+            h3.do_GET()
+            h3.send_response.assert_called_with(200)
+            mock_fetch.assert_called_with("nursery_cam", force_refresh=False, active_refresh=False)
+
+            h4 = self._create_handler(
+                "GET", "/hearth-api/cameras/nursery_cam/stream?t=123456", client_ip="127.0.0.1"
+            )
+            h4.do_GET()
+            h4.send_response.assert_called_with(200)
+            mock_fetch.assert_called_with("nursery_cam", force_refresh=False, active_refresh=True)
+
+    def test_get_cameras_status_auto_live_60s_cap_and_reset(self):
+        mock_states = [
+            {
+                "entity_id": "camera.doorbell",
+                "state": "idle",
+                "attributes": {"friendly_name": "Doorbell"},
+            },
+            {
+                "entity_id": "camera.front_yard_camera",
+                "state": "streaming",
+                "attributes": {"friendly_name": "Front Yard"},
+            },
+            {
+                "entity_id": "camera.nursery_cam",
+                "state": "streaming",
+                "attributes": {"friendly_name": "Nursery Cam"},
+            },
+            {
+                "entity_id": "camera.porch_cam",
+                "state": "streaming",
+                "attributes": {"friendly_name": "Porch Cam"},
+            },
+        ]
+        t0 = 1794585000.0
+        with (
+            patch.dict(srv.CACHE, {}, clear=True),
+            patch.dict(srv._CAMERA_EVENT_EPOCH, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_EVENT_STATE, {}, clear=True),
+            patch.object(srv, "_ha_request", return_value=mock_states),
+        ):
+            # 1. Single camera motion within 60s -> auto_live: True
+            srv._CAMERA_EVENT_EPOCH["nursery_cam"] = t0 - 15.0
+            with patch.object(srv.time, "time", return_value=t0):
+                cams = srv.get_cameras_status()
+                by_id = {c["id"]: c for c in cams}
+                self.assertTrue(by_id["nursery_cam"]["auto_live"])
+                self.assertEqual(by_id["nursery_cam"]["last_event_epoch"], t0 - 15.0)
+                self.assertFalse(by_id["doorbell"]["auto_live"])
+                self.assertEqual(by_id["doorbell"]["last_event_epoch"], 0.0)
+
+            # 2. 3+ cameras with motion within 60s -> caps auto_live: True at the 2 most recent cameras (including battery doorbell).
+            # Battery camera 'doorbell' has most recent motion (t0 - 5.0), and front_yard_camera has (t0 - 10.0).
+            srv._CAMERA_EVENT_EPOCH["doorbell"] = t0 - 5.0
+            srv._CAMERA_EVENT_EPOCH["front_yard_camera"] = t0 - 10.0
+            srv._CAMERA_EVENT_EPOCH["nursery_cam"] = t0 - 20.0
+            srv._CAMERA_EVENT_EPOCH["porch_cam"] = t0 - 30.0
+            with patch.object(srv.time, "time", return_value=t0):
+                cams = srv.get_cameras_status()
+                by_id = {c["id"]: c for c in cams}
+                auto_live_ids = [c["id"] for c in cams if c["auto_live"]]
+                self.assertEqual(len(auto_live_ids), 2)
+                self.assertCountEqual(auto_live_ids, ["doorbell", "front_yard_camera"])
+                self.assertTrue(by_id["doorbell"]["auto_live"])
+                self.assertEqual(by_id["doorbell"]["last_event_epoch"], t0 - 5.0)
+                self.assertTrue(by_id["front_yard_camera"]["auto_live"])
+                self.assertFalse(by_id["nursery_cam"]["auto_live"])
+                self.assertFalse(by_id["porch_cam"]["auto_live"])
+                self.assertEqual(by_id["nursery_cam"]["last_event_epoch"], t0 - 20.0)
+
+                # Explicitly verify is_camera_auto_live returns True for battery camera
+                is_doorbell_live, doorbell_epoch = srv.is_camera_auto_live("doorbell", now=t0)
+                self.assertTrue(is_doorbell_live)
+                self.assertEqual(doorbell_epoch, t0 - 5.0)
+
+                is_front_live, front_epoch = srv.is_camera_auto_live("front_yard_camera", now=t0)
+                self.assertTrue(is_front_live)
+                self.assertEqual(front_epoch, t0 - 10.0)
+
+            # 3. Once 60 seconds pass without new motion -> resets auto_live: False
+            with patch.object(srv.time, "time", return_value=t0 + 61.0):
+                cams_expired = srv.get_cameras_status()
+                for c in cams_expired:
+                    self.assertFalse(
+                        c["auto_live"],
+                        f"Expected auto_live False for {c['id']} after >60s",
+                    )
+
+    def test_check_camera_motion_updated_seeds_recent_iso_and_updates_epoch_and_headers(self):
+        t0 = 1794585000.0
+        recent_iso = srv.datetime.datetime.fromtimestamp(t0 - 12.0, tz=srv.UTC).isoformat()
+        stale_iso = srv.datetime.datetime.fromtimestamp(t0 - 300.0, tz=srv.UTC).isoformat()
+        next_iso = srv.datetime.datetime.fromtimestamp(t0 + 5.0, tz=srv.UTC).isoformat()
+
+        with (
+            patch.dict(srv.CAMERA_LAST_EVENT_STATE, {}, clear=True),
+            patch.dict(srv._CAMERA_EVENT_EPOCH, {}, clear=True),
+        ):
+            with patch.object(srv.time, "time", return_value=t0):
+                # First seed with recent ISO (<60s) populates _CAMERA_EVENT_EPOCH
+                changed_recent = srv.check_camera_motion_updated(
+                    "nursery_cam",
+                    ha_states_map={"event.nursery_cam_motion": {"state": recent_iso}},
+                )
+                self.assertFalse(changed_recent)
+                self.assertEqual(srv._CAMERA_EVENT_EPOCH.get("nursery_cam"), t0)
+
+                # First seed with stale ISO (>60s) does NOT populate _CAMERA_EVENT_EPOCH
+                changed_stale = srv.check_camera_motion_updated(
+                    "porch_cam",
+                    ha_states_map={"event.porch_cam_motion": {"state": stale_iso}},
+                )
+                self.assertFalse(changed_stale)
+                self.assertNotIn("porch_cam", srv._CAMERA_EVENT_EPOCH)
+
+            # Subsequent change updates _CAMERA_EVENT_EPOCH to new time.time()
+            with patch.object(srv.time, "time", return_value=t0 + 5.0):
+                changed_next = srv.check_camera_motion_updated(
+                    "porch_cam",
+                    ha_states_map={"event.porch_cam_motion": {"state": next_iso}},
+                )
+                self.assertTrue(changed_next)
+                self.assertEqual(srv._CAMERA_EVENT_EPOCH.get("porch_cam"), t0 + 5.0)
+
+                # Verify GET /cameras and GET /cameras/snapshot headers
+                fake_jpeg = b"\xff\xd8\xff\xe0test_snap\xff\xd9"
+                with patch.object(
+                    srv, "fetch_camera_snapshot", return_value=(fake_jpeg, "image/jpeg")
+                ):
+                    h_snap = self._create_handler(
+                        "GET",
+                        "/cameras/snapshot?camera=porch_cam",
+                        client_ip="127.0.0.1",
+                    )
+                    h_snap.do_GET()
+                    h_snap.send_response.assert_called_with(200)
+                    h_snap.send_header.assert_any_call("X-Camera-Auto-Live", "1")
+                    h_snap.send_header.assert_any_call(
+                        "X-Camera-Last-Event-Epoch", str(int(t0 + 5.0))
+                    )
+
+                    h_snap_inactive = self._create_handler(
+                        "GET",
+                        "/hearth-api/cameras/deck_camera/snapshot",
+                        client_ip="127.0.0.1",
+                    )
+                    h_snap_inactive.do_GET()
+                    h_snap_inactive.send_response.assert_called_with(200)
+                    h_snap_inactive.send_header.assert_any_call("X-Camera-Auto-Live", "0")
+                    h_snap_inactive.send_header.assert_any_call("X-Camera-Last-Event-Epoch", "0")
+
+                with (
+                    patch.dict(srv.CACHE, {}, clear=True),
+                    patch.object(srv, "_ha_request", return_value=[]),
+                ):
+                    h_cams = self._create_handler("GET", "/cameras", client_ip="127.0.0.1")
+                    h_cams.do_GET()
+                    h_cams.send_response.assert_called_with(200)
+                    payload = json.loads(h_cams.wfile.getvalue().decode("utf-8"))
+                    by_id = {c["id"]: c for c in payload["cameras"]}
+                    self.assertTrue(by_id["porch_cam"]["auto_live"])
+                    self.assertTrue(by_id["nursery_cam"]["auto_live"])
+                    self.assertFalse(by_id["deck_camera"]["auto_live"])
+
 
 if __name__ == "__main__":
     unittest.main()
