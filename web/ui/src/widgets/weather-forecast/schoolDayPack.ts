@@ -1,3 +1,11 @@
+export interface DailyWeatherManifest {
+  target_date?: string | undefined;
+  theme_title?: string | undefined;
+  style_label?: string | undefined;
+  allow_on_holiday?: boolean | undefined;
+  slots?: Partial<Record<DaypartSlot, string>> | undefined;
+}
+
 export interface SchoolDayThresholds {
   rainThresholdPct: number; // default: 35
   coldMaxF: number;         // default: 49 (< 50F -> cold puffer coat)
@@ -388,6 +396,19 @@ function resolveUSHolidayKey(dateStr?: string): string | undefined {
   return undefined;
 }
 
+export function resolveUSHolidaySpriteUrl(
+  packName: string,
+  state: ClothingConditionState,
+  dateStr?: string,
+  assetsBase = '/static/ui/assets/weather-packs',
+): string | undefined {
+  const holidayKey = resolveUSHolidayKey(dateStr);
+  if (holidayKey && HOLIDAY_SUPPORTED_STATES[holidayKey]?.has(state)) {
+    return `${assetsBase}/${packName}/holiday_${holidayKey}_${state}.jpg`;
+  }
+  return undefined;
+}
+
 export function resolveCharacterPackSpriteUrl(
   packName: string,
   state: ClothingConditionState,
@@ -402,10 +423,41 @@ export function resolveCharacterPackSpriteUrl(
   const base = isLegacyBase ? dateStrOrAssetsBase : assetsBase;
   const dateStr = isLegacyBase ? undefined : dateStrOrAssetsBase;
   if (enableHolidays) {
-    const holidayKey = resolveUSHolidayKey(dateStr);
-    if (holidayKey && HOLIDAY_SUPPORTED_STATES[holidayKey]?.has(state)) {
-      return `${base}/${packName}/holiday_${holidayKey}_${state}.jpg`;
+    const holidaySprite = resolveUSHolidaySpriteUrl(packName, state, dateStr, base);
+    if (holidaySprite) {
+      return holidaySprite;
     }
   }
   return `${base}/${packName}/${state}_v${variantIndex}.jpg`;
 }
+
+export function resolveDailyManifestSpriteUrl(
+  packName: string,
+  manifest: DailyWeatherManifest | undefined | null,
+  dateStr: string | undefined,
+  slot: DaypartSlot,
+  assetsBase = '/static/ui/assets/weather-packs',
+): string | undefined {
+  if (!manifest || !dateStr) return undefined;
+  if (typeof manifest.target_date !== 'string') return undefined;
+  if (manifest.target_date.trim() !== dateStr.trim()) return undefined;
+
+  const raw = manifest.slots?.[slot];
+  if (typeof raw !== 'string') return undefined;
+
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+
+  if (trimmed.startsWith('/') || /^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Reject path traversal
+  if (trimmed.includes('..')) {
+    return undefined;
+  }
+
+  const cleanFile = trimmed.replace(/^\.\//, '');
+  return `${assetsBase}/${packName}/${cleanFile}`;
+}
+
