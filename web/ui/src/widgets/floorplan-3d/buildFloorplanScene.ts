@@ -156,9 +156,10 @@ function buildWallGroup(
   wg.userData = { wallId: wall.id };
 
   const [dx, dz] = [wall.x2 - wall.x1, wall.z2 - wall.z1];
-  const isHorizontal = Math.abs(dx) >= Math.abs(dz);
-  const length = Math.max(0.1, isHorizontal ? Math.abs(dx) : Math.abs(dz));
+  const length = Math.max(0.1, Math.hypot(dx, dz));
   const halfT = Math.max(0.05, wall.thickness / 2);
+  wg.position.set(wall.x1, 0, wall.z1);
+  wg.rotation.y = -Math.atan2(dz, dx);
 
   const rawStops = new Set<number>([0, length]);
   for (const op of wall.openings) {
@@ -170,13 +171,7 @@ function buildWallGroup(
 
   const placeSpan = (t0: number, t1: number, y0: number, y1: number, mat: MeshStandardMaterial, suffix: string): void => {
     if (t1 - t0 < 1e-3 || y1 - y0 < 1e-3) return;
-    if (isHorizontal) {
-      const [xStart, zMid] = [Math.min(wall.x1, wall.x2), (wall.z1 + wall.z2) / 2];
-      addBox(wg, xStart + t0, xStart + t1, y0, y1, zMid - halfT, zMid + halfT, mat, `${wall.id}-${suffix}`);
-    } else {
-      const [zStart, xMid] = [Math.min(wall.z1, wall.z2), (wall.x1 + wall.x2) / 2];
-      addBox(wg, xMid - halfT, xMid + halfT, y0, y1, zStart + t0, zStart + t1, mat, `${wall.id}-${suffix}`);
-    }
+    addBox(wg, t0, t1, y0, y1, -halfT, halfT, mat, `${wall.id}-${suffix}`);
   };
 
   for (let i = 0; i < stops.length - 1; i += 1) {
@@ -330,10 +325,12 @@ export function buildFloorplanScene(options: BuildFloorplanSceneOptions = {}): F
   const upperFloorsGroup = new Group();
   upperFloorsGroup.name = 'upper-floors-massing';
   upperFloorsGroup.visible = Boolean(options.showUpperFloors);
-  const otherFloors = layout.floors.filter((f) => f.id !== floor.id);
-  if (otherFloors.length > 0) {
-    for (const other of otherFloors) {
-      const yBase = other.elevationY > floor.elevationY ? other.elevationY : floor.ceilingHeight + 0.5;
+  if (layout.floors.length > 1) {
+    const upperFloors = layout.floors.filter(
+      (f) => f.id !== floor.id && (f.elevationY > floor.elevationY || (f.elevationY === floor.elevationY && f.level > floor.level)),
+    );
+    for (const other of upperFloors) {
+      const yBase = other.elevationY > floor.elevationY ? other.elevationY - floor.elevationY : floor.ceilingHeight + 0.5;
       addBox(
         upperFloorsGroup, other.bounds.xMin, other.bounds.xMax, yBase, yBase + other.ceilingHeight * 0.45,
         other.bounds.zMin, other.bounds.zMax, upperMassMat, `massing-${other.id}`,

@@ -1,4 +1,4 @@
-import { Box3, Color, Mesh, type MeshStandardMaterial, type Object3D } from 'three';
+import { Box3, type BoxGeometry, Color, Mesh, Vector3, type MeshStandardMaterial, type Object3D } from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildFloorplanScene,
@@ -268,5 +268,130 @@ describe('floorplanFixtures & buildFloorplanScene — Generic Config-Driven 3D S
     built.updateEntities({ 'sensor.appliance_watts': '1.0' });
     expect(built.fixtures['power-app']?.userData.active).toBe(false);
     built.dispose();
+  });
+
+  it('builds diagonal walls along true Euclidean span from (0,0) to (4,4) instead of axis-snapping', () => {
+    const layout = parseFloorplanConfig({
+      floors: [
+        {
+          id: 'diag-floor',
+          bounds: { xMin: -2, xMax: 6, zMin: -2, zMax: 6 },
+          rooms: [{ id: 'room-1', bounds: { xMin: -2, xMax: 6, zMin: -2, zMax: 6 } }],
+          walls: [
+            {
+              id: 'diag-wall',
+              x1: 0,
+              z1: 0,
+              x2: 4,
+              z2: 4,
+              heightStart: 8,
+              heightEnd: 8,
+              thickness: 0.4,
+            },
+          ],
+        },
+      ],
+    });
+
+    const built = buildFloorplanScene({ layout });
+    const wg = built.wallsById['diag-wall']!;
+    expect(wg).toBeDefined();
+
+    const bodyMesh = wg.children.find((c): c is Mesh => c instanceof Mesh && c.name === 'diag-wall-body-0')!;
+    expect(bodyMesh).toBeDefined();
+
+    const geomParams = (bodyMesh.geometry as BoxGeometry).parameters;
+    const containsWorldPoint = (wx: number, wy: number, wz: number): boolean => {
+      const local = bodyMesh.worldToLocal(new Vector3(wx, wy, wz));
+      return (
+        Math.abs(local.x) <= geomParams.width / 2 + 1e-4 &&
+        Math.abs(local.y) <= geomParams.height / 2 + 1e-4 &&
+        Math.abs(local.z) <= geomParams.depth / 2 + 1e-4
+      );
+    };
+
+    expect(containsWorldPoint(0, 1, 0)).toBe(true);
+    expect(containsWorldPoint(2, 1, 2)).toBe(true);
+    expect(containsWorldPoint(4, 1, 4)).toBe(true);
+    expect(containsWorldPoint(0, 1, 2)).toBe(false);
+    expect(containsWorldPoint(4, 1, 2)).toBe(false);
+
+    const worldBox = new Box3().setFromObject(wg);
+    expect(worldBox.min.x).toBeLessThan(0.05);
+    expect(worldBox.min.z).toBeLessThan(0.05);
+    expect(worldBox.max.x).toBeGreaterThan(3.95);
+    expect(worldBox.max.z).toBeGreaterThan(3.95);
+
+    built.dispose();
+  });
+
+  it('positions upper floor massing relative to selected floor elevationY and omits massing on the highest floor', () => {
+    const layout = parseFloorplanConfig({
+      floors: [
+        {
+          id: 'floor-1',
+          level: 1,
+          elevationY: 0,
+          ceilingHeight: 9,
+          rooms: [{ id: 'r1', bounds: { xMin: -5, xMax: 5, zMin: -5, zMax: 5 } }],
+        },
+        {
+          id: 'floor-2',
+          level: 2,
+          elevationY: 10,
+          ceilingHeight: 8,
+          rooms: [{ id: 'r2', bounds: { xMin: -4, xMax: 4, zMin: -4, zMax: 4 } }],
+        },
+        {
+          id: 'floor-3',
+          level: 3,
+          elevationY: 19,
+          ceilingHeight: 8,
+          rooms: [{ id: 'r3', bounds: { xMin: -3, xMax: 3, zMin: -3, zMax: 3 } }],
+        },
+      ],
+    });
+
+    const fromFirst = buildFloorplanScene({ layout, floorId: 'floor-1', showUpperFloors: true });
+    expect(fromFirst.upperFloorsGroup.children.map((c) => c.name)).toEqual(['massing-floor-2', 'massing-floor-3']);
+    const f2FromFirst = new Box3().setFromObject(fromFirst.upperFloorsGroup.getObjectByName('massing-floor-2')!);
+    expect(f2FromFirst.min.y).toBeCloseTo(10, 4);
+    expect(f2FromFirst.max.y).toBeCloseTo(10 + 8 * 0.45, 4);
+    fromFirst.dispose();
+
+    const fromSecond = buildFloorplanScene({ layout, floorId: 'floor-2', showUpperFloors: true });
+    expect(fromSecond.upperFloorsGroup.children.map((c) => c.name)).toEqual(['massing-floor-3']);
+    const f3FromSecond = new Box3().setFromObject(fromSecond.upperFloorsGroup.getObjectByName('massing-floor-3')!);
+    expect(f3FromSecond.min.y).toBeCloseTo(9, 4);
+    expect(f3FromSecond.max.y).toBeCloseTo(9 + 8 * 0.45, 4);
+    fromSecond.dispose();
+
+    const fromHighest = buildFloorplanScene({ layout, floorId: 'floor-3', showUpperFloors: true });
+    expect(fromHighest.upperFloorsGroup.children).toHaveLength(0);
+    fromHighest.dispose();
+
+    const sameElevationLayout = parseFloorplanConfig({
+      floors: [
+        {
+          id: 'lvl-1',
+          level: 1,
+          elevationY: 0,
+          ceilingHeight: 9,
+          rooms: [{ id: 'r1', bounds: { xMin: -4, xMax: 4, zMin: -4, zMax: 4 } }],
+        },
+        {
+          id: 'lvl-2',
+          level: 2,
+          elevationY: 0,
+          ceilingHeight: 8,
+          rooms: [{ id: 'r2', bounds: { xMin: -4, xMax: 4, zMin: -4, zMax: 4 } }],
+        },
+      ],
+    });
+    const sameElevFrom1 = buildFloorplanScene({ layout: sameElevationLayout, floorId: 'lvl-1', showUpperFloors: true });
+    expect(sameElevFrom1.upperFloorsGroup.children.map((c) => c.name)).toEqual(['massing-lvl-2']);
+    const sameElevBox = new Box3().setFromObject(sameElevFrom1.upperFloorsGroup.getObjectByName('massing-lvl-2')!);
+    expect(sameElevBox.min.y).toBeCloseTo(9.5, 4);
+    sameElevFrom1.dispose();
   });
 });
