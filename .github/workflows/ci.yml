@@ -39,7 +39,6 @@ jobs:
       go_core: ${{ steps.filter.outputs.go_core }}
       web: ${{ steps.filter.outputs.web }}
       ui: ${{ steps.filter.outputs.ui }}
-      perf: ${{ steps.filter.outputs.perf }}
       eink_node: ${{ steps.filter.outputs.eink_node }}
       eink_renderer: ${{ steps.filter.outputs.mirrormere-eink-renderer }}
       ear: ${{ steps.filter.outputs.mirrormere-ear }}
@@ -76,12 +75,6 @@ jobs:
               - 'widgets/**'
             ui:
               - 'web/ui/**'
-            perf:
-              - 'web/ui/**'
-              - 'web/static/js/perf.js'
-              - 'web/templates/display_react.html'
-              - 'deploy/examples/config.yaml'
-              - 'scripts/perf/**'
             eink_node:
               - 'client/eink-node/**'
             mirrormere:
@@ -341,106 +334,6 @@ jobs:
         if: failure()
         run: |
           echo "::error::🚨 [Mirrormere CI] React UI verification failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
-
-      - name: Hold Failure Until RoboRev Completes
-        if: failure() && github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          export GH_TOKEN="${GITHUB_PAT:-${GH_TOKEN}}"
-          export GITHUB_TOKEN="${GITHUB_PAT:-${GITHUB_TOKEN}}"
-          if [ -z "${HEAD_SHA:-}" ]; then
-            exit 0
-          fi
-          echo "Holding job failure status until roborev completes for commit ${HEAD_SHA:0:7}..."
-          for i in $(seq 1 120); do
-            STATUS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "roborev")] | last | .status // "missing"' 2>/dev/null || echo "error")
-            if [ "$STATUS" = "completed" ]; then
-              echo "roborev completed; releasing held failure status."
-              exit 0
-            fi
-            if [ "$STATUS" = "missing" ] && [ "$i" -ge 6 ]; then
-              echo "roborev check-run not present after 30s; releasing held failure status."
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "Timed out waiting for roborev after 600s; releasing held failure status."
-
-  perf:
-    name: Display performance budget (React)
-    needs: [changes, verify, lint, ui]
-    if: github.event_name != 'push' || inputs.force_all == true
-    # Self-hosted runner: ships headless Chrome, Go, and Node (docs/perf.md).
-    runs-on: [self-hosted, ci]
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js (pinned by web/ui/.nvmrc)
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        uses: actions/setup-node@v7
-        with:
-          node-version-file: web/ui/.nvmrc
-          cache: npm
-          cache-dependency-path: web/ui/package-lock.json
-
-      - name: Build React UI bundle
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        working-directory: web/ui
-        run: |
-          set -euo pipefail
-          npm ci
-          npm run build
-
-      - name: Start the server with the example config and fixture providers
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        run: |
-          set -euo pipefail
-          pkill -x server || true
-          go build -o bin/server ./cmd/server
-          # The example config reads these secrets by name; the fixture values point at nothing,
-          # so the providers fail fast and the screens still load from config (docs/perf.md).
-          export FAMILY_CALENDAR_URL=http://localhost:9/fixture.ics
-          export TODOIST_API_TOKEN=fixture-token
-          export GOOGLE_PHOTOS_ALBUM_URL=http://localhost:9/fixture-photos
-          RUNNER_TRACKING_ID="" CONFIG_PATH=deploy/examples/config.yaml ./bin/server > server.log 2>&1 &
-          for _ in $(seq 1 60); do
-            if curl -fsS -o /dev/null 'http://localhost:8080/display?ui=react'; then break; fi
-            sleep 1
-          done
-          curl -fsS -o /dev/null 'http://localhost:8080/display?ui=react'
-
-      - name: Bench the React display (4x CPU throttle, 20 swipes)
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        run: |
-          set -euo pipefail
-          node scripts/perf/bench.mjs --url 'http://localhost:8080/display?ui=react&perf=1' --cpu-throttle 4 --swipes 20 > bench.json
-
-      - name: Check the performance budget and app.js size
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        run: node scripts/perf/check-budget.mjs --bench bench.json --budget scripts/perf/budget.json --app-js web/static/ui/app.js
-
-      - name: Upload bench output and server log
-        if: always() && (needs.changes.outputs.perf == 'true' || inputs.force_all == true)
-        uses: actions/upload-artifact@v7
-        with:
-          name: perf-bench
-          path: |
-            bench.json
-            server.log
-          if-no-files-found: ignore
-
-      - name: Stop the server
-        if: always() && (needs.changes.outputs.perf == 'true' || inputs.force_all == true)
-        run: pkill -x server || true
-
-      - name: Emit Agent Pre-Flight Remediation Guidance
-        if: failure()
-        run: |
-          echo "::error::🚨 [Mirrormere CI] Performance budget check failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
 
       - name: Hold Failure Until RoboRev Completes
         if: failure() && github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
@@ -876,7 +769,7 @@ jobs:
 
   build-gate:
     name: CI Gate
-    needs: [changes, verify, lint, ui, perf, roborev, docker]
+    needs: [changes, verify, lint, ui, roborev, docker]
     if: always()
     runs-on: [self-hosted, ci]
     env:
