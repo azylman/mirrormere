@@ -188,6 +188,7 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 		{"web-embed", "web-embed", "spacer", 2, 2, 13, true},
 		{"plex-recent", "plex-recent", "spacer", 3, 2, 10, true},
 		{"yt-music", "yt-music", "spacer", 3, 2, 10, true},
+		{"floorplan-3d", "floorplan-3d", "spacer", 4, 2, 13, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -239,6 +240,39 @@ display:
 	snap, err := config.ValidatePipeline([]byte(yamlData), loader, nil)
 	if err != nil {
 		t.Fatalf("expected production photo-carousel configuration to validate: %v", err)
+	}
+	if snap == nil || len(snap.Config.Display.Widgets) != 2 {
+		t.Fatalf("unexpected snapshot: %+v", snap)
+	}
+}
+
+func TestLoader_Floorplan3dDocumentedConfigValidation(t *testing.T) {
+	t.Parallel()
+	loader := widget.NewLoader(filepath.Join("..", "..", "widgets"), t.TempDir())
+	pkg, err := loader.LoadPackage("floorplan-3d")
+	if err != nil {
+		t.Fatalf("LoadPackage(floorplan-3d): %v", err)
+	}
+	if err = pkg.Manifest.Validate(); err != nil {
+		t.Fatalf("Manifest.Validate(): %v", err)
+	}
+
+	yamlData := `
+timezone: America/Los_Angeles
+display:
+  widgets:
+    - id: home-floorplan
+      type: floorplan-3d
+      dimensions: [4, 2]
+      config:
+        layout_url: "/static/floorplan-layout.json"
+    - id: pad
+      type: spacer
+      dimensions: [2, 2]
+`
+	snap, err := config.ValidatePipeline([]byte(yamlData), loader, nil)
+	if err != nil {
+		t.Fatalf("expected documented floorplan-3d configuration to validate: %v", err)
 	}
 	if snap == nil || len(snap.Config.Display.Widgets) != 2 {
 		t.Fatalf("unexpected snapshot: %+v", snap)
