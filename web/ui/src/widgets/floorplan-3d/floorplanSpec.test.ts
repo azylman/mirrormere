@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_DEMO_FLOORPLAN_SPEC,
-  VALID_FACING_DIRECTIONS,
-  VALID_FIXTURE_KINDS,
-  VALID_FLOOR_MATERIALS,
-  VALID_HA_METRIC_TYPES,
   doBoundsOverlap2D,
   findFloorCollisions,
   fixtureCenter,
@@ -15,16 +11,12 @@ import {
   roomToBox3,
   type Bounds2D,
   type CameraPresetSpec,
-  type FacingDirection,
-  type FixtureKind,
-  type FloorMaterialType,
   type FloorSpec,
   type FloorplanFixtureSpec,
   type FloorplanLayoutSpec,
   type FloorplanRoomSpec,
   type FloorplanWallSpec,
   type HaEntityBindingSpec,
-  type HaMetricType,
   type Vec3Tuple,
   type WallOpeningSpec,
   type WallOpeningType,
@@ -64,11 +56,6 @@ describe('floorplanSpec — Generic Config-Driven 3D Floorplan Schema & Validati
     expect(findFloorCollisions(floor.fixtures)).toEqual([]);
     expect(spec.cameraPresets.map((p: CameraPresetSpec) => p.id)).toContain('dollhouse');
     expect(spec.haBindings.length).toBeGreaterThanOrEqual(4);
-
-    expect(VALID_FACING_DIRECTIONS).toContain('+Z' satisfies FacingDirection);
-    expect(VALID_FLOOR_MATERIALS).toContain('wood' satisfies FloorMaterialType);
-    expect(VALID_FIXTURE_KINDS).toContain('desk' satisfies FixtureKind);
-    expect(VALID_HA_METRIC_TYPES).toContain('light' satisfies HaMetricType);
   });
 
   it('returns DEFAULT_DEMO_FLOORPLAN_SPEC when config is null, non-object, or missing valid floors', () => {

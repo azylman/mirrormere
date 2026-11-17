@@ -35,6 +35,41 @@ const ptr = (type: string, pointerId: number, clientX: number, clientY: number):
     pointerId,
   });
 
+const latestCameraSnapshot = (): { x: number; y: number; z: number } => {
+  const lastCall = renderSpy.mock.lastCall as [ThreeModule.Scene, ThreeModule.PerspectiveCamera] | undefined;
+  expect(lastCall?.[1]).toBeDefined();
+  const pos = lastCall![1].position;
+  return { x: pos.x, y: pos.y, z: pos.z };
+};
+
+const dist3 = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }): number =>
+  Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+function setupStubWebgl(): void {
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(((kind: string) =>
+    kind === '2d' ? null : {}) as never);
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  webglMode = 'stub';
+}
+
+function mockCanvasRect(canvas: HTMLCanvasElement): void {
+  vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+    left: 0,
+    top: 0,
+    right: 800,
+    bottom: 500,
+    width: 800,
+    height: 500,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  });
+}
+
 async function renderLoadedWidget(id: string) {
   const view = render(<Floorplan3dWidget id={id} type="floorplan-3d" />);
   await waitFor(() => {
@@ -252,14 +287,7 @@ describe('Floorplan3dWidget — Generic Config-Driven 3D Floorplan Widget', () =
   });
 
   it('mounts WebGL viewport with orbit, pinch/wheel zoom, raycast selection, and falls back on WebGL throw', async () => {
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(((kind: string) =>
-      kind === '2d' ? null : {}) as never);
-    globalThis.ResizeObserver = class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    };
-    webglMode = 'stub';
+    setupStubWebgl();
 
     const { container, unmount } = await renderLoadedWidget('fp-gl');
     const canvas = container.querySelector('canvas.fp3d-canvas') as HTMLCanvasElement;
@@ -267,34 +295,58 @@ describe('Floorplan3dWidget — Generic Config-Driven 3D Floorplan Widget', () =
     expect(window.__floorplanSceneReady).toBe(true);
     expect(renderSpy).toHaveBeenCalled();
 
-    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
-      left: 0,
-      top: 0,
-      right: 800,
-      bottom: 500,
-      width: 800,
-      height: 500,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    });
+    mockCanvasRect(canvas);
     act(() => {
       canvas.dispatchEvent(ptr('pointermove', 99, 100, 100));
       canvas.dispatchEvent(ptr('pointerdown', 1, 260, 250));
       canvas.dispatchEvent(ptr('pointermove', 1, 261, 251));
       canvas.dispatchEvent(ptr('pointerup', 1, 260, 250));
-      canvas.dispatchEvent(ptr('pointerdown', 2, 400, 250));
-      canvas.dispatchEvent(ptr('pointermove', 2, 440, 270));
-      canvas.dispatchEvent(ptr('pointerdown', 3, 500, 300));
-      canvas.dispatchEvent(ptr('pointermove', 3, 530, 320));
-      canvas.dispatchEvent(ptr('pointerup', 3, 530, 320));
-      canvas.dispatchEvent(ptr('pointerup', 2, 440, 270));
-      canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120 }));
-      canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 }));
     });
     expect((container.querySelector('.fp3d-widget') as HTMLElement).dataset.activePreset).toBe(
       'studio',
     );
+
+    const studioTarget = { x: -4, y: 2, z: 0 };
+    const afterTapPos = latestCameraSnapshot();
+    expect(afterTapPos.x).toBeCloseTo(-4, 3);
+    expect(afterTapPos.y).toBeCloseTo(15, 3);
+    expect(afterTapPos.z).toBeCloseTo(19, 3);
+
+    const rendersBeforeOrbit = renderSpy.mock.calls.length;
+    act(() => {
+      canvas.dispatchEvent(ptr('pointerdown', 2, 400, 250));
+      canvas.dispatchEvent(ptr('pointermove', 2, 440, 270));
+    });
+    const afterOrbitPos = latestCameraSnapshot();
+    expect(renderSpy.mock.calls.length).toBeGreaterThan(rendersBeforeOrbit);
+    expect(dist3(afterOrbitPos, afterTapPos)).toBeGreaterThan(0.5);
+
+    const rendersBeforePinch = renderSpy.mock.calls.length;
+    act(() => {
+      canvas.dispatchEvent(ptr('pointerdown', 3, 500, 300));
+      canvas.dispatchEvent(ptr('pointermove', 3, 530, 320));
+      canvas.dispatchEvent(ptr('pointerup', 3, 530, 320));
+      canvas.dispatchEvent(ptr('pointerup', 2, 440, 270));
+    });
+    const afterPinchPos = latestCameraSnapshot();
+    expect(renderSpy.mock.calls.length).toBeGreaterThan(rendersBeforePinch);
+    expect(dist3(afterPinchPos, studioTarget)).toBeLessThan(dist3(afterOrbitPos, studioTarget) - 1);
+
+    const rendersBeforeWheelIn = renderSpy.mock.calls.length;
+    act(() => {
+      canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120 }));
+    });
+    const afterWheelInPos = latestCameraSnapshot();
+    expect(renderSpy.mock.calls.length).toBeGreaterThan(rendersBeforeWheelIn);
+    expect(dist3(afterWheelInPos, studioTarget)).toBeLessThan(dist3(afterPinchPos, studioTarget) - 0.5);
+
+    const rendersBeforeWheelOut = renderSpy.mock.calls.length;
+    act(() => {
+      canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 }));
+    });
+    const afterWheelOutPos = latestCameraSnapshot();
+    expect(renderSpy.mock.calls.length).toBeGreaterThan(rendersBeforeWheelOut);
+    expect(dist3(afterWheelOutPos, studioTarget)).toBeGreaterThan(dist3(afterWheelInPos, studioTarget) + 0.5);
 
     unmount();
     expect(disposeSpy).toHaveBeenCalled();
@@ -306,5 +358,239 @@ describe('Floorplan3dWidget — Generic Config-Driven 3D Floorplan Widget', () =
         screen.getByRole('region', { name: /Demo Studio Floorplan — Floor 1 Overview/i }),
       ).toBeTruthy();
     });
+  });
+
+  it('applies entity-only updates on inline floors config via updateEntities and renderSpy without calling disposeSpy', async () => {
+    setupStubWebgl();
+    const inlineFloors = [
+      {
+        id: 'main-floor',
+        label: 'Main Floor',
+        rooms: [{ id: 'room-a', label: 'Room A', bounds: { xMin: -6, xMax: 6, zMin: -6, zMax: 6 } }],
+      },
+    ];
+    const haBindings = [
+      { id: 'room-a-light', entityId: 'light.room_a', metricType: 'light', label: 'Room A Light', roomId: 'room-a' },
+    ];
+
+    useDisplayStore.setState((s) => ({
+      ...s,
+      widgets: {
+        'fp-meta-ent': {
+          state: 'ok',
+          timestamp: '2026-11-17T10:00:00Z',
+          meta: {
+            type: 'floorplan-3d',
+            origin: [0, 0],
+            assets_base: '',
+            dimensions: [4, 2],
+            config: { title: 'Meta Inline', floors: inlineFloors, haBindings },
+          },
+          data: { entities: { 'light.room_a': { state: 'off' } } },
+        },
+        'fp-data-ent': {
+          state: 'ok',
+          timestamp: '2026-11-17T10:00:00Z',
+          data: {
+            title: 'Data Inline',
+            floors: inlineFloors,
+            haBindings,
+            entities: { 'light.room_a': { state: 'off' } },
+          },
+        },
+      },
+    }));
+
+    const metaView = await renderLoadedWidget('fp-meta-ent');
+    expect(screen.getByText(/Room A Light: off/i)).toBeTruthy();
+    renderSpy.mockClear();
+    disposeSpy.mockClear();
+
+    act(() => {
+      useDisplayStore.setState((s) => ({
+        ...s,
+        widgets: {
+          ...s.widgets,
+          'fp-meta-ent': {
+            ...s.widgets['fp-meta-ent']!,
+            timestamp: '2026-11-17T10:01:00Z',
+            data: { entities: { 'light.room_a': { state: 'on', attributes: { brightness: 200 } } } },
+          },
+        },
+      }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Room A Light: on/i)).toBeTruthy();
+    });
+    expect(disposeSpy).not.toHaveBeenCalled();
+    expect(renderSpy).toHaveBeenCalled();
+    const metaScene = (renderSpy.mock.lastCall as [ThreeModule.Scene] | undefined)?.[0];
+    expect(metaScene?.getObjectByName('floor-room-a')?.userData.lightState).toBe('on');
+    metaView.unmount();
+
+    disposeSpy.mockClear();
+    const dataView = await renderLoadedWidget('fp-data-ent');
+    expect(screen.getByText(/Room A Light: off/i)).toBeTruthy();
+    renderSpy.mockClear();
+    disposeSpy.mockClear();
+
+    act(() => {
+      useDisplayStore.setState((s) => ({
+        ...s,
+        widgets: {
+          ...s.widgets,
+          'fp-data-ent': {
+            ...s.widgets['fp-data-ent']!,
+            timestamp: '2026-11-17T10:02:00Z',
+            data: {
+              title: 'Data Inline',
+              floors: inlineFloors,
+              haBindings,
+              entities: { 'light.room_a': { state: 'on' } },
+            },
+          },
+        },
+      }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Room A Light: on/i)).toBeTruthy();
+    });
+    expect(disposeSpy).not.toHaveBeenCalled();
+    expect(renderSpy).toHaveBeenCalled();
+    const dataScene = (renderSpy.mock.lastCall as [ThreeModule.Scene] | undefined)?.[0];
+    expect(dataScene?.getObjectByName('floor-room-a')?.userData.lightState).toBe('on');
+    dataView.unmount();
+  });
+
+  it('clears incompatible floor-specific presets when switching floors while preserving shared presets', async () => {
+    useDisplayStore.setState((s) => ({
+      ...s,
+      widgets: {
+        'fp-floors-presets': {
+          state: 'ok',
+          timestamp: '2026-11-17T10:00:00Z',
+          meta: {
+            type: 'floorplan-3d',
+            origin: [0, 0],
+            assets_base: '',
+            dimensions: [4, 2],
+            config: {
+              title: 'Multi-Floor Presets',
+              defaultFloorId: 'floor-a',
+              defaultPresetId: 'shared-overview',
+              floors: [
+                {
+                  id: 'floor-a',
+                  label: 'Floor A',
+                  level: 1,
+                  rooms: [{ id: 'room-a', label: 'Room A', bounds: { xMin: -5, xMax: 5, zMin: -5, zMax: 5 } }],
+                },
+                {
+                  id: 'floor-b',
+                  label: 'Floor B',
+                  level: 2,
+                  rooms: [{ id: 'room-b', label: 'Room B', bounds: { xMin: -5, xMax: 5, zMin: -5, zMax: 5 } }],
+                },
+              ],
+              cameraPresets: [
+                { id: 'shared-overview', label: 'Overview', position: [0, 20, 22], target: [0, 2, 0] },
+                { id: 'shared-top', label: 'Top', position: [0, 34, 0.01], target: [0, 0, 0] },
+                { id: 'a-only', label: 'A Only', floorId: 'floor-a', position: [-3, 12, 14], target: [0, 1, 0] },
+                { id: 'b-only', label: 'B Only', floorId: 'floor-b', position: [3, 18, 16], target: [0, 10, 0] },
+              ],
+            },
+          },
+          data: {},
+        },
+      },
+    }));
+
+    const { container } = await renderLoadedWidget('fp-floors-presets');
+    const root = container.querySelector('.fp3d-widget') as HTMLElement;
+    expect(root.dataset.activeFloor).toBe('floor-a');
+    expect(root.dataset.activePreset).toBe('shared-overview');
+    expect(container.querySelector('[data-preset="a-only"]')).toBeTruthy();
+    expect(container.querySelector('[data-preset="b-only"]')).toBeNull();
+
+    fireEvent.click(container.querySelector('[data-preset="a-only"]') as HTMLElement);
+    expect(root.dataset.activePreset).toBe('a-only');
+
+    fireEvent.click(screen.getByTestId('floorplan-floor-floor-b-btn'));
+    expect(root.dataset.activeFloor).toBe('floor-b');
+    expect(root.dataset.activePreset).toBe('shared-overview');
+    expect(container.querySelector('[data-preset="b-only"]')).toBeTruthy();
+    expect(container.querySelector('[data-preset="a-only"]')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('floorplan-floor-floor-a-btn'));
+    expect(root.dataset.activeFloor).toBe('floor-a');
+    expect(root.dataset.activePreset).toBe('shared-overview');
+
+    fireEvent.click(container.querySelector('[data-preset="shared-top"]') as HTMLElement);
+    expect(root.dataset.activePreset).toBe('shared-top');
+
+    fireEvent.click(screen.getByTestId('floorplan-floor-floor-b-btn'));
+    expect(root.dataset.activeFloor).toBe('floor-b');
+    expect(root.dataset.activePreset).toBe('shared-top');
+
+    fireEvent.click(container.querySelector('[data-preset="b-only"]') as HTMLElement);
+    expect(root.dataset.activePreset).toBe('b-only');
+
+    act(() => {
+      window.__setFloorplanFloor?.('floor-a');
+    });
+    expect(root.dataset.activeFloor).toBe('floor-a');
+    expect(root.dataset.activePreset).toBe('shared-overview');
+  });
+
+  it('captures pointers on pointerdown and clears active pointers on lostpointercapture/pointercancel without tap selection', async () => {
+    setupStubWebgl();
+    const { container } = await renderLoadedWidget('fp-capture');
+    const root = container.querySelector('.fp3d-widget') as HTMLElement;
+    const canvas = container.querySelector('canvas.fp3d-canvas') as HTMLCanvasElement;
+    mockCanvasRect(canvas);
+
+    const setCaptureSpy = vi.fn();
+    const releaseCaptureSpy = vi.fn();
+    Object.assign(canvas, {
+      setPointerCapture: setCaptureSpy,
+      releasePointerCapture: releaseCaptureSpy,
+    });
+
+    act(() => {
+      canvas.dispatchEvent(ptr('pointerdown', 10, 260, 250));
+      canvas.dispatchEvent(ptr('lostpointercapture', 10, 260, 250));
+    });
+    expect(setCaptureSpy).toHaveBeenCalledWith(10);
+    expect(releaseCaptureSpy).toHaveBeenCalledWith(10);
+    expect(root.dataset.activePreset).toBe('dollhouse');
+
+    const rendersAfterLost = renderSpy.mock.calls.length;
+    act(() => {
+      canvas.dispatchEvent(ptr('pointermove', 10, 340, 310));
+    });
+    expect(renderSpy.mock.calls.length).toBe(rendersAfterLost);
+
+    act(() => {
+      canvas.dispatchEvent(ptr('pointerdown', 11, 260, 250));
+      canvas.dispatchEvent(ptr('pointercancel', 11, 260, 250));
+    });
+    expect(setCaptureSpy).toHaveBeenCalledWith(11);
+    expect(releaseCaptureSpy).toHaveBeenCalledWith(11);
+    expect(root.dataset.activePreset).toBe('dollhouse');
+
+    const rendersAfterCancel = renderSpy.mock.calls.length;
+    act(() => {
+      canvas.dispatchEvent(ptr('pointermove', 11, 350, 320));
+    });
+    expect(renderSpy.mock.calls.length).toBe(rendersAfterCancel);
+
+    act(() => {
+      canvas.dispatchEvent(ptr('pointerdown', 12, 260, 250));
+      canvas.dispatchEvent(ptr('pointerup', 12, 260, 250));
+    });
+    expect(releaseCaptureSpy).toHaveBeenCalledWith(12);
+    expect(root.dataset.activePreset).toBe('studio');
   });
 });
