@@ -50,6 +50,7 @@ CAMERA_SLUG_RE = re.compile(r"^[a-z0-9_]+$")
 CAMERA_SNAP_CACHE = OrderedDict()
 CAMERA_LAST_GOOD_FRAME = OrderedDict()
 CAMERA_LAST_EVENT_STATE = {}
+CAMERA_PENDING_SNAPSHOT_REFRESH: set[str] = set()
 _CAMERA_EVENT_EPOCH: dict[str, float] = {}
 CAMERA_SNAP_LOCK = threading.Lock()
 CAMERA_SNAP_TTL = 2.0
@@ -1892,6 +1893,7 @@ def _store_camera_good_frame(cid, data, ctype):
         CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
         while len(CAMERA_LAST_GOOD_FRAME) > MAX_IMG_CACHE_ENTRIES:
             CAMERA_LAST_GOOD_FRAME.popitem(last=False)
+        CAMERA_PENDING_SNAPSHOT_REFRESH.discard(cid)
 
 
 def _extract_first_jpeg_from_stream(stream, max_bytes=2 * 1024 * 1024):
@@ -1997,12 +1999,21 @@ def check_camera_motion_updated(cam_id_or_target, ha_states_map=None):
         if prev_sig != state_sig:
             CAMERA_LAST_EVENT_STATE[cid] = state_sig
             _CAMERA_EVENT_EPOCH[cid] = now
+            CAMERA_PENDING_SNAPSHOT_REFRESH.add(cid)
             return True
     return False
 
 
 def _has_camera_event_changed(target, ha_states_map=None):
-    return check_camera_motion_updated(target, ha_states_map=ha_states_map)
+    changed = check_camera_motion_updated(target, ha_states_map=ha_states_map)
+    if changed:
+        return True
+    resolved = target if isinstance(target, dict) else resolve_camera_target(target)
+    cid = str(resolved.get("id") or "").strip().lower() if isinstance(resolved, dict) else ""
+    if not cid:
+        return False
+    with CAMERA_SNAP_LOCK:
+        return cid in CAMERA_PENDING_SNAPSHOT_REFRESH
 
 
 def fetch_camera_snapshot(camera_key, force_refresh=False, active_refresh=False):
