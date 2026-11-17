@@ -30,14 +30,14 @@ func (d *dummyProvider) Shutdown(context.Context) error {
 func TestRegistry(t *testing.T) {
 	t.Parallel()
 	reg := provider.NewRegistry()
-	builtins := []string{"spacer", "live-view", "http", "weather-forecast", "calendar-feed", "photo-carousel", "tasks"}
+	builtins := []string{"spacer", "live-view", "floorplan-3d", "http", "weather-forecast", "calendar-feed", "photo-carousel", "tasks"}
 	for _, name := range builtins {
 		if p, err := reg.Create(name); err != nil || p == nil {
 			t.Fatalf("create %s failed: %v", name, err)
 		}
 	}
 	ctx := context.Background()
-	for _, name := range []string{"spacer", "live-view"} {
+	for _, name := range []string{"spacer", "live-view", "floorplan-3d"} {
 		p, _ := reg.Create(name)
 		if p.Init(ctx, nil, provider.InitOptions{}) != nil || p.Subscribe(ctx, make(chan provider.WidgetPayload, 1)) != nil || p.Shutdown(ctx) != nil {
 			t.Fatal("lifecycle failed")
@@ -59,7 +59,7 @@ func TestRegistry(t *testing.T) {
 func TestRegistry_Builtins(t *testing.T) {
 	t.Parallel()
 	reg := provider.NewRegistry()
-	builtins := []string{"spacer", "live-view", "http", "weather-forecast", "calendar-feed", "photo-carousel", "tasks"}
+	builtins := []string{"spacer", "live-view", "floorplan-3d", "http", "weather-forecast", "calendar-feed", "photo-carousel", "tasks"}
 	for _, name := range builtins {
 		p, err := reg.Create(name)
 		if err != nil {
