@@ -1662,73 +1662,48 @@ describe('LiveViewWidget component', () => {
     });
   });
 
-  it('clears continuous MJPEG img.src when off-pane or document hidden while preserving finite snapshot polling', () => {
-    seedWidget({
-      stream_url: 'https://cam.example.com/mjpeg',
-      stream_type: 'mjpeg',
-      title: 'Continuous Cam',
-    });
-
+  it('clears continuous MJPEG img.src (including unknown URLs like /api/camera_proxy_stream/camera.front) when off-pane, hidden, or idle while preserving finite snapshot polling', () => {
+    seedWidget({ stream_url: '/api/camera_proxy_stream/camera.front', stream_type: 'mjpeg', title: 'Continuous Cam' });
     const { container, rerender } = render(
       <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
         <LiveViewWidget id={widgetId} type="live-view" />
       </PaneContext.Provider>,
     );
-
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
-    expect(img.getAttribute('src')).toBe('https://cam.example.com/mjpeg');
+    expect(img.getAttribute('src')).toBe('/api/camera_proxy_stream/camera.front');
 
-    // Off-pane tears down continuous MJPEG stream by clearing img.src
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const renderPane = (isCurrentPane: boolean) => {
+      rerender(<PaneContext.Provider value={{ isCurrentPane, paneIndex: 0 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+    };
+
+    // Off-pane, document hidden, and idle each tear down continuous MJPEG img.src
+    renderPane(false);
     expect(img.getAttribute('src')).toBeNull();
-
-    // Returning to active pane resumes the continuous MJPEG stream
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
-    expect(img.getAttribute('src')).toBe('https://cam.example.com/mjpeg');
-
-    // Document hidden also tears down continuous MJPEG stream
-    act(() => {
-      useDisplayStore.getState().setDocumentVisible(false);
-    });
+    renderPane(true);
+    expect(img.getAttribute('src')).toBe('/api/camera_proxy_stream/camera.front');
+    act(() => { useDisplayStore.getState().setDocumentVisible(false); });
     expect(img.getAttribute('src')).toBeNull();
+    act(() => { useDisplayStore.getState().setDocumentVisible(true); });
+    expect(img.getAttribute('src')).toBe('/api/camera_proxy_stream/camera.front');
+    act(() => { vi.advanceTimersByTime(300_000); });
+    expect(img.getAttribute('src')).toBeNull();
+    act(() => { fireEvent.pointerDown(window); });
 
-    // Reset visibility and switch to finite /hearth-api/cameras/... snapshot polling
-    act(() => {
-      useDisplayStore.getState().setDocumentVisible(true);
-    });
-    seedWidget({
-      stream_url: '/hearth-api/cameras/porch/stream',
-      stream_type: 'mjpeg',
-      title: 'Snapshot Cam',
-      stagger_index: 0,
-    });
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
-    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/porch/stream');
-
-    // Finite snapshot polling preserves img.src when off-pane or document hidden
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
-    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/porch/stream');
-
-    act(() => {
-      useDisplayStore.getState().setDocumentVisible(false);
-    });
-    expect(img.getAttribute('src')).toBe('/hearth-api/cameras/porch/stream');
+    // Finite snapshot endpoints preserve img.src when off-pane, document hidden, or idle
+    for (const url of ['/hearth-api/cameras/porch/stream', '/api/camera_proxy/camera.front']) {
+      seedWidget({ stream_url: url, stream_type: 'mjpeg', title: 'Snapshot Cam', stagger_index: 0 });
+      renderPane(true);
+      expect(img.getAttribute('src')).toBe(url);
+      renderPane(false);
+      expect(img.getAttribute('src')).toBe(url);
+      act(() => { useDisplayStore.getState().setDocumentVisible(false); });
+      expect(img.getAttribute('src')).toBe(url);
+      act(() => { useDisplayStore.getState().setDocumentVisible(true); });
+      renderPane(true);
+      act(() => { vi.advanceTimersByTime(300_000); });
+      expect(img.getAttribute('src')).toContain(url);
+      act(() => { fireEvent.pointerDown(window); });
+    }
   });
 
   it('enforces max_auto_live_streams concurrency cap of 2 when 3 widgets receive motion and demotes on off-pane', async () => {

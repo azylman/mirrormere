@@ -20,12 +20,7 @@ import {
 
 export { activeAutoLiveStreams, computeStaggerDelayMs, parseLiveViewConfig, type LiveViewConfig };
 
-function isContinuousMjpegUrl(
-  streamType: LiveViewConfig['stream_type'],
-  streamUrl: string,
-  refreshIntervalSeconds?: number,
-): boolean {
-  if (streamType !== 'mjpeg' || !streamUrl) return false;
+function isFiniteSnapshotEndpoint(streamUrl: string): boolean {
   const raw = (streamUrl.split(/[?#]/)[0] ?? '').toLowerCase();
   let path = raw;
   try {
@@ -33,12 +28,19 @@ function isContinuousMjpegUrl(
   } catch {
     /* keep raw path */
   }
-  if (path.includes('/hearth-api/cameras/') || path.includes('/snapshot')) return false;
   return (
-    /(?:^|[/_.-])mjp(?:e)?g(?:$|[/_.-])/.test(path) ||
-    refreshIntervalSeconds === undefined ||
-    refreshIntervalSeconds <= 0
+    path.includes('/hearth-api/cameras/') ||
+    /(?:^|\/)snapshot(?:$|[/.])/.test(path) ||
+    path.startsWith('/api/camera_proxy/') ||
+    /\.(?:jpe?g|png|webp)$/.test(path)
   );
+}
+
+function isContinuousMjpegUrl(
+  streamType: LiveViewConfig['stream_type'],
+  streamUrl: string,
+): boolean {
+  return streamType === 'mjpeg' && Boolean(streamUrl) && !isFiniteSnapshotEndpoint(streamUrl);
 }
 
 export function LiveViewWidget({ id }: WidgetComponentProps) {
@@ -165,7 +167,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     }
   };
 
-  const isContinuousMjpegStream = isContinuousMjpegUrl(streamType, streamUrl, refreshIntervalSeconds);
+  const isContinuousMjpegStream = isContinuousMjpegUrl(streamType, streamUrl);
   const clearMjpeg = streamType !== 'mjpeg' || isContinuousMjpegStream;
 
   const shouldPlay =
