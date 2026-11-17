@@ -1,10 +1,11 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import './WeatherForecastWidget.css';
 import {
-  DEFAULT_SCHOOL_DAY_THRESHOLDS, type DaypartSlot, type SchoolDayThresholds,
+  DEFAULT_SCHOOL_DAY_THRESHOLDS, type DailyWeatherManifest, type DaypartSlot, type SchoolDayThresholds,
   formatSlotForecastSummary, resolveBirthdayOverride, resolveBirthdayPackSpriteUrl,
   resolveCharacterPackSpriteUrl, resolveClothingConditionState, resolveClothingOutfitLabel,
-  resolveSchoolDayTargetDate, selectDailyVariantIndex,
+  resolveDailyManifestSpriteUrl, resolveSchoolDayTargetDate, resolveUSHolidaySpriteUrl,
+  selectDailyVariantIndex,
 } from './schoolDayPack';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
@@ -17,6 +18,7 @@ interface SchoolDaySlotItem {
   slot: DaypartSlot; displayLabel: string; isTomorrow: boolean; temp: number;
   state: string; outfitLabel: string; forecastSummary: string; spriteUrl: string;
   birthdayBanner?: string | undefined;
+  styleLabel?: string | undefined;
 }
 const DAYPART_SLOTS: DaypartSlot[] = ['morning', 'afternoon', 'evening'];
 
@@ -68,7 +70,7 @@ function extractWindAndHumidity(current?: Record<string, unknown>): {
 }
 
 function extractSchoolDayConfig(config?: Record<string, unknown>): {
-  characterPack: string; variantsPerState: number; thresholds: SchoolDayThresholds;
+  characterPack: string; variantsPerState: number; thresholds: SchoolDayThresholds; assetsBase: string;
 } {
   const rawPack = typeof config?.character_pack === 'string' ? config.character_pack.trim() : '';
   const characterPack = rawPack && rawPack.toLowerCase() !== 'none'
@@ -82,7 +84,9 @@ function extractSchoolDayConfig(config?: Record<string, unknown>): {
     coolMaxF: numOr(config?.cool_max_f, DEFAULT_SCHOOL_DAY_THRESHOLDS.coolMaxF),
     warmMaxF: numOr(config?.warm_max_f, DEFAULT_SCHOOL_DAY_THRESHOLDS.warmMaxF),
   };
-  return { characterPack, variantsPerState, thresholds };
+  const rawBase = typeof config?.assets_base === 'string' ? config.assets_base.trim() : '';
+  const assetsBase = rawBase || '/static/ui/assets/weather-packs';
+  return { characterPack, variantsPerState, thresholds, assetsBase };
 }
 
 function findExplicitSlot(slot: DaypartSlot, data?: Record<string, unknown>): SlotWeatherInfo | undefined {
@@ -181,19 +185,60 @@ function buildSchoolDaySlots(
   data: Record<string, unknown> | undefined, current: Record<string, unknown> | undefined,
   daily: unknown[] | undefined, hourly: unknown[] | undefined,
   config: Record<string, unknown> | undefined, timestamp?: string,
+  dailyManifest?: DailyWeatherManifest | null,
 ): SchoolDaySlotItem[] {
-  const { characterPack, variantsPerState, thresholds } = extractSchoolDayConfig(config);
+  const { characterPack, variantsPerState, thresholds, assetsBase } = extractSchoolDayConfig(config);
   const { dateStr, isTomorrow } = resolveSchoolDayTargetDate(config, timestamp);
   const birthday = resolveBirthdayOverride(dateStr, config?.birthdays);
+  const enableHolidays = Boolean(config?.holidays);
+
+  const manifestAppliesForDate = Boolean(
+    dailyManifest &&
+    dateStr &&
+    typeof dailyManifest.target_date === 'string' &&
+    dailyManifest.target_date.trim() === dateStr.trim(),
+  );
+
+  const rawStyleLabel = typeof dailyManifest?.style_label === 'string' ? dailyManifest.style_label.trim() : '';
+  const rawThemeTitle = typeof dailyManifest?.theme_title === 'string' ? dailyManifest.theme_title.trim() : '';
+  const manifestStyleLabel = manifestAppliesForDate
+    ? (rawStyleLabel || rawThemeTitle || undefined)
+    : undefined;
 
   return DAYPART_SLOTS.map((slot) => {
     const info = resolveSlotWeather(slot, data, current, daily, hourly, dateStr, isTomorrow);
     const state = resolveClothingConditionState(info.temp, info.precipProb, info.icon, slot, thresholds);
     const variantIndex = selectDailyVariantIndex(dateStr, slot, variantsPerState);
-    const enableHolidays = Boolean(config?.holidays);
-    const spriteUrl = birthday
-      ? resolveBirthdayPackSpriteUrl(characterPack, birthday.key, slot)
-      : resolveCharacterPackSpriteUrl(characterPack, state, variantIndex, dateStr, enableHolidays);
+
+    let spriteUrl: string;
+    let slotStyleLabel: string | undefined;
+
+    if (birthday) {
+      spriteUrl = resolveBirthdayPackSpriteUrl(characterPack, birthday.key, slot, assetsBase);
+      slotStyleLabel = undefined;
+    } else {
+      const holidaySprite = enableHolidays
+        ? resolveUSHolidaySpriteUrl(characterPack, state, dateStr, assetsBase) : undefined;
+      const manifestSprite = manifestAppliesForDate
+        ? resolveDailyManifestSpriteUrl(characterPack, dailyManifest, dateStr, slot, assetsBase) : undefined;
+
+      if (holidaySprite) {
+        if (dailyManifest?.allow_on_holiday && manifestSprite) {
+          spriteUrl = manifestSprite;
+          slotStyleLabel = manifestStyleLabel;
+        } else {
+          spriteUrl = holidaySprite;
+          slotStyleLabel = undefined;
+        }
+      } else if (manifestSprite) {
+        spriteUrl = manifestSprite;
+        slotStyleLabel = manifestStyleLabel;
+      } else {
+        spriteUrl = resolveCharacterPackSpriteUrl(characterPack, state, variantIndex, dateStr, false, assetsBase);
+        slotStyleLabel = undefined;
+      }
+    }
+
     const baseOutfitLabel = resolveClothingOutfitLabel(state);
     const outfitLabel = birthday ? `${birthday.outfitLabel} · ${baseOutfitLabel}` : baseOutfitLabel;
     const forecastSummary = formatSlotForecastSummary(info.icon, info.precipProb);
@@ -201,6 +246,7 @@ function buildSchoolDaySlots(
     return {
       slot, displayLabel, isTomorrow, temp: info.temp, state,
       outfitLabel, forecastSummary, spriteUrl, birthdayBanner: birthday?.bannerLabel,
+      styleLabel: slotStyleLabel,
     };
   });
 }
@@ -246,6 +292,7 @@ function renderSchoolDayStrip(slots: SchoolDaySlotItem[], shadowOpacity?: number
     shadowOpacity !== undefined
       ? ({ '--weather-scrim-opacity': String(shadowOpacity) } as CSSProperties)
       : undefined;
+  const activeStyleLabel = slots.find((s) => s.styleLabel)?.styleLabel;
   return (
     <div
       className="weather-school-day-strip"
@@ -262,6 +309,9 @@ function renderSchoolDayStrip(slots: SchoolDaySlotItem[], shadowOpacity?: number
         >
           <span className="weather-school-day-name weather-school-day-slot-name">{item.displayLabel}</span>
           {item.birthdayBanner && <span className="weather-school-day-birthday-badge">{item.birthdayBanner}</span>}
+          {activeStyleLabel && item.slot === 'evening' && (
+            <span className="weather-school-day-style-badge">{activeStyleLabel}</span>
+          )}
           <span className="weather-school-day-temp">{item.temp}°</span>
           <span className="weather-school-day-state weather-school-day-condition">{item.state}</span>
           <div className="weather-school-day-copy">
@@ -339,6 +389,8 @@ export function WeatherForecastWidget({ id }: WidgetComponentProps) {
   const data = entry.data as Record<string, unknown> | undefined;
   const isError = entry.state === 'error';
 
+  const [dailyManifest, setDailyManifest] = useState<DailyWeatherManifest | null>(null);
+
   const current = extractCurrentCandidate(data);
   const hasCurrent = Boolean(current);
 
@@ -356,11 +408,59 @@ export function WeatherForecastWidget({ id }: WidgetComponentProps) {
   const daily = (data?.daily ?? data?.Daily) as unknown[] | undefined;
 
   const isSchoolDay = config?.mode === 'school-day';
+  const { characterPack, assetsBase } = extractSchoolDayConfig(config);
+
+  useEffect(() => {
+    if (!isSchoolDay) return;
+    let isMounted = true;
+    let abortController: AbortController | null = null;
+
+    const fetchManifest = async () => {
+      abortController?.abort();
+      abortController = new AbortController();
+      try {
+        const res = await fetch(`${assetsBase}/${characterPack}/daily_manifest.json`, {
+          signal: abortController.signal,
+        });
+        if (!res.ok) {
+          if (isMounted) setDailyManifest(null);
+          return;
+        }
+        const manifestData = (await res.json()) as DailyWeatherManifest | null;
+        if (isMounted) {
+          if (manifestData && typeof manifestData.target_date === 'string') {
+            setDailyManifest({
+              ...manifestData,
+              style_label: typeof manifestData.style_label === 'string' ? manifestData.style_label : undefined,
+              theme_title: typeof manifestData.theme_title === 'string' ? manifestData.theme_title : undefined,
+            });
+          } else {
+            setDailyManifest(null);
+          }
+        }
+      } catch (err: unknown) {
+        if (isMounted && (err as { name?: string }).name !== 'AbortError') {
+          setDailyManifest(null);
+        }
+      }
+    };
+
+    void fetchManifest();
+    const intervalId = setInterval(() => {
+      void fetchManifest();
+    }, 5 * 60 * 1000);
+    return () => {
+      isMounted = false;
+      abortController?.abort();
+      clearInterval(intervalId);
+    };
+  }, [isSchoolDay, characterPack, assetsBase]);
+
   const rawShadow = config?.shadow_opacity;
   const shadowOpacity =
     typeof rawShadow === 'number' && rawShadow >= 0 && rawShadow <= 1 ? rawShadow : undefined;
   const schoolDaySlots = isSchoolDay
-    ? buildSchoolDaySlots(data, current, daily, hourly, config, entry.timestamp)
+    ? buildSchoolDaySlots(data, current, daily, hourly, config, entry.timestamp, dailyManifest)
     : [];
 
   return (
