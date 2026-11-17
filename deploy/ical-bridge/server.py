@@ -1284,6 +1284,7 @@ def start_music_playback(body):
 
 def control_music_playback(body):
     import random
+
     action = body.get("action", "")
     speaker = body.get("speaker")
     with MUSIC_STATE_LOCK:
@@ -1298,9 +1299,9 @@ def control_music_playback(body):
             new_shuffle = not bool(MUSIC_STATE.get("shuffle", False))
             MUSIC_STATE["shuffle"] = new_shuffle
             if new_shuffle and len(queue) > q_idx + 2:
-                remaining = queue[q_idx + 1:]
+                remaining = queue[q_idx + 1 :]
                 random.shuffle(remaining)
-                MUSIC_STATE["queue"] = queue[:q_idx + 1] + remaining
+                MUSIC_STATE["queue"] = queue[: q_idx + 1] + remaining
         return True, get_music_dashboard_state()
 
     if _is_local_speaker(active_spk):
