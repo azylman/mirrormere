@@ -188,7 +188,7 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 		{"web-embed", "web-embed", "spacer", 2, 2, 13, true},
 		{"plex-recent", "plex-recent", "spacer", 3, 2, 10, true},
 		{"yt-music", "yt-music", "spacer", 3, 2, 10, true},
-		{"floorplan-3d", "floorplan-3d", "spacer", 4, 2, 13, true},
+		{"floorplan-3d", "floorplan-3d", "floorplan-3d", 4, 2, 13, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -275,6 +275,72 @@ display:
 		t.Fatalf("expected documented floorplan-3d configuration to validate: %v", err)
 	}
 	if snap == nil || len(snap.Config.Display.Widgets) != 2 {
+		t.Fatalf("unexpected snapshot: %+v", snap)
+	}
+}
+
+func TestLoader_Floorplan3dWithHAConfigValidation(t *testing.T) {
+	t.Setenv("HA_URL", "https://ha.example.test")
+	t.Setenv("HA_TOKEN", "test-ha-token")
+	loader := widget.NewLoader(filepath.Join("..", "..", "widgets"), t.TempDir())
+	yamlData := `
+timezone: America/Los_Angeles
+display:
+  widgets:
+    - id: home-floorplan-ha
+      type: floorplan-3d
+      dimensions: [4, 2]
+      config:
+        layout_url: "/static/floorplan-layout.json"
+        url_env: "HA_URL"
+        token_env: "HA_TOKEN"
+        domains:
+          - light
+          - sensor
+        entities:
+          - light.living_room
+        haBindings:
+          - roomId: living-room
+            entityId: light.living_room
+    - id: pad
+      type: spacer
+      dimensions: [2, 2]
+`
+	snap, err := config.ValidatePipeline([]byte(yamlData), loader, nil)
+	if err != nil {
+		t.Fatalf("expected floorplan-3d configuration with HA credentials and bindings to validate: %v", err)
+	}
+	if snap == nil || len(snap.Config.Display.Widgets) != 2 {
+		t.Fatalf("unexpected snapshot: %+v", snap)
+	}
+}
+
+func TestLoader_WeatherForecastAssetsBaseConfigValidation(t *testing.T) {
+	t.Parallel()
+	loader := widget.NewLoader(filepath.Join("..", "..", "widgets"), t.TempDir())
+	yamlData := `
+timezone: America/Los_Angeles
+display:
+  widgets:
+    - id: weather-custom-assets
+      type: weather-forecast
+      dimensions: [2, 1]
+      config:
+        latitude: 37.7749
+        longitude: -122.4194
+        assets_base: "/custom/weather-packs"
+    - id: pad-top
+      type: spacer
+      dimensions: [4, 1]
+    - id: pad-bottom
+      type: spacer
+      dimensions: [6, 1]
+`
+	snap, err := config.ValidatePipeline([]byte(yamlData), loader, nil)
+	if err != nil {
+		t.Fatalf("expected weather-forecast configuration with assets_base to validate: %v", err)
+	}
+	if snap == nil || len(snap.Config.Display.Widgets) != 3 {
 		t.Fatalf("unexpected snapshot: %+v", snap)
 	}
 }
