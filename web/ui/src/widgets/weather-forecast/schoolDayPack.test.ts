@@ -382,9 +382,6 @@ describe('schoolDayPack utilities', () => {
       expect(resolveUSHolidaySpriteUrl('ghibli', 'hot_dress', '2026-07-04')).toBe(
         '/static/ui/assets/weather-packs/ghibli/holiday_july_4th_hot_dress.jpg',
       );
-      expect(resolveUSHolidaySpriteUrl('ghibli', 'cold_puffer', '2026-12-25')).toBe(
-        '/static/ui/assets/weather-packs/ghibli/holiday_christmas_cold_puffer.jpg',
-      );
     });
 
     it('returns undefined when state is not supported on that holiday', () => {

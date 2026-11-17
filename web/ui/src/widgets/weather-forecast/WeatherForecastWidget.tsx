@@ -199,8 +199,10 @@ function buildSchoolDaySlots(
     dailyManifest.target_date.trim() === dateStr.trim(),
   );
 
+  const rawStyleLabel = typeof dailyManifest?.style_label === 'string' ? dailyManifest.style_label.trim() : '';
+  const rawThemeTitle = typeof dailyManifest?.theme_title === 'string' ? dailyManifest.theme_title.trim() : '';
   const manifestStyleLabel = manifestAppliesForDate
-    ? (dailyManifest?.style_label || dailyManifest?.theme_title)?.trim() || undefined
+    ? (rawStyleLabel || rawThemeTitle || undefined)
     : undefined;
 
   return DAYPART_SLOTS.map((slot) => {
@@ -233,7 +235,7 @@ function buildSchoolDaySlots(
         slotStyleLabel = manifestStyleLabel;
       } else {
         spriteUrl = resolveCharacterPackSpriteUrl(characterPack, state, variantIndex, dateStr, false, assetsBase);
-        slotStyleLabel = manifestAppliesForDate ? manifestStyleLabel : undefined;
+        slotStyleLabel = undefined;
       }
     }
 
@@ -426,9 +428,15 @@ export function WeatherForecastWidget({ id }: WidgetComponentProps) {
         }
         const manifestData = (await res.json()) as DailyWeatherManifest | null;
         if (isMounted) {
-          setDailyManifest(
-            manifestData && typeof manifestData.target_date === 'string' ? manifestData : null,
-          );
+          if (manifestData && typeof manifestData.target_date === 'string') {
+            setDailyManifest({
+              ...manifestData,
+              style_label: typeof manifestData.style_label === 'string' ? manifestData.style_label : undefined,
+              theme_title: typeof manifestData.theme_title === 'string' ? manifestData.theme_title : undefined,
+            });
+          } else {
+            setDailyManifest(null);
+          }
         }
       } catch (err: unknown) {
         if (isMounted && (err as { name?: string }).name !== 'AbortError') {

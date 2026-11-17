@@ -1850,6 +1850,118 @@ describe('WeatherHourlyGraph component', () => {
         '/static/ui/assets/weather-packs/ghibli_school_day/daily_2026-07-04_morning.jpg',
       );
     });
+
+    it('handles non-string style_label and theme_title in daily_manifest without throwing or rendering style badge', async () => {
+      const malformedLabelManifest = {
+        target_date: '2026-11-17',
+        style_label: 123,
+        theme_title: { title: 'Object Title' },
+        slots: {
+          morning: 'daily_2026-11-17_morning.jpg',
+          afternoon: 'daily_2026-11-17_afternoon.jpg',
+          evening: 'daily_2026-11-17_evening.jpg',
+        },
+      };
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => malformedLabelManifest,
+      } as Response);
+
+      useDisplayStore.setState({
+        widgets: {
+          'weather-manifest-malformed-labels': {
+            meta: {
+              type: 'weather-forecast',
+              origin: [0, 0],
+              dimensions: [2, 1],
+              config: {
+                mode: 'school-day',
+                character_pack: 'ghibli_custom',
+                date: '2026-11-17',
+              },
+              assets_base: '',
+            },
+            state: 'healthy',
+            data: {
+              current: { temperature: 68, icon: 'weather-sunny' },
+            },
+            timestamp: '2026-11-17T08:00:00Z',
+          },
+        },
+      });
+
+      const { container } = render(
+        <WeatherForecastWidget id="weather-manifest-malformed-labels" type="weather-forecast" />,
+      );
+
+      await waitFor(() => {
+        const morningImg = container.querySelector(
+          '.weather-school-day-slot-morning img.weather-school-day-sprite',
+        );
+        expect(morningImg?.getAttribute('src')).toBe(
+          '/static/ui/assets/weather-packs/ghibli_custom/daily_2026-11-17_morning.jpg',
+        );
+      });
+
+      expect(container.querySelector('.weather-school-day-style-badge')).toBeNull();
+    });
+
+    it('falls back to static sprites without style badge when daily_manifest has valid style_label but no usable slot images', async () => {
+      const emptySlotsManifest = {
+        target_date: '2026-11-17',
+        style_label: 'Watercolor Storybook',
+        slots: {
+          morning: '../invalid-traversal.jpg',
+          afternoon: '   ',
+        },
+      };
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptySlotsManifest,
+      } as Response);
+
+      useDisplayStore.setState({
+        widgets: {
+          'weather-manifest-no-slots': {
+            meta: {
+              type: 'weather-forecast',
+              origin: [0, 0],
+              dimensions: [2, 1],
+              config: {
+                mode: 'school-day',
+                character_pack: 'ghibli_school_day',
+                date: '2026-11-17',
+              },
+              assets_base: '',
+            },
+            state: 'healthy',
+            data: {
+              current: { temperature: 68, icon: 'weather-sunny' },
+            },
+            timestamp: '2026-11-17T08:00:00Z',
+          },
+        },
+      });
+
+      const { container } = render(
+        <WeatherForecastWidget id="weather-manifest-no-slots" type="weather-forecast" />,
+      );
+
+      await waitFor(() => {
+        expect(globalThis.fetch).toHaveBeenCalled();
+      });
+
+      expect(container.querySelector('.weather-school-day-style-badge')).toBeNull();
+      const sprites = container.querySelectorAll('img.weather-school-day-sprite');
+      expect(sprites.length).toBe(3);
+      for (const sprite of sprites) {
+        expect(sprite.getAttribute('src')).toMatch(
+          /^\/static\/ui\/assets\/weather-packs\/ghibli_school_day\/[a-z_]+_v\d+\.jpg$/,
+        );
+      }
+    });
   });
 });
 
