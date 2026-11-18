@@ -205,6 +205,9 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
 
     if (effectiveType === 'mjpeg') {
       if (imgRef.current) imgRef.current.src = streamUrl;
+      if (isContinuousMjpegStream) {
+        return () => { stopDecoders(clearMjpeg); };
+      }
       const intervalSec = refreshIntervalSeconds ?? 15;
       if (intervalSec <= 0) return () => { stopDecoders(clearMjpeg); };
       const intervalMs = intervalSec * 1000;
@@ -269,7 +272,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
 
     void startWebRTC();
     return () => { stopDecoders(clearMjpeg); };
-  }, [shouldPlay, streamUrl, streamType, expandStreamUrl, activeAutoLive, id, refreshIntervalSeconds, staggerIndex, clearMjpeg]);
+  }, [shouldPlay, streamUrl, streamType, expandStreamUrl, activeAutoLive, id, refreshIntervalSeconds, staggerIndex, clearMjpeg, isContinuousMjpegStream]);
 
   useEffect(() => {
     if (!shouldBackgroundRefresh) return;

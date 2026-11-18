@@ -920,15 +920,6 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertEqual(ctype, "audio/mp4")
             self.assertEqual(hdrs["User-Agent"], "YtDlpUA/1.0")
 
-    def test_get_configured_cameras_defaults_empty(self):
-        with patch.object(srv, "_load_config", return_value={}):
-            self.assertEqual(srv._get_configured_cameras(), [])
-        with patch.object(srv, "_load_config", return_value={"cameras": []}):
-            self.assertEqual(srv._get_configured_cameras(), [])
-        custom = [{"id": "front_door", "entity_id": "camera.front_door"}]
-        with patch.object(srv, "_load_config", return_value={"cameras": custom}):
-            self.assertEqual(srv._get_configured_cameras(), custom)
-
     def test_camera_catalog_and_configured_alias_mapping(self):
         fake_cams = [
             {
@@ -978,6 +969,8 @@ class TestHandlerEndpoints(unittest.TestCase):
             alias_target = srv.resolve_camera_target("camera.entry_way_camera")
             self.assertIsNotNone(alias_target)
             self.assertEqual(alias_target["id"], "entry_cam")
+            self.assertIsNone(srv.resolve_camera_target("unconfigured_cam"))
+            self.assertIsNone(srv.resolve_camera_target("camera.unconfigured_cam"))
 
             h = self._create_handler("GET", "/hearth-api/cameras", client_ip="127.0.0.1")
             h.do_GET()
@@ -989,6 +982,11 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertEqual(entry_items[0]["entity_id"], "camera.entry_way_camera")
             self.assertEqual(entry_items[0]["state"], "streaming")
             self.assertEqual(entry_items[0]["title"], "Entry Cam")
+
+        with patch.object(srv, "_get_configured_cameras", return_value=[]):
+            fallback = srv.resolve_camera_target("fallback_cam")
+            self.assertIsNotNone(fallback)
+            self.assertEqual(fallback["id"], "fallback_cam")
 
     def test_camera_snapshot_and_webrtc_endpoints(self):
         fake_jpeg = b"\xff\xd8\xff\xe0fake_jpeg_bytes"

@@ -1634,7 +1634,8 @@ def resolve_camera_target(camera_key):
             return None
         slug = clean
 
-    for cam in _get_configured_cameras():
+    configured = _get_configured_cameras()
+    for cam in configured:
         if not isinstance(cam, dict):
             continue
         cid = str(cam.get("id") or "").lower()
@@ -1664,6 +1665,9 @@ def resolve_camera_target(camera_key):
                 "event_driven": bool(cam.get("event_driven", is_bat or bool(event_entities))),
                 "event_entities": event_entities,
             }
+
+    if configured:
+        return None
 
     return {
         "id": slug,

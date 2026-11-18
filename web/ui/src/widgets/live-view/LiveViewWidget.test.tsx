@@ -1641,11 +1641,7 @@ describe('LiveViewWidget component', () => {
 
   it('clears continuous MJPEG img.src (including unknown URLs like /api/camera_proxy_stream/camera.front) when off-pane, hidden, or idle while preserving finite snapshot polling', () => {
     seedWidget({ stream_url: '/api/camera_proxy_stream/camera.front', stream_type: 'mjpeg', title: 'Continuous Cam' });
-    const { container, rerender } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container, rerender } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('/api/camera_proxy_stream/camera.front');
 
@@ -1683,6 +1679,24 @@ describe('LiveViewWidget component', () => {
     }
   });
 
+  it('does not rewrite continuous MJPEG stream URLs with ?t= refresh timers while preserving snapshot refresh', () => {
+    for (const url of ['/api/camera_proxy_stream/camera.front', 'https://cam.example.com/mjpeg']) {
+      seedWidget({ stream_url: url, stream_type: 'mjpeg', title: 'Continuous MJPEG', stagger_index: 0 });
+      const { container, unmount } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+      const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
+      expect(img.getAttribute('src')).toBe(url);
+      act(() => { vi.advanceTimersByTime(30_000); });
+      expect(img.getAttribute('src')).toBe(url);
+      unmount();
+    }
+    seedWidget({ stream_url: '/hearth-api/cameras/porch/stream', stream_type: 'mjpeg', title: 'Snapshot MJPEG', stagger_index: 0 });
+    const { container, unmount } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+    const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
+    act(() => { vi.advanceTimersByTime(16_000); });
+    expect(img.getAttribute('src')).toMatch(/^\/hearth-api\/cameras\/porch\/stream\?t=\d+$/);
+    unmount();
+  });
+
   it('enforces max_auto_live_streams concurrency cap of 2 when 3 widgets receive motion and demotes on off-pane', async () => {
     activeAutoLiveStreams.clear();
     const nowEpoch = Math.floor(Date.now() / 1000);
@@ -1705,33 +1719,27 @@ describe('LiveViewWidget component', () => {
 
     const mkCamEntry = (sid: string) => ({
       meta: makeWidgetMeta({
-        stream_id: sid,
-        stream_url: `/hearth-api/cameras/${sid}/stream`,
-        stream_type: 'mjpeg',
-        expand_stream_url: 'http://localhost:1984/api/webrtc?src=front',
-        auto_live_on_motion_seconds: 60,
-        max_auto_live_streams: 2,
-        refresh_interval_seconds: 0,
-        background_refresh_interval_seconds: 0,
+        stream_id: sid, stream_url: `/hearth-api/cameras/${sid}/stream`, stream_type: 'mjpeg',
+        expand_stream_url: 'http://localhost:1984/api/webrtc?src=front', auto_live_on_motion_seconds: 60,
+        max_auto_live_streams: 2, refresh_interval_seconds: 0, background_refresh_interval_seconds: 0,
       }),
-      data: {},
-      state: 'ready' as const,
-      timestamp: '2026-10-31T12:00:00Z',
+      data: {}, state: 'ready' as const, timestamp: '2026-10-31T12:00:00Z',
     });
 
     useDisplayStore.setState({
       widgets: { 'w-cam-1': mkCamEntry('cam1'), 'w-cam-2': mkCamEntry('alias2'), 'w-cam-3': mkCamEntry('cam3') },
     });
 
-    const { container, rerender } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+    const threeWidgets = (isCurrentPane: boolean) => (
+      <PaneContext.Provider value={{ isCurrentPane, paneIndex: 0 }}>
         <div>
           <LiveViewWidget id="w-cam-1" type="live-view" />
           <LiveViewWidget id="w-cam-2" type="live-view" />
           <LiveViewWidget id="w-cam-3" type="live-view" />
         </div>
-      </PaneContext.Provider>,
+      </PaneContext.Provider>
     );
+    const { container, rerender } = render(threeWidgets(true));
 
     await vi.waitFor(() => {
       expect(activeAutoLiveStreams.size).toBe(2);
@@ -1745,22 +1753,12 @@ describe('LiveViewWidget component', () => {
     expect(activeAutoLiveStreams.has('w-cam-1')).toBe(false);
 
     // Next 5s poll keeps w-cam-1 rejected at the concurrency cap
-    await act(async () => {
-      vi.advanceTimersByTime(5_000);
-    });
+    await act(async () => { vi.advanceTimersByTime(5_000); });
     expect(activeAutoLiveStreams.size).toBe(2);
     expect(activeAutoLiveStreams.has('w-cam-1')).toBe(false);
 
     // Swiping off-pane immediately releases all auto-live slots and demotes video
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
-        <div>
-          <LiveViewWidget id="w-cam-1" type="live-view" />
-          <LiveViewWidget id="w-cam-2" type="live-view" />
-          <LiveViewWidget id="w-cam-3" type="live-view" />
-        </div>
-      </PaneContext.Provider>,
-    );
+    rerender(threeWidgets(false));
     expect(activeAutoLiveStreams.size).toBe(0);
   });
 
