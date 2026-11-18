@@ -1827,6 +1827,14 @@ test('Calendar Family Client Controller', async (t) => {
 
     // Non-family birthday
     assert.equal(fn([{ title: "Charlie's Birthday" }], members), null);
+    for (const title of ["Amelie Zeng's birthday", 'Amelie Zeng’s bday', 'Happy birthday Amelie', 'Amelie Zeng birthday']) {
+      assert.equal(fn([{ title, owners: ['Alex'], initials: ['A'] }], members), null);
+    }
+
+    // Activity/venue/food/generic birthday titles on a member's calendar
+    for (const title of ['Birthday Pizza', 'Birthday Bowling', 'Office birthday']) {
+      assert.equal(fn([{ title, owners: ['Alex'] }], members), 'birthday');
+    }
 
     // Holidays
     assert.equal(fn([{ title: 'Christmas Eve' }], members), 'holiday');
@@ -1894,6 +1902,39 @@ test('Calendar Family Client Controller', async (t) => {
     assert.equal(day3.querySelector('.cf-special-pill'), null);
 
     global.window.MirrormereCalendarFamily.unmount('special-day-test');
+  });
+
+  await t.test('applySpecialDayHighlights excludes friend birthdays while highlighting activity birthday titles on member calendars', () => {
+    const data = {
+      members: [{ name: 'Alex' }, { name: 'Maya' }],
+      days: [
+        { date: '2026-10-25', all_day: [{ id: 'friend-1', title: "Amelie Zeng's birthday", owners: ['Alex'], initials: ['A'] }], events: [] },
+        { date: '2026-10-26', all_day: [{ id: 'act-1', title: 'Birthday Pizza', owners: ['Alex'] }], events: [] },
+        { date: '2026-10-27', all_day: [{ id: 'act-2', title: 'Birthday Bowling', owners: ['Alex'] }], events: [] },
+        { date: '2026-10-28', all_day: [{ id: 'act-3', title: 'Office birthday', owners: ['Alex'] }], events: [] },
+      ],
+    };
+
+    const el = createMockElement({ widgetId: 'special-day-friend-vs-activity', data });
+    const dayNodes = data.days.map((d) => {
+      const node = createMockDOMNode('div', { className: 'cf-day' });
+      node.dataset.date = d.date;
+      node.appendChild(createMockDOMNode('div', { className: 'cf-day-header' }));
+      el._panels.week.appendChild(node);
+      return node;
+    });
+
+    global.window.MirrormereCalendarFamily.mount(el);
+
+    assert.ok(!dayNodes[0].classList.contains('cf-special-birthday'), 'friend birthday on member calendar should NOT highlight');
+    assert.equal(dayNodes[0].querySelector('.cf-special-pill'), null);
+
+    for (let i = 1; i <= 3; i++) {
+      assert.ok(dayNodes[i].classList.contains('cf-special-birthday'), `day ${i} (${data.days[i].all_day[0].title}) should highlight`);
+      assert.equal(dayNodes[i].querySelector('.cf-special-pill')?.textContent, '🎂 Family Bday');
+    }
+
+    global.window.MirrormereCalendarFamily.unmount('special-day-friend-vs-activity');
   });
 
   await t.test('applySpecialDayHighlights respects celebrate_special_days: false', () => {

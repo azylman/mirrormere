@@ -40,19 +40,28 @@ function isWorkExcluded(ev: FamilyEvent): boolean {
   );
 }
 
+const GENERIC_BIRTHDAY_WORDS = new Set('my our your his her their family kid kids child children son daughter mom mommy mother dad daddy father parent parents grandma grandmother grandpa grandfather nana papa grammy gramps sister brother sibling wife husband spouse partner hubby wifey happy belated early surprise golden half big special annual sweet milestone dinner lunch brunch breakfast supper party bash celebration cake gift gifts present presents card cards trip vacation weekend outing drinks hour shopping decorations prep planning plan plans reminder event eve week month day boy girl today tonight tomorrow the a an at in on for to of with from and or is was pizza bowling office work school class pool park zoo movie movies arcade golf skating swim swimming picnic bbq barbecue cookout potluck tea coffee cocktails dessert cupcakes cookies treats balloons sleepover karaoke games game playdate fiesta luau fun you everyone team staff'.split(' '));
+const OTHER_BIRTHDAY_SUBJECT_PATTERNS = [
+  /(?:^|[^\p{L}\p{N}_-])([\p{L}\p{N}._-]+(?:\s+[\p{L}\p{N}._-]+){0,3})(?:'s|’s)\s+(?:(?:\d+(?:st|nd|rd|th)|happy|surprise|golden|half|big|early|belated)\s+){0,2}(?:birthday|bday|b-day)\b/iu,
+  /\b(?:happy\s+)?(?:birthday|bday|b-day)(?:\s+(?:dinner|lunch|brunch|breakfast|supper|party|bash|celebration|cake|outing|drinks|surprise))?(?:\s+(?:to|for))?[\s,:-]+([\p{L}\p{N}._-]+)\b/iu,
+  /(?:^|[^\p{L}\p{N}_-])([\p{L}\p{N}._-]+(?:\s+[\p{L}\p{N}._-]+){0,3})\s+(?:birthday|bday|b-day)\b/iu,
+];
+function namesOtherBirthdayPerson(title: string): boolean {
+  return OTHER_BIRTHDAY_SUBJECT_PATTERNS.some((re) => {
+    const subject = re.exec(title)?.[1];
+    return Boolean(subject?.trim().split(/\s+/).some((t) => /^\p{Lu}/u.test(t) && !GENERIC_BIRTHDAY_WORDS.has(t.toLowerCase()) && !/^\d+(?:st|nd|rd|th)?$/i.test(t)));
+  });
+}
 function matchesFamilyMember(ev: FamilyEvent, safeMembers: FamilyMember[]): boolean {
   const title = ev.title || '';
   const evMember = (ev as unknown as { member?: string }).member?.toLowerCase();
-  for (const m of safeMembers) {
-    const name = m.name.trim();
-    if (!name) continue;
-    const lower = name.toLowerCase();
-    if (new RegExp(`\\b${escapeRegExp(name)}('s)?\\b`, 'i').test(title)) return true;
-    if (ev.owners?.some((o) => o.toLowerCase() === lower || o.toLowerCase().includes(lower))) return true;
-    if (m.initial && ev.initials?.includes(m.initial)) return true;
-    if (evMember && evMember === lower) return true;
-  }
-  return false;
+  if (safeMembers.some((m) => m.name.trim() && new RegExp(`\\b${escapeRegExp(m.name.trim())}(?:'s|’s)?\\b`, 'i').test(title))) return true;
+  if (namesOtherBirthdayPerson(title)) return false;
+  return safeMembers.some((m) => {
+    const lower = m.name.trim().toLowerCase();
+    if (!lower) return false;
+    return (ev.owners?.some((o) => o.toLowerCase().includes(lower)) ?? false) || Boolean(m.initial && ev.initials?.includes(m.initial)) || evMember === lower;
+  });
 }
 
 export function detectDaySpecialStatus(dayEvents?: FamilyEvent[], members?: FamilyMember[]): 'birthday' | 'holiday' | null {

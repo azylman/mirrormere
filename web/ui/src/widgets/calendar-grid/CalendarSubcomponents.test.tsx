@@ -1469,45 +1469,30 @@ describe('useCalendarRangeData & useInactivityReset', () => {
           { name: 'Maya', initial: 'M', color: '#00ff00', text_color: '#fff', pattern: 'solid' },
         ];
 
-        // Family birthday by title prefix/possessive
-        expect(
-          detectDaySpecialStatus([{ id: '1', title: "Maya's Birthday" }], familyMembers)
-        ).toBe('birthday');
-
-        // Family birthday by owner
-        expect(
-          detectDaySpecialStatus(
-            [{ id: '2', title: 'Birthday Dinner', owners: ['Alex'] }],
-            familyMembers
-          )
-        ).toBe('birthday');
-
-        // Family birthday by member field
-        expect(
-          detectDaySpecialStatus(
-            [{ id: '3', title: 'Happy Birthday!', member: 'Maya' } as unknown as FamilyEvent],
-            familyMembers
-          )
-        ).toBe('birthday');
+        // Family birthday by title prefix/possessive, owner, and member field
+        expect(detectDaySpecialStatus([{ id: '1', title: "Maya's Birthday" }], familyMembers)).toBe('birthday');
+        expect(detectDaySpecialStatus([{ id: '2', title: 'Birthday Dinner', owners: ['Alex'] }], familyMembers)).toBe('birthday');
+        expect(detectDaySpecialStatus([{ id: '3', title: 'Happy Birthday!', member: 'Maya' } as unknown as FamilyEvent], familyMembers)).toBe('birthday');
 
         // Work birthday explicitly excluded
-        expect(
-          detectDaySpecialStatus([{ id: '4', title: 'Dave (Work) Birthday' }], familyMembers)
-        ).toBeNull();
-        expect(
-          detectDaySpecialStatus([{ id: '5', title: 'Coworker Birthday - Lunch' }], familyMembers)
-        ).toBeNull();
-        expect(
-          detectDaySpecialStatus(
-            [{ id: '6', title: 'Bob Birthday', owners: ['(Work)'] }],
-            familyMembers
-          )
-        ).toBeNull();
+        expect(detectDaySpecialStatus([{ id: '4', title: 'Dave (Work) Birthday' }], familyMembers)).toBeNull();
+        expect(detectDaySpecialStatus([{ id: '5', title: 'Coworker Birthday - Lunch' }], familyMembers)).toBeNull();
+        expect(detectDaySpecialStatus([{ id: '6', title: 'Bob Birthday', owners: ['(Work)'] }], familyMembers)).toBeNull();
 
         // Non-family birthday (not in members list)
-        expect(
-          detectDaySpecialStatus([{ id: '7', title: "Charlie's Birthday" }], familyMembers)
-        ).toBeNull();
+        expect(detectDaySpecialStatus([{ id: '7', title: "Charlie's Birthday" }], familyMembers)).toBeNull();
+
+        // Named friend birthdays on a family member's calendar must NOT fall back to owners/initials
+        for (const title of ["Amelie Zeng's birthday", 'Amelie Zeng’s bday', 'Happy birthday Amelie', 'Amelie Zeng birthday']) {
+          expect(detectDaySpecialStatus([{ id: 'friend', title, owners: ['Alex'], initials: ['A'] }], familyMembers)).toBeNull();
+        }
+        // Generic birthday titles, activity/venue/food birthday titles, or curly-apostrophe member titles still match via member / owners
+        expect(detectDaySpecialStatus([{ id: '12', title: 'Alex’s bday' }], familyMembers)).toBe('birthday');
+        expect(detectDaySpecialStatus([{ id: '13', title: 'Family Birthday', owners: ['Alex'] }], familyMembers)).toBe('birthday');
+        expect(detectDaySpecialStatus([{ id: '14', title: 'Birthday', owners: ['Alex'], initials: ['A'] }], familyMembers)).toBe('birthday');
+        for (const title of ['Birthday Pizza', 'Birthday Bowling', 'Office birthday']) {
+          expect(detectDaySpecialStatus([{ id: 'activity', title, owners: ['Alex'] }], familyMembers)).toBe('birthday');
+        }
       });
 
       it('detects holidays by keyword or calendar name', () => {
@@ -1747,6 +1732,29 @@ describe('useCalendarRangeData & useInactivityReset', () => {
         expect(
           monthContainer.querySelector('.cf-month-day[data-date="2026-10-28"] .cf-pill-birthday')?.textContent
         ).toBe("🎂 Sam's Day");
+      });
+
+      it('excludes friend birthdays on member calendars from week and month special birthday highlights', () => {
+        const friendEv: FamilyEvent = { id: 'friend_bday', title: "Amelie Zeng's birthday", owners: ['Alex'], initials: ['A'] };
+        const daysToRender: FamilyDay[] = [{ date: '2026-10-25', weekday_abbr: 'Sun', day_of_month: 25, is_today: false, is_weekend: true, all_day: [friendEv], events: [] }];
+        const { container: weekEl } = render(
+          <CalendarWeekView activeView="week" daysToRender={daysToRender} visibleAllDayEvents={[]} members={members} currentDateISO="2026-10-25" onOpenModal={vi.fn()} celebrateSpecialDays={true} />
+        );
+        expect(weekEl.querySelector('.cf-day[data-date="2026-10-25"]')?.classList.contains('cf-special-birthday')).toBe(false);
+        expect(weekEl.querySelector('.cf-pill-birthday')).toBeNull();
+        expect(weekEl.textContent).not.toContain('🎂 Family Bday');
+
+        const monthVM: FamilyMonthViewModel = {
+          month_label: 'October 2026', month_name: 'October', year: 2026, month: 10, range_start: '2026-10-01', range_end: '2026-10-31',
+          today: '2026-10-25', shared_color: '#3D405B', weekday_headers: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], members,
+          days: [{ date: '2026-10-25', day_of_month: 25, is_current_month: true, is_today: true, is_weekend: true, events: [friendEv] }],
+        };
+        const { container: monthEl } = render(
+          <CalendarMonthView activeView="month" monthVM={monthVM} members={members} onOpenModal={vi.fn()} celebrateSpecialDays={true} />
+        );
+        expect(monthEl.querySelector('.cf-month-day[data-date="2026-10-25"]')?.classList.contains('cf-special-birthday')).toBe(false);
+        expect(monthEl.querySelector('.cf-pill-birthday')).toBeNull();
+        expect(monthEl.textContent).not.toContain('🎂 Family Bday');
       });
     });
   });
