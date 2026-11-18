@@ -55,6 +55,19 @@ async function listChecks(api,repo,sha) {
     if (data.check_runs.length < 100) return all;
   }
 }
+// Only v1 records from this immutable run enter this compatibility reader.
+// Pre-repair producers used summary; text, when present, is authoritative.
+function payload(check) {
+  const output = check.output || {};
+  const hasText = output.text !== null && output.text !== undefined;
+  const raw = hasText ? output.text : output.summary;
+  requireValid(typeof raw === 'string' && Buffer.byteLength(raw) <= 65536, 'Invalid metadata payload');
+  const value = JSON.parse(raw);
+  if (hasText && typeof output.summary === 'string' && /^\s*[[{]/.test(output.summary)) {
+    requireValid(JSON.stringify(JSON.parse(output.summary)) === JSON.stringify(value), 'Conflicting metadata transports');
+  }
+  return {raw,value};
+}
 async function main(env=process.env) {
   const event = JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH,'utf8'));
   // Fork pull_request tokens cannot create checks even with checks: write.
@@ -91,17 +104,26 @@ async function main(env=process.env) {
     const manifests = checks.filter(check => check.name === 'build-metadata' && check.app?.id === suite.app?.id && check.head_sha === base.source_sha && check.external_id?.startsWith(`build-metadata:v1:${base.repository}:${base.run_id}:`));
     requireValid(manifests.length > 0, 'Missing manifest');
     for (const check of manifests) {
-      const manifest = JSON.parse(check.output.summary);
+      const manifest = payload(check).value;
       requireValid(sameRun(base,manifest) && ['manifest','final'].includes(manifest.kind) && manifest.run_attempt > 0 && manifest.run_attempt <= base.run_attempt && check.external_id === externalID(manifest) && check.status === 'completed' && check.conclusion === 'neutral', 'Invalid manifest');
     }
     const records = [];
+    const replicas = new Map();
     for (const check of checks) {
-      if (check.name !== 'build-metadata-result' || check.app?.id !== suite.app?.id || check.head_sha !== base.source_sha) continue;
+      if (check.name !== 'build-metadata-result') continue;
       // Other runs on this commit are unrelated. Our external ID is immutable.
       if (!check.external_id?.startsWith(`build-metadata:v1:${base.repository}:${base.run_id}:`)) continue;
-      const r = JSON.parse(check.output.summary);
+      const {raw,value:r} = payload(check);
+      requireValid(check.app?.id === suite.app?.id && check.head_sha === base.source_sha, 'Invalid result provenance');
+      requireValid(sameRun(base,r) && r.kind === 'result' && Number.isSafeInteger(r.run_attempt) && r.run_attempt > 0 && r.run_attempt <= base.run_attempt && r.source_attempt === r.run_attempt, 'Invalid result identity');
+      requireValid(base.selected.some(s => s.service === r.service && s.image_name === r.image_name), 'Unexpected service');
       requireValid(check.external_id === externalID(r) && check.status === 'completed' && check.conclusion === 'neutral','Invalid transport');
-      records.push(r);
+      // GitHub can clone a retained check after the final aggregate. IDs and
+      // timestamps change, but the bytes and immutable envelope must agree.
+      const key = `${r.run_attempt}/${r.service}`;
+      const fingerprint = JSON.stringify([raw,check.external_id,check.name,check.app.id,check.head_sha,check.status,check.conclusion]);
+      if (replicas.has(key)) requireValid(replicas.get(key) === fingerprint, 'Conflicting result replica');
+      else { replicas.set(key,fingerprint); records.push(r); }
     }
     metadata = aggregate(base,records,env.MATRIX_RESULT);
     requireValid(metadata.results.every(r => r.state === 'success'), 'Incomplete or failed matrix results');
@@ -110,7 +132,7 @@ async function main(env=process.env) {
   } else requireValid(mode === 'manifest','Invalid publisher mode');
   const summary = JSON.stringify(metadata);
   requireValid(Buffer.byteLength(summary) <= 65536,'Metadata too large');
-  const body = {name:metadata.kind === 'result' ? 'build-metadata-result' : 'build-metadata',head_sha:base.source_sha,external_id:externalID(metadata),status:'completed',conclusion:'neutral',output:{title:'Build metadata v1',summary}};
+  const body = {name:metadata.kind === 'result' ? 'build-metadata-result' : 'build-metadata',head_sha:base.source_sha,external_id:externalID(metadata),status:'completed',conclusion:'neutral',output:{title:'Build metadata v1',summary:'Version 1 build transport',text:summary}};
   const id = mode === 'result' ? Number(env.RESULT_CHECK_ID) : 0;
   requireValid(mode !== 'result' || id > 0,'Missing running check');
   const check = await api(`/repos/${base.repository}/check-runs${id ? '/'+id : ''}`,id ? 'PATCH' : 'POST',body);
