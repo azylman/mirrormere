@@ -11,6 +11,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections import OrderedDict
@@ -45,6 +46,28 @@ PLEX_THUMB_RE = re.compile(r"^/library/(metadata|arts|parts)/[0-9a-zA-Z_/.-]+$")
 RECIPE_ID_RE = re.compile(r"^[0-9a-zA-Z_-]+$")
 YT_VIDEO_ID_RE = re.compile(r"^[0-9A-Za-z_-]{11}$")
 HA_ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+CAMERA_SLUG_RE = re.compile(r"^[a-z0-9_]+$")
+
+CAMERA_SNAP_CACHE = OrderedDict()
+CAMERA_LAST_GOOD_FRAME = OrderedDict()
+CAMERA_LAST_EVENT_STATE = {}
+CAMERA_PENDING_SNAPSHOT_REFRESH: set[str] = set()
+_CAMERA_EVENT_EPOCH: dict[str, float] = {}
+CAMERA_FAILURE_COOLDOWN: dict[str, float] = {}
+CAMERA_FAILURE_STREAK: dict[str, tuple[int, float]] = {}
+CAMERA_SNAP_LOCK = threading.Lock()
+CAMERA_SNAP_TTL = 2.0
+CAMERA_ACTIVE_INTERVAL_SEC = 60.0
+CAMERA_WARMER_INTERVAL_SEC = 120
+CAMERA_WARMER_STAGGER_SEC = 2.0
+CAMERA_WARMER_REFRESH_SEC = 300.0
+CAMERA_FAILURE_COOLDOWN_SEC = 300.0
+CAMERA_TIMEOUT_THRESHOLD = 2
+AUTO_LIVE_WINDOW_SECONDS = 60
+MAX_AUTO_LIVE_STREAMS = 2
+HA_NEST_PLACEHOLDER_LEN = 2689
+CAMERA_WARMER_STOP_EVENT = threading.Event()
+_CAMERA_WARMER_CTX = threading.local()
 
 
 def _resolve_env_secrets(data):
@@ -1550,6 +1573,818 @@ def launch_plex_on_living_room_tv(body):
         return False, {"error": str(e)}
 
 
+# === HOME ASSISTANT & GO2RTC SECURITY CAMERA PROXY ===
+DEFAULT_CAMERAS = []
+
+
+def _get_go2rtc_base_url():
+    explicit = str(_cfg("GO2RTC_BASE_URL", "")).strip().rstrip("/")
+    if explicit:
+        return explicit
+    ha_url = str(_cfg("HA_BASE_URL", "")).strip().rstrip("/")
+    if ha_url:
+        try:
+            parsed = urllib.parse.urlparse(ha_url)
+            if parsed.hostname:
+                return f"http://{parsed.hostname}:1984"
+        except Exception:
+            pass
+    return ""
+
+
+def _get_configured_cameras():
+    cfg = _load_config()
+    cams = cfg.get("cameras")
+    if isinstance(cams, list) and cams:
+        return cams
+    return DEFAULT_CAMERAS
+
+
+def is_battery_camera(camera_key=None, target=None):
+    if target is None and camera_key is not None:
+        target = resolve_camera_target(camera_key)
+    if isinstance(target, dict):
+        if target.get("battery") or target.get("battery_powered"):
+            return True
+        cid = str(target.get("id") or "").strip().lower()
+        if cid in ("doorbell", "front_doorbell"):
+            return True
+    return bool(
+        isinstance(camera_key, str)
+        and camera_key.strip().lower()
+        in ("doorbell", "front_doorbell", "camera.doorbell", "camera.front_doorbell")
+    )
+
+
+def resolve_camera_target(camera_key):
+    if not camera_key or not isinstance(camera_key, str):
+        return None
+    clean = camera_key.strip().lower()
+    if clean.endswith(".jpg") or clean.endswith(".jpeg") or clean.endswith(".mjpeg"):
+        clean = clean.rsplit(".", 1)[0]
+    if not clean or ".." in clean or "/" in clean:
+        return None
+
+    if clean.startswith("camera."):
+        if not HA_ENTITY_ID_RE.match(clean):
+            return None
+        slug = clean.split(".", 1)[1]
+    else:
+        if not CAMERA_SLUG_RE.match(clean):
+            return None
+        slug = clean
+
+    configured = _get_configured_cameras()
+    for cam in configured:
+        if not isinstance(cam, dict):
+            continue
+        cid = str(cam.get("id") or "").lower()
+        ent = str(cam.get("entity_id") or "").lower()
+        g2r = str(cam.get("go2rtc_src") or cid).lower()
+        aliases = [str(a).lower() for a in (cam.get("aliases") or [])]
+        if cid == "doorbell":
+            for extra_alias in ("front_doorbell", "camera.front_doorbell"):
+                if extra_alias not in aliases:
+                    aliases.append(extra_alias)
+        if clean in (cid, ent, g2r) or slug in (cid, g2r) or clean in aliases or slug in aliases:
+            event_entities = [
+                str(e).strip().lower()
+                for e in (cam.get("event_entities") or [])
+                if str(e).strip() and HA_ENTITY_ID_RE.match(str(e).strip().lower())
+            ]
+            is_bat = bool(cam.get("battery", cam.get("battery_powered", False)))
+            return {
+                "id": cid or slug,
+                "entity_id": ent or f"camera.{slug}",
+                "go2rtc_src": g2r or slug,
+                "title": cam.get("title") or slug.replace("_", " ").title(),
+                "group": cam.get("group") or "general",
+                "aliases": aliases,
+                "battery": is_bat,
+                "battery_powered": is_bat,
+                "event_driven": bool(cam.get("event_driven", is_bat or bool(event_entities))),
+                "event_entities": event_entities,
+            }
+
+    if configured:
+        return None
+
+    return {
+        "id": slug,
+        "entity_id": f"camera.{slug}",
+        "go2rtc_src": slug,
+        "title": slug.replace("_", " ").title(),
+        "group": "general",
+        "aliases": [],
+        "battery": False,
+        "battery_powered": False,
+        "event_driven": False,
+        "event_entities": [],
+    }
+
+
+def fetch_cameras_catalog():
+    key = "cameras:catalog"
+    now = time.time()
+    base_catalog = None
+    with CACHE_LOCK:
+        if key in CACHE and now - CACHE[key][0] < 15:
+            base_catalog = CACHE[key][1]
+
+    ha_states = None
+    ha_states_map = {}
+    if base_catalog is None:
+        ha_states = _ha_request("GET", "/api/states", timeout=5)
+        state_map = {}
+        if isinstance(ha_states, list):
+            for st in ha_states:
+                if isinstance(st, dict):
+                    eid = str(st.get("entity_id") or "").lower()
+                    if eid:
+                        ha_states_map[eid] = st
+                    if eid.startswith("camera."):
+                        state_map[eid] = st
+
+        base_catalog = []
+        for raw_cam in _get_configured_cameras():
+            if not isinstance(raw_cam, dict):
+                continue
+            target = resolve_camera_target(raw_cam.get("id") or raw_cam.get("entity_id") or "")
+            if not target:
+                continue
+            cid = target["id"]
+            eid = target["entity_id"]
+            st_obj = state_map.get(eid)
+            if not st_obj and target.get("aliases"):
+                for alias in target["aliases"]:
+                    cand = alias if alias.startswith("camera.") else f"camera.{alias}"
+                    if cand in state_map:
+                        st_obj = state_map[cand]
+                        eid = cand
+                        break
+
+            if st_obj:
+                state_str = str(st_obj.get("state") or "streaming")
+                attrs = st_obj.get("attributes") or {}
+                title = raw_cam.get("title") or attrs.get("friendly_name") or target["title"]
+            else:
+                state_str = "idle"
+                title = target["title"]
+
+            if ha_states_map:
+                check_camera_motion_updated(target, ha_states_map=ha_states_map)
+
+            base_catalog.append(
+                {
+                    "id": cid,
+                    "entity_id": eid,
+                    "title": title,
+                    "group": target["group"],
+                    "state": state_str,
+                    "snapshot_url": f"/hearth-api/cameras/{cid}/snapshot",
+                    "stream_url": f"/hearth-api/cameras/{cid}/stream",
+                    "webrtc_url": f"/hearth-api/cameras/{cid}/webrtc",
+                }
+            )
+
+        with CACHE_LOCK:
+            CACHE[key] = (now, base_catalog)
+
+    active_ids, epoch_map = _get_auto_live_camera_ids(now=now)
+    catalog = []
+    for item in base_catalog:
+        cid = item["id"]
+        entry = dict(item)
+        entry["last_event_epoch"] = float(epoch_map.get(cid, 0.0) or 0.0)
+        entry["auto_live"] = cid in active_ids
+        catalog.append(entry)
+    return catalog
+
+
+def get_cameras_status():
+    return fetch_cameras_catalog()
+
+
+def _parse_iso_epoch(val):
+    if not val or not isinstance(val, str):
+        return None
+    s = val.strip()
+    if not s or s.lower() in ("unknown", "unavailable", "none", "null", "off", "clear"):
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return float(dt.timestamp())
+    except Exception:
+        return None
+
+
+def _get_auto_live_camera_ids(now=None):
+    if now is None:
+        now = time.time()
+    try:
+        window_sec = float(_cfg("AUTO_LIVE_WINDOW_SECONDS", AUTO_LIVE_WINDOW_SECONDS))
+    except (ValueError, TypeError):
+        window_sec = float(AUTO_LIVE_WINDOW_SECONDS)
+    try:
+        max_streams = int(_cfg("MAX_AUTO_LIVE_STREAMS", MAX_AUTO_LIVE_STREAMS))
+    except (ValueError, TypeError):
+        max_streams = int(MAX_AUTO_LIVE_STREAMS)
+
+    with CAMERA_SNAP_LOCK:
+        epoch_map = dict(_CAMERA_EVENT_EPOCH)
+
+    active_candidates = []
+    for cid, last_epoch in epoch_map.items():
+        try:
+            ep = float(last_epoch or 0.0)
+        except (ValueError, TypeError):
+            ep = 0.0
+        if ep > 0 and (now - ep) <= window_sec:
+            active_candidates.append((ep, cid))
+
+    active_candidates.sort(key=lambda x: x[0], reverse=True)
+    top_ids = {cid for _, cid in active_candidates[: max(0, max_streams)]}
+    return top_ids, epoch_map
+
+
+def is_camera_auto_live(cam_key, now=None):
+    target = resolve_camera_target(cam_key) if isinstance(cam_key, str) else cam_key
+    if not isinstance(target, dict):
+        return False, 0.0
+    cid = target["id"]
+    top_ids, epoch_map = _get_auto_live_camera_ids(now=now)
+    last_epoch = float(epoch_map.get(cid, 0.0) or 0.0)
+    return (cid in top_ids), last_epoch
+
+
+def _store_camera_good_frame(cid, data, ctype):
+    now = time.time()
+    with CAMERA_SNAP_LOCK:
+        CAMERA_SNAP_CACHE[cid] = (now, data, ctype)
+        CAMERA_SNAP_CACHE.move_to_end(cid)
+        while len(CAMERA_SNAP_CACHE) > MAX_IMG_CACHE_ENTRIES:
+            CAMERA_SNAP_CACHE.popitem(last=False)
+        CAMERA_LAST_GOOD_FRAME[cid] = (now, data, ctype)
+        CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
+        while len(CAMERA_LAST_GOOD_FRAME) > MAX_IMG_CACHE_ENTRIES:
+            CAMERA_LAST_GOOD_FRAME.popitem(last=False)
+        CAMERA_PENDING_SNAPSHOT_REFRESH.discard(cid)
+
+
+def _extract_first_jpeg_from_stream(stream, max_bytes=2 * 1024 * 1024):
+    buf = bytearray()
+    soi = -1
+    while len(buf) < max_bytes:
+        chunk = stream.read(16384)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        if soi < 0:
+            soi = buf.find(b"\xff\xd8\xff")
+            if soi < 0:
+                soi = buf.find(b"\xff\xd8")
+        if soi >= 0:
+            eoi = buf.find(b"\xff\xd9", soi + 2)
+            if eoi >= 0:
+                frame = bytes(buf[soi : eoi + 2])
+                if len(frame) != HA_NEST_PLACEHOLDER_LEN:
+                    return frame
+                del buf[: eoi + 2]
+                soi = -1
+    return None
+
+
+def check_camera_motion_updated(cam_id_or_target, ha_states_map=None):
+    target = (
+        cam_id_or_target
+        if isinstance(cam_id_or_target, dict)
+        else resolve_camera_target(cam_id_or_target)
+    )
+    if not isinstance(target, dict):
+        return False
+    cid = str(target.get("id") or "").strip().lower()
+    event_entities = target.get("event_entities") or []
+    if not cid or not event_entities:
+        return False
+
+    current_states = {}
+    if isinstance(ha_states_map, dict):
+        for ent in event_entities:
+            ent_str = str(ent).strip().lower()
+            if not HA_ENTITY_ID_RE.match(ent_str):
+                continue
+            obj = ha_states_map.get(ent_str)
+            if isinstance(obj, dict):
+                st = str(obj.get("state") or "").strip()
+                if st and st not in ("unknown", "unavailable", "none", "null"):
+                    current_states[ent_str] = st
+            elif (
+                isinstance(obj, str)
+                and obj.strip()
+                and obj.strip() not in ("unknown", "unavailable", "none", "null")
+            ):
+                current_states[ent_str] = obj.strip()
+    else:
+        ha_url = str(_cfg("HA_BASE_URL", "")).strip().rstrip("/")
+        ha_tok = str(_cfg("HA_ACCESS_TOKEN", "")).strip()
+        if not ha_url or not ha_tok:
+            return False
+
+        for ent in event_entities:
+            ent_str = str(ent).strip().lower()
+            if not HA_ENTITY_ID_RE.match(ent_str):
+                continue
+            url = f"{ha_url}/api/states/{urllib.parse.quote(ent_str)}"
+            req = urllib.request.Request(
+                url,
+                headers={"Authorization": f"Bearer {ha_tok}", "Accept": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=4) as r:
+                    raw = r.read().decode("utf-8")
+                    obj = json.loads(raw) if raw.strip() else {}
+                    if isinstance(obj, dict):
+                        st = str(obj.get("state") or "").strip()
+                        if st and st not in ("unknown", "unavailable", "none", "null"):
+                            current_states[ent_str] = st
+            except Exception as e:
+                print(
+                    f"[HEARTH-Bridge] HA camera event state read warning for {ent_str}: {e}",
+                    flush=True,
+                )
+
+    if not current_states:
+        return False
+
+    now = time.time()
+    state_sig = tuple(sorted(current_states.items()))
+    with CAMERA_SNAP_LOCK:
+        if cid not in CAMERA_LAST_EVENT_STATE:
+            CAMERA_LAST_EVENT_STATE[cid] = state_sig
+            recent_seed = False
+            for st_val in current_states.values():
+                parsed_ep = _parse_iso_epoch(st_val)
+                if parsed_ep is not None and 0 <= (now - parsed_ep) <= AUTO_LIVE_WINDOW_SECONDS:
+                    recent_seed = True
+                    break
+            if recent_seed:
+                _CAMERA_EVENT_EPOCH[cid] = now
+            return False
+        prev_sig = CAMERA_LAST_EVENT_STATE.get(cid)
+        if prev_sig != state_sig:
+            CAMERA_LAST_EVENT_STATE[cid] = state_sig
+            _CAMERA_EVENT_EPOCH[cid] = now
+            CAMERA_PENDING_SNAPSHOT_REFRESH.add(cid)
+            return True
+    return False
+
+
+def _has_camera_event_changed(target, ha_states_map=None):
+    changed = check_camera_motion_updated(target, ha_states_map=ha_states_map)
+    if changed:
+        return True
+    resolved = target if isinstance(target, dict) else resolve_camera_target(target)
+    cid = str(resolved.get("id") or "").strip().lower() if isinstance(resolved, dict) else ""
+    if not cid:
+        return False
+    with CAMERA_SNAP_LOCK:
+        return cid in CAMERA_PENDING_SNAPSHOT_REFRESH
+
+
+def _get_failure_cooldown_sec():
+    try:
+        val = float(_cfg("CAMERA_FAILURE_COOLDOWN_SEC", CAMERA_FAILURE_COOLDOWN_SEC))
+        return max(0.0, val)
+    except (ValueError, TypeError):
+        return CAMERA_FAILURE_COOLDOWN_SEC
+
+
+def _is_in_failure_cooldown(key, now=None):
+    if now is None:
+        now = time.time()
+    with CAMERA_SNAP_LOCK:
+        until = CAMERA_FAILURE_COOLDOWN.get(key, 0.0)
+        if until and now < until:
+            return True
+        if key in CAMERA_FAILURE_COOLDOWN and now >= until:
+            CAMERA_FAILURE_COOLDOWN.pop(key, None)
+        return False
+
+
+def _record_upstream_failure(
+    key,
+    now=None,
+    immediate_cooldown=False,
+    cooldown_sec=None,
+    threshold=CAMERA_TIMEOUT_THRESHOLD,
+):
+    if now is None:
+        now = time.time()
+    if cooldown_sec is None:
+        cooldown_sec = _get_failure_cooldown_sec()
+    with CAMERA_SNAP_LOCK:
+        prev = CAMERA_FAILURE_STREAK.get(key)
+        if isinstance(prev, tuple) and len(prev) == 2:
+            prev_streak, prev_ts = prev
+            if cooldown_sec > 0 and (now - prev_ts) > cooldown_sec:
+                prev_streak = 0
+        elif isinstance(prev, int):
+            prev_streak = prev
+        else:
+            prev_streak = 0
+        streak = prev_streak + 1
+        CAMERA_FAILURE_STREAK[key] = (streak, now)
+        if immediate_cooldown or streak >= max(1, int(threshold)):
+            if cooldown_sec > 0:
+                CAMERA_FAILURE_COOLDOWN[key] = now + cooldown_sec
+            return True
+        return False
+
+
+def _clear_upstream_failure(key):
+    with CAMERA_SNAP_LOCK:
+        CAMERA_FAILURE_STREAK.pop(key, None)
+        CAMERA_FAILURE_COOLDOWN.pop(key, None)
+
+
+def fetch_camera_snapshot(
+    camera_key, force_refresh=False, active_refresh=False, background_warm=False
+):
+    target = resolve_camera_target(camera_key)
+    if not target:
+        return None, None
+
+    cid = target["id"]
+    is_battery = is_battery_camera(camera_key, target)
+    is_event_driven = bool(target.get("event_driven", is_battery))
+    is_background_warm = bool(background_warm or getattr(_CAMERA_WARMER_CTX, "active", False))
+    now = time.time()
+
+    try:
+        active_interval_sec = float(_cfg("CAMERA_ACTIVE_INTERVAL_SEC", CAMERA_ACTIVE_INTERVAL_SEC))
+    except (ValueError, TypeError):
+        active_interval_sec = CAMERA_ACTIVE_INTERVAL_SEC
+
+    if not force_refresh:
+        with CAMERA_SNAP_LOCK:
+            cached = CAMERA_SNAP_CACHE.get(cid)
+            if cached and now - cached[0] < CAMERA_SNAP_TTL:
+                CAMERA_SNAP_CACHE.move_to_end(cid)
+                return cached[1], cached[2]
+
+    if active_refresh and not is_battery and not force_refresh:
+        with CAMERA_SNAP_LOCK:
+            last_good = CAMERA_LAST_GOOD_FRAME.get(cid)
+            cached = CAMERA_SNAP_CACHE.get(cid)
+            entry = last_good or cached
+            if entry and isinstance(entry, tuple) and len(entry) >= 3:
+                cached_ts, cached_data, cached_ctype = entry[0], entry[1], entry[2]
+                if now - cached_ts < active_interval_sec:
+                    if last_good:
+                        CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
+                    if cached:
+                        CAMERA_SNAP_CACHE.move_to_end(cid)
+                    return cached_data, cached_ctype
+
+    event_changed = False
+    if is_event_driven and not force_refresh and (is_battery or not active_refresh):
+        event_changed = _has_camera_event_changed(target)
+        if not event_changed:
+            with CAMERA_SNAP_LOCK:
+                last_good = CAMERA_LAST_GOOD_FRAME.get(cid)
+                if last_good:
+                    CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
+                    if isinstance(last_good, tuple) and len(last_good) == 3:
+                        return last_good[1], last_good[2]
+                    elif isinstance(last_good, tuple) and len(last_good) == 2:
+                        return last_good[0], last_good[1]
+
+    ha_url = str(_cfg("HA_BASE_URL", "")).strip().rstrip("/")
+    ha_tok = str(_cfg("HA_ACCESS_TOKEN", "")).strip()
+    go2rtc_base = _get_go2rtc_base_url()
+
+    ha_fallback_data, ha_fallback_type = None, None
+    candidate_entities = [target["entity_id"]]
+    for alias in target.get("aliases") or []:
+        ent_alias = alias if alias.startswith("camera.") else f"camera.{alias}"
+        if ent_alias not in candidate_entities and HA_ENTITY_ID_RE.match(ent_alias):
+            candidate_entities.append(ent_alias)
+
+    if ha_url and ha_tok:
+        for ent in candidate_entities:
+            url = f"{ha_url}/api/camera_proxy/{urllib.parse.quote(ent)}"
+            req = urllib.request.Request(
+                url,
+                headers={"Authorization": f"Bearer {ha_tok}", "Connection": "close"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    data = r.read()
+                    ctype = r.headers.get("Content-Type", "image/jpeg")
+                    if data:
+                        is_nest_placeholder = len(data) == HA_NEST_PLACEHOLDER_LEN and (
+                            "png" in (ctype or "").lower() or data.startswith(b"\x89PNG")
+                        )
+                        if not is_nest_placeholder:
+                            _clear_upstream_failure(f"camera:{cid}")
+                            _clear_upstream_failure(f"stream:{cid}")
+                            _store_camera_good_frame(cid, data, ctype)
+                            return data, ctype
+                        ha_fallback_data, ha_fallback_type = data, ctype
+                        break
+            except urllib.error.HTTPError as e:
+                with contextlib.suppress(Exception):
+                    e.close()
+                print(f"[HEARTH-Bridge] HA camera snapshot warning for {ent}: {e}", flush=True)
+            except Exception as e:
+                print(f"[HEARTH-Bridge] HA camera snapshot warning for {ent}: {e}", flush=True)
+
+    if is_battery:
+        with CAMERA_SNAP_LOCK:
+            last_good = CAMERA_LAST_GOOD_FRAME.get(cid)
+            if last_good:
+                CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
+                if isinstance(last_good, tuple) and len(last_good) == 3:
+                    return last_good[1], last_good[2]
+                elif isinstance(last_good, tuple) and len(last_good) == 2:
+                    return last_good[0], last_good[1]
+        if ha_fallback_data:
+            return ha_fallback_data, ha_fallback_type
+        return None, None
+
+    cam_cooldown_key = f"camera:{cid}"
+    stream_cooldown_key = f"stream:{cid}"
+    skip_stream_fallback = is_background_warm or _is_in_failure_cooldown(
+        stream_cooldown_key, now=now
+    )
+
+    if go2rtc_base and not _is_in_failure_cooldown(cam_cooldown_key, now=now):
+        candidate_srcs = [target["go2rtc_src"]]
+        if cid not in candidate_srcs:
+            candidate_srcs.append(cid)
+        for alias in target.get("aliases") or []:
+            clean_alias = alias.split(".", 1)[-1]
+            if clean_alias not in candidate_srcs and CAMERA_SLUG_RE.match(clean_alias):
+                candidate_srcs.append(clean_alias)
+
+        all_srcs_404_or_cooldown = bool(candidate_srcs)
+        saw_404_or_cooldown = False
+        for src in candidate_srcs:
+            src_cooldown_key = f"go2rtc:{src}"
+            if _is_in_failure_cooldown(src_cooldown_key, now=now):
+                saw_404_or_cooldown = True
+                continue
+            url = f"{go2rtc_base}/api/frame.jpeg?src={urllib.parse.quote(src)}"
+            req = urllib.request.Request(url, headers={"Connection": "close"})
+            try:
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    data = r.read()
+                    ctype = r.headers.get("Content-Type", "image/jpeg")
+                    if data and len(data) != HA_NEST_PLACEHOLDER_LEN:
+                        _clear_upstream_failure(src_cooldown_key)
+                        _clear_upstream_failure(cam_cooldown_key)
+                        _clear_upstream_failure(stream_cooldown_key)
+                        _store_camera_good_frame(cid, data, ctype)
+                        return data, ctype
+                    all_srcs_404_or_cooldown = False
+                    _record_upstream_failure(src_cooldown_key, now=now)
+                    if _record_upstream_failure(cam_cooldown_key, now=now):
+                        skip_stream_fallback = True
+                        break
+            except urllib.error.HTTPError as e:
+                with contextlib.suppress(Exception):
+                    e.close()
+                print(f"[HEARTH-Bridge] go2rtc frame.jpeg warning for {src}: {e}", flush=True)
+                if e.code == 404:
+                    saw_404_or_cooldown = True
+                    _record_upstream_failure(src_cooldown_key, now=now, immediate_cooldown=True)
+                else:
+                    all_srcs_404_or_cooldown = False
+                    _record_upstream_failure(src_cooldown_key, now=now)
+                    if _record_upstream_failure(cam_cooldown_key, now=now):
+                        skip_stream_fallback = True
+                        break
+            except Exception as e:
+                all_srcs_404_or_cooldown = False
+                print(f"[HEARTH-Bridge] go2rtc frame.jpeg warning for {src}: {e}", flush=True)
+                _record_upstream_failure(src_cooldown_key, now=now)
+                if _record_upstream_failure(cam_cooldown_key, now=now):
+                    skip_stream_fallback = True
+                    break
+
+        if all_srcs_404_or_cooldown and saw_404_or_cooldown:
+            _record_upstream_failure(cam_cooldown_key, now=now, immediate_cooldown=True)
+            _record_upstream_failure(stream_cooldown_key, now=now, immediate_cooldown=True)
+            skip_stream_fallback = True
+    elif _is_in_failure_cooldown(cam_cooldown_key, now=now):
+        skip_stream_fallback = True
+
+    # Fallback: request single multipart JPEG frame from Home Assistant /api/camera_proxy_stream/<entity_id>
+    if ha_url and ha_tok and not skip_stream_fallback:
+        for ent in candidate_entities:
+            ent_stream_key = f"stream_ent:{ent}"
+            if _is_in_failure_cooldown(ent_stream_key, now=now):
+                continue
+            stream_url = f"{ha_url}/api/camera_proxy_stream/{urllib.parse.quote(ent)}"
+            req = urllib.request.Request(
+                stream_url,
+                headers={"Authorization": f"Bearer {ha_tok}", "Connection": "close"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=6) as r:
+                    frame = _extract_first_jpeg_from_stream(r)
+                    if frame:
+                        _clear_upstream_failure(ent_stream_key)
+                        _clear_upstream_failure(cam_cooldown_key)
+                        _clear_upstream_failure(stream_cooldown_key)
+                        _store_camera_good_frame(cid, frame, "image/jpeg")
+                        return frame, "image/jpeg"
+                    _record_upstream_failure(ent_stream_key, now=now, immediate_cooldown=True)
+                    _record_upstream_failure(stream_cooldown_key, now=now, immediate_cooldown=True)
+                    break
+            except urllib.error.HTTPError as e:
+                with contextlib.suppress(Exception):
+                    e.close()
+                print(f"[HEARTH-Bridge] HA camera_proxy_stream warning for {ent}: {e}", flush=True)
+                _record_upstream_failure(ent_stream_key, now=now, immediate_cooldown=True)
+                _record_upstream_failure(stream_cooldown_key, now=now, immediate_cooldown=True)
+                if e.code == 404:
+                    break
+            except Exception as e:
+                print(f"[HEARTH-Bridge] HA camera_proxy_stream warning for {ent}: {e}", flush=True)
+                _record_upstream_failure(ent_stream_key, now=now, immediate_cooldown=True)
+                _record_upstream_failure(stream_cooldown_key, now=now, immediate_cooldown=True)
+                break
+
+    # Retain last good frame if available instead of returning the 2,689-byte gray placeholder
+    with CAMERA_SNAP_LOCK:
+        last_good = CAMERA_LAST_GOOD_FRAME.get(cid)
+        if last_good:
+            CAMERA_LAST_GOOD_FRAME.move_to_end(cid)
+            if isinstance(last_good, tuple) and len(last_good) == 3:
+                return last_good[1], last_good[2]
+            elif isinstance(last_good, tuple) and len(last_good) == 2:
+                return last_good[0], last_good[1]
+
+    if ha_fallback_data:
+        return ha_fallback_data, ha_fallback_type
+    return None, None
+
+
+def warm_camera_snapshots_once(stagger_sec=2.0):
+    warmer_enabled = str(_cfg("CAMERA_WARMER_ENABLED", "true")).strip().lower()
+    if warmer_enabled in ("0", "false", "no", "off"):
+        return []
+
+    try:
+        refresh_sec = float(_cfg("CAMERA_WARMER_REFRESH_SEC", CAMERA_WARMER_REFRESH_SEC))
+    except (ValueError, TypeError):
+        refresh_sec = CAMERA_WARMER_REFRESH_SEC
+
+    warmed = []
+    cams = _get_configured_cameras()
+    warm_idx = 0
+    prev_ctx = getattr(_CAMERA_WARMER_CTX, "active", False)
+    _CAMERA_WARMER_CTX.active = True
+    try:
+        for cam in cams:
+            if CAMERA_WARMER_STOP_EVENT.is_set():
+                break
+            if not isinstance(cam, dict):
+                continue
+            cam_id = cam.get("id") or cam.get("entity_id") or ""
+            if not cam_id:
+                continue
+            target = resolve_camera_target(cam_id)
+            if not target:
+                continue
+            cid = target["id"]
+            now = time.time()
+            is_battery = is_battery_camera(cam_id, target)
+            is_event_driven = bool(target.get("event_driven", is_battery))
+            if is_battery:
+                if not (
+                    str(_cfg("HA_BASE_URL", "")).strip()
+                    and str(_cfg("HA_ACCESS_TOKEN", "")).strip()
+                ):
+                    continue
+                event_changed = _has_camera_event_changed(target)
+                if not event_changed:
+                    continue
+            else:
+                if _is_in_failure_cooldown(f"camera:{cid}", now=now):
+                    continue
+                event_changed = _has_camera_event_changed(target) if is_event_driven else False
+                with CAMERA_SNAP_LOCK:
+                    last_good = CAMERA_LAST_GOOD_FRAME.get(cid)
+                if last_good is not None:
+                    cache_stale = False
+                    if (
+                        isinstance(last_good, tuple)
+                        and len(last_good) >= 3
+                        and isinstance(last_good[0], (int, float))
+                        and refresh_sec > 0
+                    ):
+                        cache_stale = (now - float(last_good[0])) >= refresh_sec
+                    if not event_changed and not cache_stale:
+                        continue
+            if (
+                warm_idx > 0
+                and stagger_sec
+                and stagger_sec > 0
+                and CAMERA_WARMER_STOP_EVENT.wait(stagger_sec)
+            ):
+                break
+            warm_idx += 1
+            try:
+                data, ctype = fetch_camera_snapshot(cam_id, force_refresh=True)
+                if data and len(data) != HA_NEST_PLACEHOLDER_LEN:
+                    warmed.append(cam_id)
+            except Exception as e:
+                print(f"[HEARTH-Bridge] Camera warmer warning for {cam_id}: {e}", flush=True)
+    finally:
+        _CAMERA_WARMER_CTX.active = prev_ctx
+    return warmed
+
+
+def _camera_warmer_loop(interval_sec=120, stagger_sec=2.0):
+    while not CAMERA_WARMER_STOP_EVENT.is_set():
+        try:
+            warm_camera_snapshots_once(stagger_sec=stagger_sec)
+        except Exception as e:
+            print(f"[HEARTH-Bridge] Camera warmer loop error: {e}", flush=True)
+        if CAMERA_WARMER_STOP_EVENT.wait(interval_sec):
+            break
+
+
+def _start_camera_warmer_daemon(interval_sec=120, stagger_sec=2.0):
+    t = threading.Thread(
+        target=_camera_warmer_loop,
+        kwargs={"interval_sec": interval_sec, "stagger_sec": stagger_sec},
+        daemon=True,
+    )
+    t.start()
+    return t
+
+
+def exchange_camera_webrtc(camera_key, sdp_offer):
+    target = resolve_camera_target(camera_key)
+    if not target:
+        return False, "Invalid camera identifier", 400
+    if not sdp_offer or not isinstance(sdp_offer, str) or not sdp_offer.strip():
+        return False, "Missing SDP offer", 400
+
+    go2rtc_base = _get_go2rtc_base_url()
+    if not go2rtc_base:
+        return False, "WebRTC upstream not configured", 502
+
+    candidate_srcs = [target["go2rtc_src"]]
+    if target["id"] not in candidate_srcs:
+        candidate_srcs.append(target["id"])
+    for alias in target.get("aliases") or []:
+        clean_alias = alias.split(".", 1)[-1]
+        if clean_alias not in candidate_srcs and CAMERA_SLUG_RE.match(clean_alias):
+            candidate_srcs.append(clean_alias)
+
+    payload = sdp_offer.encode("utf-8")
+    last_err = "Upstream WebRTC negotiation failed"
+    for src in candidate_srcs:
+        url = f"{go2rtc_base}/api/webrtc?src={urllib.parse.quote(src)}"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            method="POST",
+            headers={
+                "Content-Type": "application/sdp",
+                "Accept": "application/sdp, application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                raw = r.read().decode("utf-8")
+                if raw.strip().startswith("{"):
+                    try:
+                        parsed = json.loads(raw)
+                        if isinstance(parsed, dict) and isinstance(parsed.get("sdp"), str):
+                            return True, parsed["sdp"], 200
+                    except Exception:
+                        pass
+                if raw.strip():
+                    return True, raw, 200
+        except urllib.error.HTTPError as e:
+            with contextlib.suppress(Exception):
+                e.close()
+            last_err = str(e)
+            print(f"[HEARTH-Bridge] go2rtc WebRTC error for {src}: {e}", flush=True)
+        except Exception as e:
+            last_err = str(e)
+            print(f"[HEARTH-Bridge] go2rtc WebRTC error for {src}: {e}", flush=True)
+
+    return False, last_err, 502
+
+
 def ics_escape(text):
     if not text:
         return ""
@@ -2039,6 +2874,94 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(payload)
             return
 
+        is_camera_path = (
+            path == "/cameras"
+            or path.startswith("/cameras/")
+            or path == "/hearth-api/cameras"
+            or path.startswith("/hearth-api/cameras/")
+            or path.startswith("/hearth-api/camera/snapshot/")
+            or path.startswith("/hearth-api/camera/stream/")
+        )
+        if is_camera_path and not self._is_internal_caller():
+            self._send_json_error(403, "Forbidden: internal callers only")
+            return
+
+        if path in ("/cameras", "/cameras/", "/hearth-api/cameras", "/hearth-api/cameras/"):
+            cams = get_cameras_status()
+            payload = json.dumps({"cameras": cams, "items": cams}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            if not is_head:
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                    self.wfile.write(payload)
+            return
+
+        cam_key = None
+        if path in ("/cameras/snapshot", "/hearth-api/cameras/snapshot"):
+            cam_key = (
+                (qs.get("camera") or qs.get("id") or qs.get("src") or qs.get("stream_id") or [""])[
+                    0
+                ]
+            ).strip()
+        elif path.startswith("/hearth-api/cameras/"):
+            parts = [p for p in path[len("/hearth-api/cameras/") :].split("/") if p]
+            if (
+                len(parts) == 2
+                and parts[1] in ("snapshot", "stream", "snapshot.jpg", "stream.mjpeg")
+                or len(parts) == 1
+            ):
+                cam_key = parts[0]
+        elif path.startswith("/cameras/"):
+            parts = [p for p in path[len("/cameras/") :].split("/") if p]
+            if (
+                len(parts) == 2
+                and parts[1] in ("snapshot", "stream", "snapshot.jpg", "stream.mjpeg")
+                or len(parts) == 1
+            ):
+                cam_key = parts[0]
+        elif path.startswith("/hearth-api/camera/snapshot/"):
+            cam_key = path[len("/hearth-api/camera/snapshot/") :].strip("/")
+        elif path.startswith("/hearth-api/camera/stream/"):
+            cam_key = path[len("/hearth-api/camera/stream/") :].strip("/")
+
+        if cam_key is not None:
+            target = resolve_camera_target(cam_key)
+            if not target:
+                self._send_json_error(400, "Invalid camera identifier")
+                return
+            force_val = str((qs.get("force") or [""])[0]).strip().lower()
+            force_refresh = force_val in ("1", "true", "yes")
+            active_val = str((qs.get("active") or [""])[0]).strip().lower()
+            active_refresh = active_val in ("1", "true", "yes") or bool(
+                (qs.get("t") or [""])[0].strip()
+            )
+            data, ctype = fetch_camera_snapshot(
+                cam_key,
+                force_refresh=force_refresh,
+                active_refresh=active_refresh,
+            )
+            if data:
+                auto_live, last_epoch = is_camera_auto_live(target)
+                self.send_response(200)
+                self.send_header("Content-Type", ctype or "image/jpeg")
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("X-Camera-Auto-Live", "1" if auto_live else "0")
+                self.send_header(
+                    "X-Camera-Last-Event-Epoch", str(int(last_epoch)) if last_epoch else "0"
+                )
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                if not is_head:
+                    with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                        self.wfile.write(data)
+                return
+            self.send_response(404)
+            self.end_headers()
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -2060,8 +2983,50 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json_error(400, f"Invalid Content-Length: {e}")
             return
 
-        if length > 8192:
+        is_webrtc_path = (
+            (path.startswith("/hearth-api/cameras/") and path.endswith("/webrtc"))
+            or path.startswith("/hearth-api/camera/webrtc/")
+            or (path.startswith("/cameras/") and path.endswith("/webrtc"))
+            or path.startswith("/camera/webrtc/")
+        )
+        max_body = 65536 if is_webrtc_path else 8192
+        if length > max_body:
             self._send_json_error(413, "Payload too large")
+            return
+
+        if is_webrtc_path:
+            if not self._is_internal_caller():
+                self._send_json_error(403, "Forbidden: internal callers only")
+                return
+            if path.startswith("/hearth-api/cameras/"):
+                cam_key = path[len("/hearth-api/cameras/") : -len("/webrtc")].strip("/")
+            elif path.startswith("/hearth-api/camera/webrtc/"):
+                cam_key = path[len("/hearth-api/camera/webrtc/") :].strip("/")
+            elif path.startswith("/cameras/"):
+                cam_key = path[len("/cameras/") : -len("/webrtc")].strip("/")
+            else:
+                cam_key = path[len("/camera/webrtc/") :].strip("/")
+            raw_sdp = (
+                self.rfile.read(length).decode("utf-8", errors="replace") if length > 0 else ""
+            )
+            if raw_sdp.strip().startswith("{"):
+                try:
+                    j = json.loads(raw_sdp)
+                    if isinstance(j, dict) and isinstance(j.get("sdp"), str):
+                        raw_sdp = j["sdp"]
+                except Exception:
+                    pass
+            ok, result_str, status_code = exchange_camera_webrtc(cam_key, raw_sdp)
+            if ok:
+                payload = result_str.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/sdp; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            else:
+                self._send_json_error(status_code, result_str)
             return
 
         # Parse and validate JSON body
@@ -2151,6 +3116,7 @@ if __name__ == "__main__":
     socket.getaddrinfo = _ipv4_getaddrinfo
 
     threading.Thread(target=_music_auto_advance_loop, daemon=True).start()
+    _start_camera_warmer_daemon()
     srv = ThreadingHTTPServer(("0.0.0.0", 8099), Handler)
     print("[HEARTH-Bridge] Listening on :8099", flush=True)
     srv.serve_forever()

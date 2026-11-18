@@ -128,6 +128,50 @@ display:
       dimensions: [3, 2]
       pinned: false
 
+    # Camera Feeds Tiles (example LiveView configuration)
+    - id: cam-front-door
+      type: live-view
+      dimensions: [1, 2]
+      pinned: false
+      config:
+        title: "Front Door"
+        stream_id: "front_door"
+        stream_url: "/hearth-api/cameras/front_door/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/front_door/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/front_door/webrtc"
+        expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
+        battery_powered: true
+        refresh_interval_seconds: 15
+        background_refresh_interval_seconds: 0
+        timeout_seconds: 90
+        stagger_index: 0
+
+    - id: cam-yard
+      type: live-view
+      dimensions: [2, 1]
+      pinned: false
+      config:
+        title: "Yard"
+        stream_id: "yard_cam"
+        stream_url: "/hearth-api/cameras/yard_cam/stream"
+        stream_type: "mjpeg"
+        poster_url: "/hearth-api/cameras/yard_cam/snapshot"
+        fit: "cover"
+        expand_on_click: true
+        expand_stream_url: "/hearth-api/cameras/yard_cam/webrtc"
+        expand_stream_type: "webrtc"
+        auto_live_on_motion_seconds: 60
+        max_auto_live_streams: 2
+        refresh_interval_seconds: 30
+        background_refresh_interval_seconds: 0
+        timeout_seconds: 90
+        stagger_index: 1
+
 # In-memory chat-log store (all optional; nothing is written to disk and a
 # restart starts empty). Defaults shown.
 # chat_log:
