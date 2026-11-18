@@ -39,11 +39,7 @@ function MediaTile({
       <img className="tile-img" src={thumb || DEFAULT_ART} loading="lazy" alt="" />
       <div className="tile-meta">
         <div className="tile-title">
-          {isPlaying && (
-            <span aria-hidden="true" style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: '4px' }}>
-              <YtMusicPlayIcon />
-            </span>
-          )}
+          {isPlaying && <span aria-hidden="true" style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: '4px' }}><YtMusicPlayIcon /></span>}
           {title}
         </div>
         {sub && <div className="tile-sub">{sub}</div>}
@@ -223,8 +219,9 @@ function useYtMusicLocalAudio(
 }
 
 function handleLocalAudioEnded(
-  el: HTMLAudioElement, retryRef: { current: PrematureEndRetryState }, shouldPlayLocal: boolean,
-  activeVideoId: string | undefined, apiBase: string, queueLen: number, postControl: (action: string) => Promise<void>,
+  el: HTMLAudioElement, retryRef: { current: PrematureEndRetryState }, playbackSessionRef: { current: number },
+  shouldPlayLocal: boolean, activeVideoId: string | undefined, apiBase: string, queueLen: number,
+  postControl: (action: string) => Promise<void>,
 ): void {
   const isPremature = Number.isFinite(el.duration) && el.duration > 30 && el.currentTime > 0 && el.duration - el.currentTime > 8;
   if (isPremature && shouldPlayLocal && activeVideoId) {
@@ -235,9 +232,10 @@ function handleLocalAudioEnded(
       el.src = `${apiBase}/music/stream/${encodeURIComponent(activeVideoId)}.m4a`;
       if (typeof el.load === 'function') el.load();
       try { el.currentTime = resumeTime; } catch { /* ignore read-only test stubs */ }
+      const attemptSession = playbackSessionRef.current;
       const p = el.play();
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-misused-promises -- jsdom's play() returns undefined, not a Promise
-      if (p && typeof p.catch === 'function') p.catch(() => { retryRef.current = { videoId: '', count: 0 }; void postControl(queueLen > 1 ? 'next' : 'stop'); });
+      if (p && typeof p.catch === 'function') p.catch(() => { if (playbackSessionRef.current !== attemptSession) return; retryRef.current = { videoId: '', count: 0 }; void postControl(queueLen > 1 ? 'next' : 'stop'); });
       return;
     }
   }
@@ -274,6 +272,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   const [userBrowsing, setUserBrowsing] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prematureEndRetryRef = useRef<{ videoId: string; count: number }>({ videoId: '', count: 0 });
+  const playbackSessionRef = useRef(0);
 
   const emberAccounts = useEmberAccounts();
   const [stateData, setStateData] = useMusicStatePolling(apiBase, isActive, selectedAccountId);
@@ -351,10 +350,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   };
 
   const handleShuffle = () => {
-    setStateData((prev) => ({
-      ...prev,
-      now_playing: { ...prev.now_playing, shuffle: !prev.now_playing?.shuffle },
-    }));
+    setStateData((prev) => ({ ...prev, now_playing: { ...prev.now_playing, shuffle: !prev.now_playing?.shuffle } }));
     void postControl('shuffle');
   };
 
@@ -377,13 +373,9 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   };
 
   const handlePlaySuggestion = async (item: SuggestedItem) => {
-    if (item.playlist_id) {
-      await postPlay({ playlist_id: item.playlist_id, playlist_title: item.title, shuffle: true });
-    } else if (item.video_id) {
-      await postPlay({ video_id: item.video_id, title: item.title, artist: item.subtitle ?? 'Artist', thumb: item.thumb });
-    } else {
-      await postPlay({ title: item.title, artist: item.subtitle ?? 'Artist', thumb: item.thumb });
-    }
+    if (item.playlist_id) await postPlay({ playlist_id: item.playlist_id, playlist_title: item.title, shuffle: true });
+    else if (item.video_id) await postPlay({ video_id: item.video_id, title: item.title, artist: item.subtitle ?? 'Artist', thumb: item.thumb });
+    else await postPlay({ title: item.title, artist: item.subtitle ?? 'Artist', thumb: item.thumb });
   };
 
   const handlePlayPause = async () => {
@@ -426,6 +418,8 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   const activeVideoId = resolveActiveVideoId(np, stateData.queue);
   const shouldPlayLocal = isPrimaryInstance && isLocalSpeaker && np.state === 'playing' && Boolean(activeVideoId);
 
+  useEffect(() => () => { playbackSessionRef.current += 1; }, [shouldPlayLocal, isPrimaryInstance, isLocalSpeaker, np.state, activeVideoId]);
+
   useYtMusicLocalAudio(audioRef, prematureEndRetryRef, shouldPlayLocal, isPrimaryInstance, isLocalSpeaker, np, activeVideoId, apiBase);
 
   return (
@@ -434,7 +428,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
         ref={audioRef}
         id="ytm-local-audio"
         preload="none"
-        onEnded={(e) => { handleLocalAudioEnded(e.currentTarget, prematureEndRetryRef, shouldPlayLocal, activeVideoId, apiBase, stateData.queue?.length ?? 0, postControl); }}
+        onEnded={(e) => { handleLocalAudioEnded(e.currentTarget, prematureEndRetryRef, playbackSessionRef, shouldPlayLocal, activeVideoId, apiBase, stateData.queue?.length ?? 0, postControl); }}
         style={{ display: 'none' }}
       />
       {showNowPlaying ? (

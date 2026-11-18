@@ -989,7 +989,9 @@ describe('YtMusicWidget', () => {
   });
 
   it('recovers from bounded premature ended events by reloading stream and advances to next after retries exhaust', async () => {
-    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(function (this: HTMLMediaElement) {
+      this.currentTime = 0;
+    });
     const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => {});
     const localPlayingState: MusicState = { ...mockPlayingState, active_speaker: 'this_device' };
     fetchMock.mockImplementation(async (url: string | URL | Request) => {
@@ -1105,6 +1107,63 @@ describe('YtMusicWidget', () => {
       );
       expect(nextCall).toBeDefined();
     });
+  });
+
+  it('ignores stale premature ended recovery play() rejection after playback pauses', async () => {
+    const localPlayingState: MusicState = { ...mockPlayingState, active_speaker: 'this_device' };
+    fetchMock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/music/state')) return new Response(JSON.stringify(localPlayingState), { status: 200 });
+      if (u.includes('/music/control')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        if (body.action === 'play_pause') {
+          return new Response(
+            JSON.stringify({
+              state: { ...localPlayingState, now_playing: { ...localPlayingState.now_playing, state: 'paused' } },
+            }),
+            { status: 200 },
+          );
+        }
+      }
+      return new Response(JSON.stringify({ state: localPlayingState }), { status: 200 });
+    });
+
+    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const audio = await waitFor(() => {
+      const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
+      expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
+      return el;
+    });
+
+    let rejectPlay!: (reason?: unknown) => void;
+    const pendingPlay = new Promise<void>((_resolve, reject) => {
+      rejectPlay = reject;
+    });
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementationOnce(() => pendingPlay);
+    Object.defineProperty(audio, 'duration', { value: 180, configurable: true });
+    Object.defineProperty(audio, 'currentTime', { value: 45, writable: true, configurable: true });
+
+    fireEvent.ended(audio);
+
+    fireEvent.click(container.querySelector('#btn-play')!);
+    await waitFor(() => {
+      const pauseCall = fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes('/music/control') && (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action === 'play_pause',
+      );
+      expect(pauseCall).toBeDefined();
+    });
+
+    await act(async () => {
+      rejectPlay(new Error('aborted by pause'));
+      await Promise.resolve();
+    });
+
+    const staleAdvanceCall = fetchMock.mock.calls.find((c) => {
+      if (!String(c[0]).includes('/music/control')) return false;
+      const action = (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action;
+      return action === 'next' || action === 'stop';
+    });
+    expect(staleAdvanceCall).toBeUndefined();
   });
 
   it('handles extraAccounts and postMusicApi edge cases', async () => {
