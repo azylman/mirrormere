@@ -7,8 +7,8 @@ set -eu
 # Prevent MSYS2 from mangling path conversions on Windows
 export MSYS_NO_PATHCONV=1
 
-# Ensure MinGit / MSYS binaries (/usr/bin, /mingw64/bin, /cmd) are in PATH
-for p in /usr/bin /mingw64/bin /cmd; do
+# Ensure MinGit / MSYS binaries (/usr/bin, /mingw64/bin, /cmd) and cached lint tools (/data/cache/bin) are in PATH
+for p in /data/cache/bin "$HOME/.local/bin" /usr/bin /mingw64/bin /cmd; do
     if [ -d "$p" ]; then
         case ":$PATH:" in
             *:"$p":*) ;;
@@ -377,8 +377,8 @@ run_coverage_gate() {
 # 6. Client & Sidecar Runtime Tests (Node.js)
 run_node_tests() {
     if has_cmd node; then
-        echo "   [node test] Running web client and sidecar test suites..."
-        TZ=UTC node --test web/test/*.test.js sidecars/eink-renderer/test/*.test.js
+        echo "   [node test] Running web client, perf, and sidecar test suites..."
+        TZ=UTC node --test scripts/build-metadata.test.cjs web/test/*.test.js sidecars/eink-renderer/test/*.test.js
     fi
 }
 
@@ -436,7 +436,40 @@ run_ui_checks() {
     else
         (cd "$REPO_ROOT/web/ui" && npm run lint)
     fi
-    (cd "$REPO_ROOT/web/ui" && npm run deadcode && npm run typecheck && npm run test:coverage && npm run build)
+    if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E '^(web/ui/(knip\.json|tsconfig\.json|vite\.config\.ts|package(-lock)?\.json)|scripts/verify\.sh)$'; then
+        if echo "$STAGED_FILES" | grep -q -E '^web/ui/.*\.(ts|tsx|js|mjs|cjs)$'; then
+            (cd "$REPO_ROOT/web/ui" && npm run deadcode && npm run typecheck)
+        fi
+    else
+        (cd "$REPO_ROOT/web/ui" && npm run deadcode && npm run typecheck)
+    fi
+    if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E '^(web/ui/(vite\.config\.ts|tsconfig\.json|package(-lock)?\.json)|scripts/verify\.sh)$'; then
+        staged_ui_src=$(echo "$STAGED_FILES" | grep -E '^web/ui/src/.*\.(ts|tsx)$' | grep -v '\.d\.ts$' | sed 's|^web/ui/||' | while read -r uf; do
+            [ -f "$REPO_ROOT/web/ui/$uf" ] && echo "$uf"
+        done)
+        if [ -n "$staged_ui_src" ]; then
+            staged_ui_dirs=$(echo "$staged_ui_src" | while read -r uf; do dirname "$uf"; done | sort -u)
+            staged_ui_tests=$(for d in $staged_ui_dirs; do
+                if [ -d "$REPO_ROOT/web/ui/$d" ]; then
+                    (cd "$REPO_ROOT/web/ui" && find "$d" -maxdepth 1 \( -name '*.test.ts' -o -name '*.test.tsx' \) -type f)
+                fi
+            done | sort -u)
+            staged_cov_include=$(for d in $staged_ui_dirs; do
+                printf '%s\n' "--coverage.include=$d/*.{ts,tsx}"
+            done)
+            staged_targets=$(printf '%s\n%s\n' "$staged_ui_src" "$staged_ui_tests" | sort -u | grep -v '^$')
+            # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
+            (cd "$REPO_ROOT/web/ui" && npx --no-install vitest related --run --coverage \
+                --coverage.thresholds.statements=85 \
+                --coverage.thresholds.branches=75 \
+                --coverage.thresholds.functions=70 \
+                --coverage.thresholds.lines=85 \
+                $staged_cov_include $staged_targets)
+        fi
+    else
+        (cd "$REPO_ROOT/web/ui" && npm run test:coverage)
+    fi
+    (cd "$REPO_ROOT/web/ui" && npm run build)
 }
 
 # 9. Vanilla JS lint (root eslint.config.js): web/static/js, web/test,
@@ -606,15 +639,55 @@ if [ "$MODE" = "staged" ]; then
         done
     fi
 
-    if echo "$STAGED_FILES" | grep -v -E '^web/ui/' | grep -q -E '^(web/|widgets/)' && has_cmd node; then
-        echo "   [node test] Running web client test suite..."
-        TZ=UTC node --test web/test/*.test.js
+    if has_cmd node; then
+        staged_node_tests=""
+        if echo "$STAGED_FILES" | grep -q -E '^scripts/build-metadata(\.test)?\.cjs$'; then
+            staged_node_tests="${staged_node_tests:+$staged_node_tests }scripts/build-metadata.test.cjs"
+        fi
+        staged_web_tests=$(echo "$STAGED_FILES" | grep -E '^web/test/.*\.test\.js$' | while read -r tf; do
+            [ -f "$REPO_ROOT/$tf" ] && echo "$tf"
+        done)
+        if [ -n "$staged_web_tests" ]; then
+            staged_node_tests="${staged_node_tests:+$staged_node_tests }$staged_web_tests"
+        fi
+        if echo "$STAGED_FILES" | grep -q -E '^scripts/perf/'; then
+            staged_node_tests="${staged_node_tests:+$staged_node_tests }web/test/check_budget.test.js web/test/perf-swipe-point.test.js"
+        fi
+        if echo "$STAGED_FILES" | grep -q -E '^web/(templates/display\.html|static/css/hud\.css|static/js/display\.js)$'; then
+            staged_node_tests="${staged_node_tests:+$staged_node_tests }web/test/clock.test.js web/test/cursor.test.js web/test/header_video.test.js web/test/next_event.test.js web/test/reload.test.js web/test/style_heartbeat.test.js web/test/tasks.test.js web/test/theme.test.js web/test/video_hud.test.js web/test/carousel_node.test.js"
+        fi
+        if echo "$STAGED_FILES" | grep -q -E '^web/static/js/carousel\.js$'; then
+            staged_node_tests="${staged_node_tests:+$staged_node_tests }web/test/carousel_hydration_marker.test.js web/test/carousel_node.test.js web/test/carousel_swipe_follow.test.js web/test/photo_carousel.test.js"
+        fi
+        if echo "$STAGED_FILES" | grep -q -E '^web/static/js/audio\.js$'; then
+            staged_node_tests="${staged_node_tests:+$staged_node_tests }web/test/audio.test.js web/test/voice.test.js"
+        fi
+        for js_mod in calendar_family live_view perf sse video video_hud voice waveform; do
+            if echo "$STAGED_FILES" | grep -q -E "^web/static/js/${js_mod}\.js$"; then
+                staged_node_tests="${staged_node_tests:+$staged_node_tests }web/test/${js_mod}.test.js"
+            fi
+        done
+        if [ -n "$staged_node_tests" ]; then
+            # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
+            staged_node_tests=$(printf '%s\n' $staged_node_tests | sort -u)
+            echo "   [node test] Running scoped web client and perf Node.js tests..."
+            # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
+            TZ=UTC node --test $staged_node_tests
+        fi
     fi
 
     if echo "$STAGED_FILES" | grep -v -E '^web/ui/' | grep -q -E '^(web/|widgets/)' && has_cmd go; then
         if ! echo "$STAGED_FILES" | grep -q -E '^go\.(mod|sum)$'; then
+            candidate_pkgs=""
+            if echo "$STAGED_FILES" | grep -v -E '^web/ui/' | grep -q -E '^web/(templates/|static/)'; then
+                candidate_pkgs="${candidate_pkgs:+$candidate_pkgs }web internal/server"
+            fi
+            if echo "$STAGED_FILES" | grep -q -E '^widgets/'; then
+                candidate_pkgs="${candidate_pkgs:+$candidate_pkgs }internal/render internal/server internal/widget"
+            fi
             needed_pkgs=""
-            for p in web internal/render internal/server internal/widget; do
+            # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
+            for p in $(printf '%s\n' $candidate_pkgs | sort -u); do
                 if ! echo "${pkgs:-}" | grep -q -x "$p"; then
                     needed_pkgs="${needed_pkgs:+$needed_pkgs }./$p"
                 fi
