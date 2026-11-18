@@ -231,6 +231,15 @@ export function getPointerCoords(
   return null;
 }
 
+export function resolveCamerasStatusUrl(streamUrl: string): string {
+  const clean = (streamUrl.split(/[?#]/)[0] ?? '').trim();
+  const match = /^(.*?(?:^|\/))hearth-api\/camera(?:s(?:\/|$)|\/|$)/.exec(clean);
+  if (match) {
+    return `${match[1] ?? ''}hearth-api/cameras`;
+  }
+  return 'hearth-api/cameras';
+}
+
 export function useAutoLiveMotion(
   id: string,
   streamId: string,
@@ -266,7 +275,7 @@ export function useAutoLiveMotion(
 
     const pollMotion = async () => {
       try {
-        const res = await fetch('/hearth-api/cameras', { signal: ac.signal });
+        const res = await fetch(resolveCamerasStatusUrl(streamUrl), { signal: ac.signal });
         if (!res.ok) return;
         const data = JSON.parse(await res.text()) as { cameras?: CameraStatusItem[] };
         if (ac.signal.aborted) return;

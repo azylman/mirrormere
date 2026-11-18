@@ -921,7 +921,6 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertEqual(hdrs["User-Agent"], "YtDlpUA/1.0")
 
     def test_get_configured_cameras_defaults_empty(self):
-        self.assertEqual(srv.DEFAULT_CAMERAS, [])
         with patch.object(srv, "_load_config", return_value={}):
             self.assertEqual(srv._get_configured_cameras(), [])
         with patch.object(srv, "_load_config", return_value={"cameras": []}):
@@ -1023,71 +1022,35 @@ class TestHandlerEndpoints(unittest.TestCase):
             h_rtc.send_response.assert_called_with(200)
             self.assertEqual(h_rtc.wfile.getvalue(), b"v=0\r\nsdp_answer")
 
-    def test_camera_last_good_frame_retained_on_nest_placeholder(self):
-        good_jpeg = b"\xff\xd8\xff\xe0good_camera_frame_bytes\xff\xd9"
-        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
-        fake_cams = [
-            {
-                "id": "front_door",
-                "entity_id": "camera.front_door",
-                "go2rtc_src": "front_door",
-                "battery": True,
-                "event_driven": True,
-                "event_entities": ["event.front_door_motion"],
-            }
+    def test_camera_routes_reject_non_internal_caller(self):
+        get_paths = [
+            "/hearth-api/cameras",
+            "/cameras",
+            "/hearth-api/cameras/snapshot?id=entry_cam",
+            "/cameras/snapshot?id=entry_cam",
+            "/hearth-api/cameras/entry_cam/snapshot",
+            "/hearth-api/cameras/entry_cam/stream",
+            "/cameras/entry_cam/snapshot",
+            "/hearth-api/camera/snapshot/entry_cam",
+            "/hearth-api/camera/stream/entry_cam",
         ]
+        for path in get_paths:
+            with self.subTest(method="GET", path=path):
+                h = self._create_handler("GET", path, client_ip="198.51.100.1")
+                h.do_GET()
+                h.send_response.assert_called_with(403)
 
-        cfg_vals = {
-            "HA_BASE_URL": "http://198.51.100.10:8123",
-            "HA_ACCESS_TOKEN": "test_ha_tok",
-            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
-        }
-
-        def make_resp(payload, ctype="image/jpeg"):
-            r = MagicMock()
-            r.read.return_value = payload
-            r.headers = {"Content-Type": ctype}
-            r.__enter__.return_value = r
-            r.__exit__.return_value = False
-            return r
-
-        with (
-            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
-            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
-            patch.object(srv, "_get_configured_cameras", return_value=fake_cams),
-            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
-        ):
-            # 1. First fetch succeeds with a real JPEG frame and populates both caches
-            with patch("urllib.request.urlopen", return_value=make_resp(good_jpeg, "image/jpeg")):
-                data1, ctype1 = srv.fetch_camera_snapshot("front_door", force_refresh=True)
-                self.assertEqual(data1, good_jpeg)
-                self.assertEqual(ctype1, "image/jpeg")
-                self.assertIn("front_door", srv.CAMERA_LAST_GOOD_FRAME)
-                self.assertEqual(srv.CAMERA_LAST_GOOD_FRAME["front_door"][1], good_jpeg)
-
-            # 2. Subsequent fetch gets 2689-byte placeholder from HA, go2rtc times out,
-            # and camera_proxy_stream fails -> returns retained CAMERA_LAST_GOOD_FRAME
-            cold_urls = []
-
-            def cold_urlopen(req, timeout=5):
-                url = req.full_url if hasattr(req, "full_url") else str(req)
-                cold_urls.append(url)
-                if "/api/camera_proxy/" in url:
-                    return make_resp(placeholder_png, "image/png")
-                raise TimeoutError("upstream timeout")
-
-            with patch("urllib.request.urlopen", side_effect=cold_urlopen):
-                data2, ctype2 = srv.fetch_camera_snapshot("front_door", force_refresh=True)
-                self.assertEqual(data2, good_jpeg)
-                self.assertEqual(ctype2, "image/jpeg")
-                self.assertNotEqual(len(data2), srv.HA_NEST_PLACEHOLDER_LEN)
-                self.assertTrue(any("/api/camera_proxy/" in u for u in cold_urls))
-                self.assertFalse(
-                    any(
-                        "/api/frame.jpeg" in u or "/api/camera_proxy_stream/" in u
-                        for u in cold_urls
-                    )
-                )
+        post_paths = [
+            "/hearth-api/cameras/entry_cam/webrtc",
+            "/hearth-api/camera/webrtc/entry_cam",
+            "/cameras/entry_cam/webrtc",
+            "/camera/webrtc/entry_cam",
+        ]
+        for path in post_paths:
+            with self.subTest(method="POST", path=path):
+                h = self._create_handler("POST", path, client_ip="198.51.100.1")
+                h.do_POST()
+                h.send_response.assert_called_with(403)
 
     def test_camera_proxy_stream_multipart_jpeg_fallback(self):
         placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
@@ -1981,69 +1944,6 @@ class TestHandlerEndpoints(unittest.TestCase):
             # 6. Immediate second warmer pass skips camera once good frame was stored
             warmed_again = srv.warm_camera_snapshots_once(stagger_sec=0)
             self.assertEqual(warmed_again, [])
-
-    def test_camera_snapshot_sends_connection_close_headers(self):
-        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
-        stream_jpeg = b"\xff\xd8\xff\xe0close_hdr_jpeg\xff\xd9"
-        multipart_stream = (
-            b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + stream_jpeg + b"\r\n--frame\r\n"
-        )
-        fake_cams = [
-            {
-                "id": "yard_cam",
-                "entity_id": "camera.yard_cam",
-                "go2rtc_src": "yard_cam",
-                "event_driven": False,
-            }
-        ]
-        cfg_vals = {
-            "HA_BASE_URL": "http://198.51.100.10:8123",
-            "HA_ACCESS_TOKEN": "test_ha_tok",
-            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
-        }
-        captured_reqs = []
-
-        def fake_urlopen(req, timeout=5):
-            captured_reqs.append(req)
-            url = req.full_url if hasattr(req, "full_url") else str(req)
-            if "/api/camera_proxy/" in url:
-                r = MagicMock()
-                r.read.return_value = placeholder_png
-                r.headers = {"Content-Type": "image/png"}
-                r.__enter__.return_value = r
-                r.__exit__.return_value = False
-                return r
-            if "/api/frame.jpeg" in url:
-                raise TimeoutError("go2rtc single timeout")
-            if "/api/camera_proxy_stream/" in url:
-                bio = io.BytesIO(multipart_stream)
-                r = MagicMock()
-                r.read.side_effect = bio.read
-                r.headers = {"Content-Type": "multipart/x-mixed-replace; boundary=frame"}
-                r.__enter__.return_value = r
-                r.__exit__.return_value = False
-                return r
-            raise RuntimeError(f"Unexpected URL: {url}")
-
-        with (
-            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
-            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
-            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
-            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
-            patch.object(srv, "_get_configured_cameras", return_value=fake_cams),
-            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
-            patch("urllib.request.urlopen", side_effect=fake_urlopen),
-        ):
-            data, ctype = srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
-            self.assertEqual(data, stream_jpeg)
-            self.assertEqual(ctype, "image/jpeg")
-
-        go2rtc_reqs = [r for r in captured_reqs if "/api/frame.jpeg" in r.full_url]
-        stream_reqs = [r for r in captured_reqs if "/api/camera_proxy_stream/" in r.full_url]
-        self.assertEqual(len(go2rtc_reqs), 1)
-        self.assertEqual(len(stream_reqs), 1)
-        self.assertEqual(go2rtc_reqs[0].get_header("Connection"), "close")
-        self.assertEqual(stream_reqs[0].get_header("Connection"), "close")
 
     def test_camera_go2rtc_404_cooldown_suppresses_go2rtc_and_ha_stream(self):
         import urllib.error

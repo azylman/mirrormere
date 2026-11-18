@@ -77,6 +77,7 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	}
 	assertEq(t, "weather interval", cfg.Display.Header.Weather.GetRefreshIntervalSeconds(), 900)
 	assertEq(t, "weather units", cfg.Display.Header.Weather.Units, "imperial")
+	assertEq(t, "widgets len", len(cfg.Display.Widgets), 7)
 
 	cal := cfg.Display.Widgets[0]
 	if cal.ID != "family-calendar" || cal.Type != "calendar-feed" {
@@ -94,6 +95,31 @@ func TestLoad_ExampleConfig(t *testing.T) {
 		t.Errorf("unexpected photos widget: %+v", photos)
 	}
 	assertEq(t, "secret album_url", photos.Secrets["albums[0].url"], mockEnv["GOOGLE_PHOTOS_ALBUM_URL"])
+
+	liveViewCases := []struct {
+		idx, autoLiveSec, maxStreams int
+		id, streamID                 string
+		batteryPowered               bool
+	}{
+		{idx: 5, id: "cam-front-door", streamID: "front_door", autoLiveSec: 60, maxStreams: 2, batteryPowered: true},
+		{idx: 6, id: "cam-yard", streamID: "yard_cam", autoLiveSec: 60, maxStreams: 2, batteryPowered: false},
+	}
+	for _, tc := range liveViewCases {
+		w := cfg.Display.Widgets[tc.idx]
+		assertEq(t, tc.id+" id", w.ID, tc.id)
+		assertEq(t, tc.id+" type", w.Type, "live-view")
+		assertEq(t, tc.id+" stream_type", testutil.As[string](t, w.Config["stream_type"]), "mjpeg")
+		assertEq(t, tc.id+" stream_id", testutil.As[string](t, w.Config["stream_id"]), tc.streamID)
+		assertEq(t, tc.id+" stream_url", testutil.As[string](t, w.Config["stream_url"]), "/hearth-api/cameras/"+tc.streamID+"/stream")
+		assertEq(t, tc.id+" poster_url", testutil.As[string](t, w.Config["poster_url"]), "/hearth-api/cameras/"+tc.streamID+"/snapshot")
+		assertEq(t, tc.id+" expand_stream_url", testutil.As[string](t, w.Config["expand_stream_url"]), "/hearth-api/cameras/"+tc.streamID+"/webrtc")
+		assertEq(t, tc.id+" expand_stream_type", testutil.As[string](t, w.Config["expand_stream_type"]), "webrtc")
+		assertEq(t, tc.id+" auto_live_on_motion_seconds", testutil.As[int](t, w.Config["auto_live_on_motion_seconds"]), tc.autoLiveSec)
+		assertEq(t, tc.id+" max_auto_live_streams", testutil.As[int](t, w.Config["max_auto_live_streams"]), tc.maxStreams)
+		if tc.batteryPowered {
+			assertEq(t, tc.id+" battery_powered", testutil.As[bool](t, w.Config["battery_powered"]), true)
+		}
+	}
 }
 
 func TestParseWithEnv_ValidationErrors(t *testing.T) {

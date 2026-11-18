@@ -2872,10 +2872,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(payload)
             return
 
+        is_camera_path = (
+            path == "/cameras"
+            or path.startswith("/cameras/")
+            or path == "/hearth-api/cameras"
+            or path.startswith("/hearth-api/cameras/")
+            or path.startswith("/hearth-api/camera/snapshot/")
+            or path.startswith("/hearth-api/camera/stream/")
+        )
+        if is_camera_path and not self._is_internal_caller():
+            self._send_json_error(403, "Forbidden: internal callers only")
+            return
+
         if path in ("/cameras", "/cameras/", "/hearth-api/cameras", "/hearth-api/cameras/"):
-            if not self._is_internal_caller():
-                self._send_json_error(403, "Forbidden: internal callers only")
-                return
             cams = get_cameras_status()
             payload = json.dumps({"cameras": cams, "items": cams}).encode("utf-8")
             self.send_response(200)
@@ -2890,9 +2899,6 @@ class Handler(BaseHTTPRequestHandler):
 
         cam_key = None
         if path in ("/cameras/snapshot", "/hearth-api/cameras/snapshot"):
-            if not self._is_internal_caller():
-                self._send_json_error(403, "Forbidden: internal callers only")
-                return
             cam_key = (
                 (qs.get("camera") or qs.get("id") or qs.get("src") or qs.get("stream_id") or [""])[
                     0
@@ -2907,9 +2913,6 @@ class Handler(BaseHTTPRequestHandler):
             ):
                 cam_key = parts[0]
         elif path.startswith("/cameras/"):
-            if not self._is_internal_caller():
-                self._send_json_error(403, "Forbidden: internal callers only")
-                return
             parts = [p for p in path[len("/cameras/") :].split("/") if p]
             if (
                 len(parts) == 2
@@ -2979,18 +2982,28 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         is_webrtc_path = (
-            path.startswith("/hearth-api/cameras/") and path.endswith("/webrtc")
-        ) or path.startswith("/hearth-api/camera/webrtc/")
+            (path.startswith("/hearth-api/cameras/") and path.endswith("/webrtc"))
+            or path.startswith("/hearth-api/camera/webrtc/")
+            or (path.startswith("/cameras/") and path.endswith("/webrtc"))
+            or path.startswith("/camera/webrtc/")
+        )
         max_body = 65536 if is_webrtc_path else 8192
         if length > max_body:
             self._send_json_error(413, "Payload too large")
             return
 
         if is_webrtc_path:
+            if not self._is_internal_caller():
+                self._send_json_error(403, "Forbidden: internal callers only")
+                return
             if path.startswith("/hearth-api/cameras/"):
                 cam_key = path[len("/hearth-api/cameras/") : -len("/webrtc")].strip("/")
-            else:
+            elif path.startswith("/hearth-api/camera/webrtc/"):
                 cam_key = path[len("/hearth-api/camera/webrtc/") :].strip("/")
+            elif path.startswith("/cameras/"):
+                cam_key = path[len("/cameras/") : -len("/webrtc")].strip("/")
+            else:
+                cam_key = path[len("/camera/webrtc/") :].strip("/")
             raw_sdp = (
                 self.rfile.read(length).decode("utf-8", errors="replace") if length > 0 else ""
             )

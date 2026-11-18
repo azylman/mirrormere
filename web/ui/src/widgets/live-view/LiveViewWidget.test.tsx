@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, render, fireEvent, createEvent, act } from '@testing-library/react';
 import { LiveViewWidget, parseLiveViewConfig, computeStaggerDelayMs, activeAutoLiveStreams } from './LiveViewWidget';
+import { resolveCamerasStatusUrl } from './liveViewHelpers';
 import { useDisplayStore } from '../../store';
 import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
@@ -1589,7 +1590,7 @@ describe('LiveViewWidget component', () => {
 
   it('promotes mjpeg stream to inline WebRTC when /hearth-api/cameras reports auto_live and falls back to static img after 60s of calm', async () => {
     activeAutoLiveStreams.clear();
-    const nowEpoch = Math.floor(Date.now() / 1000);
+    const nowEpoch = Math.ceil(Date.now() / 1000);
     const cameraPayload: Record<string, unknown> = {
       cameras: [{ id: 'front', stream_url: '/hearth-api/cameras/front/stream', auto_live: true, last_event_epoch: nowEpoch }],
     };
@@ -1785,5 +1786,30 @@ describe('LiveViewWidget component', () => {
       </PaneContext.Provider>,
     );
     expect(activeAutoLiveStreams.size).toBe(0);
+  });
+
+  it('resolveCamerasStatusUrl preserves prefix/origin and falls back to base-relative hearth-api/cameras', () => {
+    expect(resolveCamerasStatusUrl('/hearth-api/cameras/front/stream')).toBe('/hearth-api/cameras');
+    expect(resolveCamerasStatusUrl('/ingress/hearth-api/cameras/front/stream?t=1#h')).toBe('/ingress/hearth-api/cameras');
+    expect(resolveCamerasStatusUrl('https://mirror.local:8443/ingress/hearth-api/camera/stream/front')).toBe('https://mirror.local:8443/ingress/hearth-api/cameras');
+    expect(resolveCamerasStatusUrl('hearth-api/cameras/front/stream')).toBe('hearth-api/cameras');
+    expect(resolveCamerasStatusUrl('http://localhost:1984/api/stream')).toBe('hearth-api/cameras');
+    expect(resolveCamerasStatusUrl('http://localhost:1984/api/stream?ref=hearth-api/camera')).toBe('hearth-api/cameras');
+    expect(resolveCamerasStatusUrl('')).toBe('hearth-api/cameras');
+  });
+
+  it('polls prefixed or base-relative hearth-api/cameras from stream_url', async () => {
+    for (const [streamUrl, expected] of [
+      ['/ingress/hearth-api/cameras/front/stream', '/ingress/hearth-api/cameras'],
+      ['http://localhost:1984/api/stream?src=front', 'hearth-api/cameras'],
+    ] as const) {
+      activeAutoLiveStreams.clear();
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{"cameras":[]}' });
+      globalThis.fetch = fetchMock;
+      seedWidget({ stream_id: 'front', stream_url: streamUrl, stream_type: 'mjpeg', auto_live_on_motion_seconds: 60 });
+      const { unmount } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+      await vi.waitFor(() => { expect(fetchMock).toHaveBeenCalledWith(expected, expect.objectContaining({ signal: expect.any(AbortSignal) })); });
+      unmount();
+    }
   });
 });
