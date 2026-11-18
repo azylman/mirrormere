@@ -264,3 +264,57 @@ func TestHandler_SlowConsumerDisconnect(t *testing.T) {
 	}
 	close(blockCh)
 }
+
+// publishOnHeadersRecorder models a client reacting as soon as response headers
+// arrive, before the handler has produced its initial hydration frames.
+type publishOnHeadersRecorder struct {
+	*flushingRecorder
+
+	hub       *Hub
+	eventType string
+	once      sync.Once
+	received  chan string
+}
+
+func (r *publishOnHeadersRecorder) Flush() {
+	r.once.Do(func() { r.hub.Publish(r.eventType, []byte(`{}`)) })
+	r.flushingRecorder.Flush()
+}
+
+func (r *publishOnHeadersRecorder) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "event: "+r.eventType+"\n") {
+		r.received <- string(p)
+	}
+	return r.flushingRecorder.Write(p)
+}
+
+func TestHandler_EventsAfterResponseHeaders(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ name, eventType string }{
+		{"style_reload", EventStyleReload},
+		{"widget_reload", EventWidgetReload},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hub := NewHub(HubConfig{}, nil, nil)
+			defer hub.Close()
+			ctx, cancel := context.WithCancel(t.Context())
+			rec := &publishOnHeadersRecorder{flushingRecorder: newFlushingRecorder(), hub: hub, eventType: tc.eventType, received: make(chan string, 1)}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				Handler(hub).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events", http.NoBody).WithContext(ctx))
+			}()
+			defer func() { cancel(); <-done }()
+			select {
+			case frame := <-rec.received:
+				if !strings.Contains(frame, "data: {}\n") {
+					t.Fatalf("unexpected event frame: %q", frame)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("event published after response headers was lost")
+			}
+		})
+	}
+}

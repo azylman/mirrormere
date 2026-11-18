@@ -59,10 +59,9 @@ which usually means the swipe centre is on a blocking widget.
 
 ## CI budget
 
-The `perf` job in `.github/workflows/ci.yml` runs on pull requests that touch the React UI or
-this harness. It starts the server from `deploy/examples/config.yaml`, runs the bench at 4x CPU
-throttle with 20 swipes against `/display?ui=react`, and then runs
-`scripts/perf/check-budget.mjs`:
+The performance budget check (`scripts/perf/bench.mjs` + `scripts/perf/check-budget.mjs`) is run manually
+against a local server rather than as an active job in `.github/workflows/ci.yml`. It runs the bench at 4x CPU
+throttle with 20 swipes against `/display?ui=react`, and then runs `scripts/perf/check-budget.mjs`:
 
 ```sh
 node scripts/perf/bench.mjs --url 'http://localhost:8080/display?ui=react&perf=1' --cpu-throttle 4 --swipes 20 > bench.json

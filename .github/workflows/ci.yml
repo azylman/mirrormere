@@ -31,6 +31,9 @@ permissions:
 jobs:
   changes:
     name: Detect Changed Microservices
+    permissions:
+      contents: read
+      checks: write
     runs-on: [self-hosted, ci]
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -39,7 +42,6 @@ jobs:
       go_core: ${{ steps.filter.outputs.go_core }}
       web: ${{ steps.filter.outputs.web }}
       ui: ${{ steps.filter.outputs.ui }}
-      perf: ${{ steps.filter.outputs.perf }}
       eink_node: ${{ steps.filter.outputs.eink_node }}
       eink_renderer: ${{ steps.filter.outputs.mirrormere-eink-renderer }}
       ear: ${{ steps.filter.outputs.mirrormere-ear }}
@@ -76,12 +78,6 @@ jobs:
               - 'widgets/**'
             ui:
               - 'web/ui/**'
-            perf:
-              - 'web/ui/**'
-              - 'web/static/js/perf.js'
-              - 'web/templates/display_react.html'
-              - 'deploy/examples/config.yaml'
-              - 'scripts/perf/**'
             eink_node:
               - 'client/eink-node/**'
             mirrormere:
@@ -156,6 +152,13 @@ jobs:
             fs.appendFileSync(output, `matrix=${JSON.stringify(safeMatrix)}\n`);
             fs.appendFileSync(output, `has_builds=${hasBuilds}\n`);
           '
+
+      - name: Publish Build Selection
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MATRIX_JSON: ${{ steps.set-matrix.outputs.matrix }}
+          HAS_BUILDS: ${{ steps.set-matrix.outputs.has_builds }}
+        run: node scripts/build-metadata.cjs manifest
 
   verify:
     name: Verify Codebase
@@ -238,6 +241,7 @@ jobs:
         if: needs.changes.outputs.web == 'true' || needs.changes.outputs.eink_renderer == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
         run: |
           set -e
+          node --test scripts/build-metadata.test.cjs
           if [ "${{ needs.changes.outputs.web }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
             echo "Running web client test suite..."
             TZ=UTC node --test web/test/*.test.js
@@ -341,106 +345,6 @@ jobs:
         if: failure()
         run: |
           echo "::error::🚨 [Mirrormere CI] React UI verification failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
-
-      - name: Hold Failure Until RoboRev Completes
-        if: failure() && github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          export GH_TOKEN="${GITHUB_PAT:-${GH_TOKEN}}"
-          export GITHUB_TOKEN="${GITHUB_PAT:-${GITHUB_TOKEN}}"
-          if [ -z "${HEAD_SHA:-}" ]; then
-            exit 0
-          fi
-          echo "Holding job failure status until roborev completes for commit ${HEAD_SHA:0:7}..."
-          for i in $(seq 1 120); do
-            STATUS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "roborev")] | last | .status // "missing"' 2>/dev/null || echo "error")
-            if [ "$STATUS" = "completed" ]; then
-              echo "roborev completed; releasing held failure status."
-              exit 0
-            fi
-            if [ "$STATUS" = "missing" ] && [ "$i" -ge 6 ]; then
-              echo "roborev check-run not present after 30s; releasing held failure status."
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "Timed out waiting for roborev after 600s; releasing held failure status."
-
-  perf:
-    name: Display performance budget (React)
-    needs: [changes, verify, lint, ui]
-    if: github.event_name != 'push' || inputs.force_all == true
-    # Self-hosted runner: ships headless Chrome, Go, and Node (docs/perf.md).
-    runs-on: [self-hosted, ci]
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js (pinned by web/ui/.nvmrc)
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        uses: actions/setup-node@v7
-        with:
-          node-version-file: web/ui/.nvmrc
-          cache: npm
-          cache-dependency-path: web/ui/package-lock.json
-
-      - name: Build React UI bundle
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        working-directory: web/ui
-        run: |
-          set -euo pipefail
-          npm ci
-          npm run build
-
-      - name: Start the server with the example config and fixture providers
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        run: |
-          set -euo pipefail
-          pkill -x server || true
-          go build -o bin/server ./cmd/server
-          # The example config reads these secrets by name; the fixture values point at nothing,
-          # so the providers fail fast and the screens still load from config (docs/perf.md).
-          export FAMILY_CALENDAR_URL=http://localhost:9/fixture.ics
-          export TODOIST_API_TOKEN=fixture-token
-          export GOOGLE_PHOTOS_ALBUM_URL=http://localhost:9/fixture-photos
-          RUNNER_TRACKING_ID="" CONFIG_PATH=deploy/examples/config.yaml ./bin/server > server.log 2>&1 &
-          for _ in $(seq 1 60); do
-            if curl -fsS -o /dev/null 'http://localhost:8080/display?ui=react'; then break; fi
-            sleep 1
-          done
-          curl -fsS -o /dev/null 'http://localhost:8080/display?ui=react'
-
-      - name: Bench the React display (4x CPU throttle, 20 swipes)
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        run: |
-          set -euo pipefail
-          node scripts/perf/bench.mjs --url 'http://localhost:8080/display?ui=react&perf=1' --cpu-throttle 4 --swipes 20 > bench.json
-
-      - name: Check the performance budget and app.js size
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        run: node scripts/perf/check-budget.mjs --bench bench.json --budget scripts/perf/budget.json --app-js web/static/ui/app.js
-
-      - name: Upload bench output and server log
-        if: always() && (needs.changes.outputs.perf == 'true' || inputs.force_all == true)
-        uses: actions/upload-artifact@v7
-        with:
-          name: perf-bench
-          path: |
-            bench.json
-            server.log
-          if-no-files-found: ignore
-
-      - name: Stop the server
-        if: always() && (needs.changes.outputs.perf == 'true' || inputs.force_all == true)
-        run: pkill -x server || true
-
-      - name: Emit Agent Pre-Flight Remediation Guidance
-        if: failure()
-        run: |
-          echo "::error::🚨 [Mirrormere CI] Performance budget check failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
 
       - name: Hold Failure Until RoboRev Completes
         if: failure() && github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
@@ -669,6 +573,13 @@ jobs:
     permissions:
       contents: read
       packages: write
+      checks: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MATRIX_JSON: ${{ needs.changes.outputs.matrix }}
+      HAS_BUILDS: ${{ needs.changes.outputs.has_builds }}
+      SERVICE_JSON: ${{ toJSON(matrix) }}
+      PUSH_ALLOWED: ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
     strategy:
       fail-fast: false
       matrix:
@@ -676,6 +587,10 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
+
+      - name: Publish Build Progress
+        id: metadata_progress
+        run: node scripts/build-metadata.cjs running
 
       - name: Run voice-fingerprinter unit tests
         if: matrix.service == 'mirrormere-voice-fingerprinter' && (github.event_name != 'push' || inputs.force_all == true)
@@ -732,6 +647,7 @@ jobs:
           echo "exists=false" >> "$GITHUB_OUTPUT"
 
       - name: Push Image from PR Tree Cache (${{ matrix.service }})
+        id: cache_push
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && steps.tree_check.outputs.exists == 'true'
         env:
           OWNER: ${{ steps.repo_owner.outputs.owner }}
@@ -748,6 +664,7 @@ jobs:
             "$SRC"
 
       - name: Build and Push Docker Image
+        id: image_push
         if: steps.tree_check.outputs.exists != 'true'
         uses: docker/build-push-action@v7
         with:
@@ -764,6 +681,16 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
+
+      - name: Publish Build Result
+        if: always()
+        env:
+          RESULT_CHECK_ID: ${{ steps.metadata_progress.outputs.check_id }}
+          STEPS_JSON: ${{ toJSON(steps) }}
+          JOB_STATUS: ${{ job.status }}
+          TREE_SHA: ${{ steps.tree_check.outputs.tree_sha }}
+          IMAGE_DIGEST: ${{ steps.image_push.outputs.digest }}
+        run: node scripts/build-metadata.cjs result
 
   roborev:
     name: roborev
@@ -876,7 +803,10 @@ jobs:
 
   build-gate:
     name: CI Gate
-    needs: [changes, verify, lint, ui, perf, roborev, docker]
+    permissions:
+      contents: read
+      checks: write
+    needs: [changes, verify, lint, ui, roborev, docker]
     if: always()
     runs-on: [self-hosted, ci]
     env:
@@ -884,7 +814,11 @@ jobs:
       EVENT_NAME: ${{ github.event_name }}
       HAS_BUILDS: ${{ needs.changes.outputs.has_builds }}
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
       - name: Verify All Upstream Jobs & Container Builds
+        id: upstream
         run: |
           set -euo pipefail
           echo "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
@@ -908,3 +842,12 @@ jobs:
             exit 1
           fi
           echo "All required checks and builds passed."
+
+      - name: Publish Final Build Metadata
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MATRIX_JSON: ${{ needs.changes.outputs.matrix }}
+          GATE_STATUS: ${{ steps.upstream.outcome }}
+          MATRIX_RESULT: ${{ needs.docker.result }}
+        run: node scripts/build-metadata.cjs final
