@@ -47,12 +47,13 @@ func Handler(hub *Hub) http.Handler {
 			hub.logger.Debug("failed to disable response write deadline", "error", err)
 		}
 
-		w.WriteHeader(http.StatusOK)
-		flusher.Flush()
-
-		// 5. Subscribe to live stream BEFORE snapshot/replay to eliminate race window (Issue #199)
+		// Subscribe before acknowledging the connection: clients can trigger
+		// reloads as soon as they receive headers, before initial hydration.
 		ch, unsubscribe := hub.Subscribe(r.Context())
 		defer unsubscribe()
+
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
 
 		// 6. Initial Hydration vs Replay
 		lastEventID := resolveLastEventID(r)
