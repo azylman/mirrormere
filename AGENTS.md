@@ -21,6 +21,12 @@ See `README.md` for the product overview.
   4. **Node & Python suites** (scoped to touched paths): Node tests (`web/test`, `sidecars/eink-renderer/test`) and Python suites (`sidecars/voice-fingerprinter`, `client/eink-node`, `client/ear`, `client/remote`, `client/ember`, `deploy/ical-bridge`).
 - CI (`.github/workflows/ci.yml`) runs parallel path-scoped jobs (`changes`, `verify`, `lint`, `ui`, `verify-gate`) on pull requests to `main`, with failure remediation logs directing agents to run `git add -A && sh scripts/verify.sh --staged` from the repository root.
 
+## Contributing
+
+- **Fork-based Pull Request workflow**: Direct pushes to `main` are blocked by branch protection, and external contributors or agents without write access to `azylman/mirrormere` must push branches to their own fork and open a pull request from `<your-fork>:<branch>` targeting `azylman/mirrormere` `main`.
+- **Branch from latest upstream `main`**: Before creating a branch, always fetch the latest `main` from `azylman/mirrormere` (e.g. `git fetch upstream main && git checkout -b <branch> upstream/main`, or sync your fork's `main` to upstream `main` first) rather than branching off a stale fork `main`.
+- **Focused diffs & local verification**: Keep changes tightly scoped to the pull request objective without rewriting or reformatting unrelated code in touched files, and always run `git add -A && sh scripts/verify.sh --staged` from the repository root before committing or pushing updates to a pull request branch.
+
 ## Where things live
 
 - `cmd/server/` - the server entrypoint (config load, SIGHUP reload).
