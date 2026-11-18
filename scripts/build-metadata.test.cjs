@@ -16,7 +16,7 @@ test('aggregate fences partial reruns and newest results', () => {
   for (const c of cases) assert.equal(m.aggregate(base,c.records,c.matrix).results[0].state,c.state,c.name);
 });
 test('rejects conflicting or foreign records', () => {
-  for (const records of [[result(2),result(2)], [{...result(2),execution_sha:'c'.repeat(40)}], [{...result(2),image_name:'other'}]]) assert.throws(() => m.aggregate(base,records,'success'));
+  for (const records of [[result(2),{...result(2),pushed:false}], [{...result(2),execution_sha:'c'.repeat(40)}], [{...result(2),image_name:'other'}]]) assert.throws(() => m.aggregate(base,records,'success'));
 });
 test('push outcomes use step IDs and explicit push permission', () => {
   for (const c of [
@@ -64,11 +64,27 @@ test('final publication requires a matching manifest and authoritative app prove
   const record={...current,kind:'result',service:'api',image_name:'api',state:'success',pushed:true,source_attempt:2};
   const manifest={name:'build-metadata',app:{id:15368},head_sha:current.source_sha,external_id:m.externalID(current),status:'completed',conclusion:'neutral',output:{summary:JSON.stringify(current)}};
   const transport={...manifest,name:'build-metadata-result',external_id:m.externalID(record),output:{summary:JSON.stringify(record)}};
+  const retained={...record,run_attempt:1,source_attempt:1};
+  const retainedCheck={...transport,external_id:m.externalID(retained),output:{summary:JSON.stringify(retained)}};
+  const finalRecord={...current,kind:'final',results:[{service:'api',image_name:'api',state:'success',pushed:true,source_attempt:1}]};
   const cases=[
+    {name:'retained clone created after final',checks:[manifest,{...manifest,external_id:m.externalID(finalRecord),output:{text:JSON.stringify(finalRecord),summary:'Final'}},retainedCheck,{...retainedCheck,id:999}],sourceAttempt:1},
+    {name:'failed rerun before first publication',checks:[manifest,retainedCheck],matrix:'failure',error:true},
+    {name:'real reexecution running supersedes retained clone',checks:[manifest,retainedCheck,{...transport,output:{text:JSON.stringify({...record,state:'running',pushed:false}),summary:'Running'}}],error:true},
+    {name:'real reexecution failure supersedes retained clone',checks:[manifest,retainedCheck,{...transport,output:{text:JSON.stringify({...record,state:'failure',pushed:false}),summary:'Failed'}}],error:true},
     {name:'missing manifest',checks:[transport],error:true},
     {name:'valid',checks:[manifest,transport]},
     {name:'wrong app',checks:[manifest,{...transport,app:{id:9}}],error:true},
-    {name:'duplicate result',checks:[manifest,transport,transport],error:true},
+    {name:'post-final retained clone',checks:[manifest,transport,{...transport,id:999,started_at:'later'}]},
+    {name:'canonical text',checks:[manifest,{...transport,output:{text:JSON.stringify(record),summary:'Build result'}}]},
+    {name:'mixed transport',checks:[{...manifest,output:{text:JSON.stringify(current),summary:'Manifest'}},transport]},
+    {name:'conflicting dual payload',checks:[manifest,{...transport,output:{text:JSON.stringify(record),summary:JSON.stringify({...record,pushed:false})}}],error:true},
+    {name:'conflicting replica',checks:[manifest,transport,{...transport,output:{summary:JSON.stringify({...record,pushed:false})}}],error:true},
+    {name:'different raw replica',checks:[manifest,transport,{...transport,output:{summary:JSON.stringify(record,null,2)}}],error:true},
+    {name:'different transport status',checks:[manifest,transport,{...transport,status:'in_progress'}],error:true},
+    {name:'wrong external identity',checks:[manifest,{...transport,external_id:m.externalID(record)+'wrong'}],error:true},
+    {name:'wrong source',checks:[manifest,{...transport,head_sha:'c'.repeat(40)}],error:true},
+    {name:'empty canonical text',checks:[manifest,{...transport,output:{text:'',summary:JSON.stringify(record)}}],error:true},
     {name:'wrong manifest selection',checks:[{...manifest,output:{summary:JSON.stringify({...current,selected:[]})}},transport],error:true}
   ];
   try {
@@ -84,8 +100,8 @@ test('final publication requires a matching manifest and authoritative app prove
         else data={check_runs:c.checks};
         return {ok:true,json:async()=>data};
       };
-      if(c.error) { await assert.rejects(m.main(env),undefined,c.name); assert.equal(published.length,0); }
-      else { await m.main(env); assert.equal(published[0].conclusion,'neutral'); assert.equal(JSON.parse(published[0].output.summary).kind,'final'); }
+      if(c.error) { await assert.rejects(m.main({...env,MATRIX_RESULT:c.matrix || 'success'}),undefined,c.name); assert.equal(published.length,0); }
+      else { await m.main(env); assert.equal(published[0].conclusion,'neutral'); assert.equal(JSON.parse(published[0].output.text).kind,'final'); assert.equal(JSON.parse(published[0].output.text).results[0].source_attempt,c.sourceAttempt || 2); }
     }
   } finally { globalThis.fetch=originalFetch;process.argv=originalArgs;fs.rmSync(dir,{recursive:true,force:true}); }
 });
