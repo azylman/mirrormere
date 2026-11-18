@@ -8,7 +8,7 @@ export interface SuggestedItem {
 }
 export interface NowPlaying {
   title?: string; artist?: string; thumb?: string; state?: string;
-  volume?: number; queue_index?: number; video_id?: string;
+  volume?: number; queue_index?: number; video_id?: string; shuffle?: boolean;
 }
 export interface Playlist { playlist_id: string; title: string; thumb?: string; count?: number }
 export interface QueueItem { title: string; artist: string; thumb?: string; id?: string; video_id?: string }

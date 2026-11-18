@@ -729,7 +729,7 @@ MUSIC_STATE = {
     "queue": [],
     "queue_index": 0,
     "playlist_title": "",
-    "shuffle": True,
+    "shuffle": False,
     "last_cast_ts": 0,
     "playing_video_id": "",
     "local_state": "stopped",
@@ -1133,7 +1133,7 @@ def get_music_dashboard_state():
         queue = list(MUSIC_STATE["queue"])
         q_idx = MUSIC_STATE["queue_index"]
         pl_title = MUSIC_STATE["playlist_title"]
-        shuffle = MUSIC_STATE["shuffle"]
+        shuffle = bool(MUSIC_STATE.get("shuffle", False))
         local_st = MUSIC_STATE.get("local_state", "stopped")
         local_vol = int(MUSIC_STATE.get("local_volume", 35))
         playing_vid = MUSIC_STATE.get("playing_video_id", "")
@@ -1306,6 +1306,8 @@ def start_music_playback(body):
 
 
 def control_music_playback(body):
+    import random
+
     action = body.get("action", "")
     speaker = body.get("speaker")
     with MUSIC_STATE_LOCK:
@@ -1314,6 +1316,21 @@ def control_music_playback(body):
         active_spk = MUSIC_STATE["active_speaker"]
         queue = list(MUSIC_STATE["queue"])
         q_idx = MUSIC_STATE["queue_index"]
+        if action == "shuffle":
+            new_shuffle = not bool(MUSIC_STATE.get("shuffle", False))
+            MUSIC_STATE["shuffle"] = new_shuffle
+            if new_shuffle and queue:
+                try:
+                    clamped_idx = max(0, min(int(q_idx), len(queue) - 1))
+                except (ValueError, TypeError):
+                    clamped_idx = 0
+                if len(queue) > clamped_idx + 2:
+                    remaining = queue[clamped_idx + 1 :]
+                    random.shuffle(remaining)
+                    MUSIC_STATE["queue"] = queue[: clamped_idx + 1] + remaining
+
+    if action == "shuffle":
+        return True, get_music_dashboard_state()
 
     if _is_local_speaker(active_spk):
         with MUSIC_STATE_LOCK:
@@ -2081,7 +2098,9 @@ def _clear_upstream_failure(key):
         CAMERA_FAILURE_COOLDOWN.pop(key, None)
 
 
-def fetch_camera_snapshot(camera_key, force_refresh=False, active_refresh=False, background_warm=False):
+def fetch_camera_snapshot(
+    camera_key, force_refresh=False, active_refresh=False, background_warm=False
+):
     target = resolve_camera_target(camera_key)
     if not target:
         return None, None
@@ -2186,7 +2205,9 @@ def fetch_camera_snapshot(camera_key, force_refresh=False, active_refresh=False,
 
     cam_cooldown_key = f"camera:{cid}"
     stream_cooldown_key = f"stream:{cid}"
-    skip_stream_fallback = is_background_warm or _is_in_failure_cooldown(stream_cooldown_key, now=now)
+    skip_stream_fallback = is_background_warm or _is_in_failure_cooldown(
+        stream_cooldown_key, now=now
+    )
 
     if go2rtc_base and not _is_in_failure_cooldown(cam_cooldown_key, now=now):
         candidate_srcs = [target["go2rtc_src"]]

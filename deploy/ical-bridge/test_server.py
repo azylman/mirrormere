@@ -1882,12 +1882,14 @@ class TestHandlerEndpoints(unittest.TestCase):
                 return r
             raise RuntimeError(f"Unexpected URL: {url}")
 
-        with patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True), \
-             patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True), \
-             patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True), \
-             patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True), \
-             patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)), \
-             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
             data, ctype = srv.fetch_camera_snapshot("front_yard_camera", force_refresh=True)
             self.assertEqual(data, stream_jpeg)
             self.assertEqual(ctype, "image/jpeg")
@@ -1951,13 +1953,15 @@ class TestHandlerEndpoints(unittest.TestCase):
 
         t0 = 1794590000.0
         srv.CAMERA_WARMER_STOP_EVENT.clear()
-        with patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True), \
-             patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True), \
-             patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True), \
-             patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True), \
-             patch.object(srv, "_get_configured_cameras", return_value=fake_cams), \
-             patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)), \
-             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
+            patch.object(srv, "_get_configured_cameras", return_value=fake_cams),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
             # 1. First warmer pass hits go2rtc once, gets HTTP 404, enters 300s cooldown,
             # and does NOT fall through to HA camera_proxy_stream.
             with patch.object(srv.time, "time", return_value=t0):
@@ -1984,7 +1988,9 @@ class TestHandlerEndpoints(unittest.TestCase):
                 self.assertEqual(warmed3, ["bedroom_bedroom_camera"])
                 self.assertEqual(len(go2rtc_hits), 2)
                 self.assertEqual(stream_hits, [])
-                self.assertEqual(srv.CAMERA_LAST_GOOD_FRAME["bedroom_bedroom_camera"][1], recovered_jpeg)
+                self.assertEqual(
+                    srv.CAMERA_LAST_GOOD_FRAME["bedroom_bedroom_camera"][1], recovered_jpeg
+                )
 
     def test_camera_timeout_backoff_suppresses_repeated_go2rtc_and_stream_calls(self):
         placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
@@ -2033,13 +2039,15 @@ class TestHandlerEndpoints(unittest.TestCase):
 
         t0 = 1794595000.0
         srv.CAMERA_WARMER_STOP_EVENT.clear()
-        with patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True), \
-             patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True), \
-             patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True), \
-             patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True), \
-             patch.object(srv, "_get_configured_cameras", return_value=fake_cams), \
-             patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)), \
-             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
+            patch.object(srv, "_get_configured_cameras", return_value=fake_cams),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
             # 1. Background warmer pass 1: go2rtc times out #1; warmer skips blocking HA stream fallback.
             with patch.object(srv.time, "time", return_value=t0):
                 self.assertEqual(srv.warm_camera_snapshots_once(stagger_sec=0), [])
@@ -2063,7 +2071,9 @@ class TestHandlerEndpoints(unittest.TestCase):
             # 4. After 300s cooldown expires, go2rtc recovers cleanly.
             go2rtc_timeout_mode[0] = False
             with patch.object(srv.time, "time", return_value=t0 + 425.0):
-                data_ok, ctype_ok = srv.fetch_camera_snapshot("front_yard_camera", force_refresh=True)
+                data_ok, ctype_ok = srv.fetch_camera_snapshot(
+                    "front_yard_camera", force_refresh=True
+                )
                 self.assertEqual(data_ok, recovered_jpeg)
                 self.assertEqual(ctype_ok, "image/jpeg")
                 self.assertEqual(len(go2rtc_hits), 3)
@@ -2113,8 +2123,10 @@ class TestHandlerEndpoints(unittest.TestCase):
             mock_inst.start.assert_called_once()
 
         srv.CAMERA_WARMER_STOP_EVENT.clear()
-        with patch.object(srv, "warm_camera_snapshots_once", return_value=[]) as mock_warm_once, \
-             patch.object(srv.CAMERA_WARMER_STOP_EVENT, "wait", return_value=True) as mock_wait:
+        with (
+            patch.object(srv, "warm_camera_snapshots_once", return_value=[]) as mock_warm_once,
+            patch.object(srv.CAMERA_WARMER_STOP_EVENT, "wait", return_value=True) as mock_wait,
+        ):
             srv._camera_warmer_loop()
             mock_warm_once.assert_called_once_with(stagger_sec=2.0)
             mock_wait.assert_called_once_with(120)
@@ -2128,15 +2140,23 @@ class TestHandlerEndpoints(unittest.TestCase):
             "HA_ACCESS_TOKEN": "test_ha_tok",
             "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
         }
-        with patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True), \
-             patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {"front_yard_camera": (t0 - 40.0, cached_jpeg, "image/jpeg")}, clear=True), \
-             patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True), \
-             patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True), \
-             patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)), \
-             patch.object(srv.time, "time", return_value=t0), \
-             patch("urllib.request.urlopen") as mock_urlopen:
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(
+                srv.CAMERA_LAST_GOOD_FRAME,
+                {"front_yard_camera": (t0 - 40.0, cached_jpeg, "image/jpeg")},
+                clear=True,
+            ),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch.object(srv.time, "time", return_value=t0),
+            patch("urllib.request.urlopen") as mock_urlopen,
+        ):
             # 40s old (< 60s default) -> served from cache without waking upstream
-            d_cached, _ = srv.fetch_camera_snapshot("front_yard_camera", force_refresh=False, active_refresh=True)
+            d_cached, _ = srv.fetch_camera_snapshot(
+                "front_yard_camera", force_refresh=False, active_refresh=True
+            )
             self.assertEqual(d_cached, cached_jpeg)
             mock_urlopen.assert_not_called()
 
@@ -2169,23 +2189,31 @@ class TestHandlerEndpoints(unittest.TestCase):
             fetch_calls.append((cam_id, force_refresh))
             return fresh_jpeg, "image/jpeg"
 
-        with patch.dict(
-            srv.CAMERA_LAST_GOOD_FRAME,
-            {
-                "doorbell": (t0 - 3600.0, cached_jpeg, "image/jpeg"),
-                "front_yard_camera": (t0 - 120.0, cached_jpeg, "image/jpeg"),
-                "deck_camera": (t0 - 120.0, cached_jpeg, "image/jpeg"),
-            },
-            clear=True,
-        ), \
-             patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True), \
-             patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True), \
-             patch.object(srv, "_get_configured_cameras", return_value=fake_cams), \
-             patch.object(srv, "_has_camera_event_changed", return_value=False), \
-             patch.object(srv, "fetch_camera_snapshot", side_effect=fake_fetch), \
-             patch.object(srv.time, "time", return_value=t0):
+        with (
+            patch.dict(
+                srv.CAMERA_LAST_GOOD_FRAME,
+                {
+                    "doorbell": (t0 - 3600.0, cached_jpeg, "image/jpeg"),
+                    "front_yard_camera": (t0 - 120.0, cached_jpeg, "image/jpeg"),
+                    "deck_camera": (t0 - 120.0, cached_jpeg, "image/jpeg"),
+                },
+                clear=True,
+            ),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
+            patch.object(srv, "_get_configured_cameras", return_value=fake_cams),
+            patch.object(srv, "_has_camera_event_changed", return_value=False),
+            patch.object(srv, "fetch_camera_snapshot", side_effect=fake_fetch),
+            patch.object(srv.time, "time", return_value=t0),
+        ):
             # Disabled flag returns immediately
-            with patch.object(srv, "_cfg", side_effect=lambda k, d="": "false" if k == "CAMERA_WARMER_ENABLED" else cfg_vals.get(k, d)):
+            with patch.object(
+                srv,
+                "_cfg",
+                side_effect=lambda k, d="": (
+                    "false" if k == "CAMERA_WARMER_ENABLED" else cfg_vals.get(k, d)
+                ),
+            ):
                 self.assertEqual(srv.warm_camera_snapshots_once(stagger_sec=0), [])
                 self.assertEqual(fetch_calls, [])
 
@@ -2196,7 +2224,11 @@ class TestHandlerEndpoints(unittest.TestCase):
 
                 # Age non-battery cameras past 300s background refresh threshold -> refreshes wired cameras ONLY;
                 # battery doorbell remains strictly untouched.
-                srv.CAMERA_LAST_GOOD_FRAME["front_yard_camera"] = (t0 - 305.0, cached_jpeg, "image/jpeg")
+                srv.CAMERA_LAST_GOOD_FRAME["front_yard_camera"] = (
+                    t0 - 305.0,
+                    cached_jpeg,
+                    "image/jpeg",
+                )
                 srv.CAMERA_LAST_GOOD_FRAME["deck_camera"] = (t0 - 305.0, cached_jpeg, "image/jpeg")
                 warmed = srv.warm_camera_snapshots_once(stagger_sec=0)
                 self.assertEqual(warmed, ["front_yard_camera", "deck_camera"])
@@ -2204,6 +2236,90 @@ class TestHandlerEndpoints(unittest.TestCase):
                     fetch_calls,
                     [("front_yard_camera", True), ("deck_camera", True)],
                 )
+
+    def test_control_music_playback_shuffle_toggles_and_shuffles_remaining_queue(self):
+        t0 = {"video_id": "vid00000000", "title": "Track 0", "artist": "A0"}
+        t1 = {"video_id": "vid11111111", "title": "Track 1", "artist": "A1"}
+        t2 = {"video_id": "vid22222222", "title": "Track 2", "artist": "A2"}
+        t3 = {"video_id": "vid33333333", "title": "Track 3", "artist": "A3"}
+        with (
+            patch.dict(
+                srv.MUSIC_STATE,
+                {
+                    "active_speaker": "this_device",
+                    "local_state": "playing",
+                    "local_volume": 35,
+                    "playing_video_id": "vid11111111",
+                    "queue": [t0, t1, t2, t3],
+                    "queue_index": 1,
+                    "playlist_title": "Test Playlist",
+                    "shuffle": False,
+                },
+            ),
+            patch("random.shuffle", side_effect=lambda lst: lst.reverse()) as mock_shuffle,
+        ):
+            ok, st = srv.control_music_playback({"action": "shuffle"})
+            self.assertTrue(ok)
+            self.assertTrue(srv.MUSIC_STATE["shuffle"])
+            self.assertTrue(st["now_playing"]["shuffle"])
+            mock_shuffle.assert_called_once()
+            # Tracks up to queue_index (t0, t1) stay in place; remaining tracks (t2, t3) are shuffled
+            self.assertEqual(srv.MUSIC_STATE["queue"], [t0, t1, t3, t2])
+            self.assertEqual(st["queue"], [t0, t1, t3, t2])
+
+            # Toggling shuffle off disables shuffle without reshuffling
+            mock_shuffle.reset_mock()
+            ok2, st2 = srv.control_music_playback({"action": "shuffle"})
+            self.assertTrue(ok2)
+            self.assertFalse(srv.MUSIC_STATE["shuffle"])
+            self.assertFalse(st2["now_playing"]["shuffle"])
+            mock_shuffle.assert_not_called()
+            self.assertEqual(srv.MUSIC_STATE["queue"], [t0, t1, t3, t2])
+
+    def test_control_music_playback_shuffle_atomic_lock_and_index_clamping(self):
+        t0 = {"video_id": "vid00000000", "title": "Track 0", "artist": "A0"}
+        t1 = {"video_id": "vid11111111", "title": "Track 1", "artist": "A1"}
+        t2 = {"video_id": "vid22222222", "title": "Track 2", "artist": "A2"}
+        t3 = {"video_id": "vid33333333", "title": "Track 3", "artist": "A3"}
+
+        class _CountingLock:
+            def __init__(self, inner):
+                self._inner = inner
+                self.enter_count = 0
+
+            def __enter__(self):
+                self.enter_count += 1
+                return self._inner.__enter__()
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return self._inner.__exit__(exc_type, exc_val, exc_tb)
+
+        counting_lock = _CountingLock(srv.MUSIC_STATE_LOCK)
+        with (
+            patch.object(srv, "MUSIC_STATE_LOCK", counting_lock),
+            patch.dict(
+                srv.MUSIC_STATE,
+                {
+                    "active_speaker": "this_device",
+                    "local_state": "playing",
+                    "local_volume": 35,
+                    "playing_video_id": "vid00000000",
+                    "queue": [t0, t1, t2, t3],
+                    "queue_index": -2,
+                    "playlist_title": "Test Playlist",
+                    "shuffle": False,
+                },
+            ),
+            patch("random.shuffle", side_effect=lambda lst: lst.reverse()),
+            patch.object(srv, "get_music_dashboard_state", return_value={"ok": True}),
+        ):
+            ok, st = srv.control_music_playback({"action": "shuffle"})
+            self.assertTrue(ok)
+            self.assertEqual(st, {"ok": True})
+            # Single lock acquisition covers reading live queue/index and mutating shuffle/queue
+            self.assertEqual(counting_lock.enter_count, 1)
+            # Negative queue_index clamps to 0, preserving t0 and shuffling remaining [t1, t2, t3]
+            self.assertEqual(srv.MUSIC_STATE["queue"], [t0, t3, t2, t1])
 
 
 if __name__ == "__main__":
