@@ -469,7 +469,9 @@ run_ui_checks() {
     else
         (cd "$REPO_ROOT/web/ui" && npm run test:coverage)
     fi
-    (cd "$REPO_ROOT/web/ui" && npm run build)
+    if [ "$MODE" != "staged" ] || echo "$STAGED_FILES" | grep -q -E '^(web/ui/(.*\.css|index\.html|vite\.config\.ts|tsconfig\.json|package(-lock)?\.json)|scripts/verify\.sh)$'; then
+        (cd "$REPO_ROOT/web/ui" && npm run build)
+    fi
 }
 
 # 9. Vanilla JS lint (root eslint.config.js): web/static/js, web/test,
