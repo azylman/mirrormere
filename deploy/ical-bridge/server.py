@@ -2562,13 +2562,6 @@ def build_feed(feed_name):
                     v = gcal_item_to_vevent(ev)
                     if v:
                         vevents.append(v)
-    else:
-        cid = cal_ids.get(feed_name) or extra_member_cals.get(feed_name)
-        if cid:
-            for ev in fetch_gcal_events(cid):
-                v = gcal_item_to_vevent(ev)
-                if v:
-                    vevents.append(v)
 
     body = "\r\n".join(vevents)
     header = (
