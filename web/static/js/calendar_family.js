@@ -130,6 +130,107 @@
     );
   }
 
+  const GENERIC_BIRTHDAY_WORDS = new Set([
+    'my', 'our', 'your', 'his', 'her', 'their', 'family', 'kid', 'kids', 'child', 'children',
+    'son', 'daughter', 'mom', 'mommy', 'mother', 'dad', 'daddy', 'father', 'parent', 'parents',
+    'grandma', 'grandmother', 'grandpa', 'grandfather', 'nana', 'papa', 'grammy', 'gramps',
+    'sister', 'brother', 'sibling', 'wife', 'husband', 'spouse', 'partner', 'hubby', 'wifey',
+    'happy', 'belated', 'early', 'surprise', 'golden', 'half', 'big', 'special', 'annual',
+    'sweet', 'milestone', 'dinner', 'lunch', 'brunch', 'breakfast', 'supper', 'party', 'bash',
+    'celebration', 'cake', 'gift', 'gifts', 'present', 'presents', 'card', 'cards', 'trip',
+    'vacation', 'weekend', 'outing', 'drinks', 'hour', 'shopping', 'decorations', 'prep',
+    'planning', 'plan', 'plans', 'reminder', 'event', 'eve', 'week', 'month', 'day', 'boy',
+    'girl', 'today', 'tonight', 'tomorrow',
+    'the', 'a', 'an', 'at', 'in', 'on', 'for', 'to', 'of', 'with', 'from', 'and', 'or', 'is', 'was',
+    'pizza', 'bowling', 'office', 'work', 'school', 'class', 'pool', 'park', 'zoo', 'movie',
+    'movies', 'arcade', 'golf', 'skating', 'swim', 'swimming', 'picnic', 'bbq', 'barbecue',
+    'cookout', 'potluck', 'tea', 'coffee', 'cocktails', 'dessert', 'cupcakes', 'cookies',
+    'treats', 'balloons', 'sleepover', 'karaoke', 'games', 'game', 'playdate', 'fiesta',
+    'luau', 'fun', 'you', 'everyone', 'team', 'staff',
+  ]);
+
+  function isGenericBirthdayToken(token) {
+    const lower = token.toLowerCase();
+    return GENERIC_BIRTHDAY_WORDS.has(lower) || /^\d+(?:st|nd|rd|th)?$/i.test(lower);
+  }
+
+  function hasNonGenericBirthdaySubject(subject) {
+    if (!subject) return false;
+    const tokens = subject.trim().split(/\s+/).filter(Boolean);
+    return tokens.some((tok) => /^\p{Lu}/u.test(tok) && !isGenericBirthdayToken(tok));
+  }
+
+  function namesOtherBirthdayPerson(title) {
+    const possessiveMatch =
+      /(?:^|[^\p{L}\p{N}_-])([\p{L}\p{N}._-]+(?:\s+[\p{L}\p{N}._-]+){0,3})(?:'s|’s)\s+(?:(?:\d+(?:st|nd|rd|th)|happy|surprise|golden|half|big|early|belated)\s+){0,2}(?:birthday|bday|b-day)\b/iu.exec(
+        title,
+      );
+    if (possessiveMatch && hasNonGenericBirthdaySubject(possessiveMatch[1])) {
+      return true;
+    }
+
+    const postMatch =
+      /\b(?:happy\s+)?(?:birthday|bday|b-day)(?:\s+(?:dinner|lunch|brunch|breakfast|supper|party|bash|celebration|cake|outing|drinks|surprise))?(?:\s+(?:to|for))?[\s,:-]+([\p{L}\p{N}._-]+)\b/iu.exec(
+        title,
+      );
+    if (postMatch && hasNonGenericBirthdaySubject(postMatch[1])) {
+      return true;
+    }
+
+    const prefixMatch =
+      /(?:^|[^\p{L}\p{N}_-])([\p{L}\p{N}._-]+(?:\s+[\p{L}\p{N}._-]+){0,3})\s+(?:birthday|bday|b-day)\b/iu.exec(
+        title,
+      );
+    if (prefixMatch && hasNonGenericBirthdaySubject(prefixMatch[1])) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function matchesFamilyMember(ev, safeMembers, title) {
+    const evMember = typeof ev.member === 'string' ? ev.member.toLowerCase() : '';
+
+    for (const m of safeMembers) {
+      if (!m || !m.name) continue;
+      const name = m.name.trim();
+      if (!name) continue;
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escaped}(?:'s|’s)?\\b`, 'i').test(title)) {
+        return true;
+      }
+    }
+
+    // Do not fall back to calendar ownership metadata when the title names a non-family person.
+    if (namesOtherBirthdayPerson(title)) {
+      return false;
+    }
+
+    for (const m of safeMembers) {
+      if (!m || !m.name) continue;
+      const name = m.name.trim();
+      if (!name) continue;
+      const lower = name.toLowerCase();
+
+      if (
+        Array.isArray(ev.owners) &&
+        ev.owners.some((o) => o.toLowerCase() === lower || o.toLowerCase().includes(lower))
+      ) {
+        return true;
+      }
+
+      if (m.initial && Array.isArray(ev.initials) && ev.initials.includes(m.initial)) {
+        return true;
+      }
+
+      if (evMember && evMember === lower) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function detectDaySpecialStatus(dayEvents, members) {
     if (!Array.isArray(dayEvents) || dayEvents.length === 0) return null;
     const safeMembers = Array.isArray(members) ? members : [];
@@ -150,43 +251,7 @@
           continue;
         }
 
-        let isFamily = false;
-        for (const m of safeMembers) {
-          if (!m || !m.name) continue;
-          const name = m.name.trim();
-          if (!name) continue;
-
-          const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const nameRegex = new RegExp(`\\b${escaped}('s)?\\b`, 'i');
-          if (nameRegex.test(title)) {
-            isFamily = true;
-            break;
-          }
-
-          if (
-            Array.isArray(ev.owners) &&
-            ev.owners.some(
-              (o) =>
-                o.toLowerCase() === name.toLowerCase() ||
-                o.toLowerCase().includes(name.toLowerCase()),
-            )
-          ) {
-            isFamily = true;
-            break;
-          }
-
-          if (m.initial && Array.isArray(ev.initials) && ev.initials.includes(m.initial)) {
-            isFamily = true;
-            break;
-          }
-
-          if (ev.member && ev.member.toLowerCase() === name.toLowerCase()) {
-            isFamily = true;
-            break;
-          }
-        }
-
-        if (isFamily) {
+        if (matchesFamilyMember(ev, safeMembers, title)) {
           return 'birthday';
         }
       }
