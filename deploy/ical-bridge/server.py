@@ -1574,100 +1574,7 @@ def launch_plex_on_living_room_tv(body):
 
 
 # === HOME ASSISTANT & GO2RTC SECURITY CAMERA PROXY ===
-DEFAULT_CAMERAS = [
-    {
-        "id": "doorbell",
-        "entity_id": "camera.doorbell",
-        "go2rtc_src": "doorbell",
-        "title": "Doorbell",
-        "group": "exterior",
-        "battery": True,
-        "event_driven": True,
-        "event_entities": ["event.doorbell_motion", "event.doorbell_chime"],
-    },
-    {
-        "id": "front_yard_camera",
-        "entity_id": "camera.front_yard_camera",
-        "go2rtc_src": "front_yard_camera",
-        "title": "Front Yard",
-        "group": "exterior",
-        "event_driven": True,
-        "event_entities": ["event.front_yard_camera_motion"],
-    },
-    {
-        "id": "sideyard_stairs",
-        "entity_id": "camera.sideyard_stairs",
-        "go2rtc_src": "sideyard_stairs",
-        "title": "Sideyard Stairs",
-        "group": "exterior",
-        "event_driven": True,
-        "event_entities": ["event.sideyard_stairs_motion"],
-    },
-    {
-        "id": "deck_camera",
-        "entity_id": "camera.deck_camera",
-        "go2rtc_src": "deck_camera",
-        "title": "Deck",
-        "group": "exterior",
-        "event_driven": True,
-        "event_entities": ["event.deck_camera_motion"],
-    },
-    {
-        "id": "top_of_the_hill",
-        "entity_id": "camera.top_of_the_hill",
-        "go2rtc_src": "top_of_the_hill",
-        "title": "Top of the Hill",
-        "group": "exterior",
-        "event_driven": True,
-        "event_entities": ["event.top_of_the_hill_motion"],
-    },
-    {
-        "id": "nursery_cam",
-        "entity_id": "camera.nursery_cam",
-        "go2rtc_src": "nursery_cam",
-        "title": "Nursery Cam",
-        "group": "kids",
-        "event_driven": True,
-        "event_entities": ["event.nursery_cam_motion"],
-    },
-    {
-        "id": "porch_cam",
-        "entity_id": "camera.porch_cam",
-        "go2rtc_src": "porch_cam",
-        "title": "Porch Cam",
-        "group": "kids",
-        "event_driven": True,
-        "event_entities": ["event.porch_cam_motion"],
-    },
-    {
-        "id": "bedroom_cam",
-        "entity_id": "camera.bedroom_bedroom_camera",
-        "go2rtc_src": "bedroom_bedroom_camera",
-        "aliases": [
-            "bedroom_cam",
-            "camera.bedroom_cam",
-            "bedroom_bedroom_camera",
-            "camera.bedroom_bedroom_camera",
-            "bassinet",
-            "camera.bassinet",
-            "nursery_bassinet",
-            "camera.nursery_bassinet",
-        ],
-        "title": "Bedroom Cam",
-        "group": "kids",
-        "event_driven": True,
-        "event_entities": ["event.bedroom_bedroom_camera_motion"],
-    },
-    {
-        "id": "kitchen_hub",
-        "entity_id": "camera.kitchen_hub",
-        "go2rtc_src": "kitchen_hub",
-        "title": "Living Room Hub",
-        "group": "indoor",
-        "event_driven": True,
-        "event_entities": ["event.kitchen_hub_motion"],
-    },
-]
+DEFAULT_CAMERAS = []
 
 
 def _get_go2rtc_base_url():
@@ -1817,7 +1724,7 @@ def fetch_cameras_catalog():
                 attrs = st_obj.get("attributes") or {}
                 title = raw_cam.get("title") or attrs.get("friendly_name") or target["title"]
             else:
-                state_str = "standby" if cid == "bedroom_cam" else "idle"
+                state_str = "idle"
                 title = target["title"]
 
             if ha_states_map:
