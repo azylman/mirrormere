@@ -2369,6 +2369,11 @@ def exchange_camera_webrtc(camera_key, sdp_offer):
                         pass
                 if raw.strip():
                     return True, raw, 200
+        except urllib.error.HTTPError as e:
+            with contextlib.suppress(Exception):
+                e.close()
+            last_err = str(e)
+            print(f"[HEARTH-Bridge] go2rtc WebRTC error for {src}: {e}", flush=True)
         except Exception as e:
             last_err = str(e)
             print(f"[HEARTH-Bridge] go2rtc WebRTC error for {src}: {e}", flush=True)

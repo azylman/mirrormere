@@ -1517,17 +1517,9 @@ describe('LiveViewWidget component', () => {
     expect(img.getAttribute('src')).toBe('/hearth-api/cameras/doorbell/stream');
   });
 
-  it('pauses on-screen mjpeg refresh after 5-minute idle timeout, returns to screen 0, and resets timer on pointerdown', () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-    } as Response);
-
-    useDisplayStore.setState((s) => ({
-      ...s,
-      screen: { ...s.screen, currentScreen: 1 },
-    }));
-
+  it('pauses on-screen mjpeg refresh after 5-minute idle timeout without changing screen unless idle_timeout_seconds is set, and resets timer on pointerdown', () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true, status: 200 } as Response);
+    useDisplayStore.setState((s) => ({ ...s, screen: { ...s.screen, currentScreen: 1 } }));
     seedWidget({
       stream_url: '/hearth-api/cameras/nursery_cam/stream',
       stream_type: 'mjpeg',
@@ -1537,55 +1529,39 @@ describe('LiveViewWidget component', () => {
       stagger_index: 0,
     });
 
-    const { container } = render(
+    const { container, unmount } = render(
       <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 1 }}>
         <LiveViewWidget id={widgetId} type="live-view" />
       </PaneContext.Provider>,
     );
-
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
 
-    // Advance 4 minutes (240_000 ms): still active, pointerdown resets the 5-minute idle timer
-    act(() => {
-      vi.advanceTimersByTime(240_000);
-    });
+    act(() => { vi.advanceTimersByTime(240_000); });
     expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
-
-    act(() => {
-      fireEvent.pointerDown(window);
-    });
-
-    // Advance another 4 minutes (240_000 ms): because pointerdown reset the timer, still not idle at 480s total
-    act(() => {
-      vi.advanceTimersByTime(240_000);
-    });
+    act(() => { fireEvent.pointerDown(window); });
+    act(() => { vi.advanceTimersByTime(240_000); });
     expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
 
     const srcBeforeIdle = img.getAttribute('src') ?? '';
     expect(srcBeforeIdle).toMatch(/^\/hearth-api\/cameras\/nursery_cam\/stream\?t=\d+$/);
 
-    // Advance remaining 60_000 ms to reach 300_000 ms (5 minutes) since last pointerdown
-    act(() => {
-      vi.advanceTimersByTime(60_000);
-    });
-
-    expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
-    expect(fetchMock).toHaveBeenCalledWith(
-      'api/screen/select',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ screen_index: 0 }),
-      }),
-    );
+    act(() => { vi.advanceTimersByTime(60_000); });
+    expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+    expect(fetchMock).not.toHaveBeenCalledWith('api/screen/select', expect.anything());
 
     const srcAtIdle = img.getAttribute('src') ?? '';
-
-    // Advance another 120_000 ms while idle: MJPEG snapshot refresh is paused
-    act(() => {
-      vi.advanceTimersByTime(120_000);
-    });
+    act(() => { vi.advanceTimersByTime(120_000); });
     expect(img.getAttribute('src')).toBe(srcAtIdle);
+
+    // Opt-in screen-0 navigation fires only when idle_timeout_seconds is explicitly configured
+    unmount();
+    seedWidget({ stream_url: '/hearth-api/cameras/nursery_cam/stream', stream_type: 'mjpeg', idle_timeout_seconds: 120, stagger_index: 0 });
+    render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 1 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+    act(() => { vi.advanceTimersByTime(119_000); });
+    expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+    act(() => { vi.advanceTimersByTime(1_000); });
+    expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('api/screen/select', expect.objectContaining({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screen_index: 0 }) }));
   });
 
   it('promotes mjpeg stream to inline WebRTC when /hearth-api/cameras reports auto_live and falls back to static img after 60s of calm', async () => {

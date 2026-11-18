@@ -2337,6 +2337,65 @@ class TestHandlerEndpoints(unittest.TestCase):
             # Negative queue_index clamps to 0, preserving t0 and shuffling remaining [t1, t2, t3]
             self.assertEqual(srv.MUSIC_STATE["queue"], [t0, t3, t2, t1])
 
+    def test_exchange_camera_webrtc_closes_http_error_and_falls_through(self):
+        import urllib.error
+        from http.client import HTTPMessage
+
+        target = {
+            "id": "entry_cam",
+            "go2rtc_src": "primary_src",
+            "aliases": ["camera.alias_src"],
+        }
+        closed_flags = []
+
+        class TrackedHTTPError(urllib.error.HTTPError):
+            def close(self):
+                closed_flags.append(True)
+                super().close()
+
+        def fake_urlopen(req, timeout=10):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "src=primary_src" in url:
+                raise TrackedHTTPError(
+                    url, 404, "Not Found", HTTPMessage(), io.BytesIO(b"not found")
+                )
+            if "src=entry_cam" in url:
+                r = MagicMock()
+                r.read.return_value = b"v=0\r\nsdp_answer_ok"
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        with (
+            patch.object(srv, "resolve_camera_target", return_value=target),
+            patch.object(srv, "_get_go2rtc_base_url", return_value="http://198.51.100.10:1984"),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            ok, payload, status = srv.exchange_camera_webrtc("entry_cam", "v=0\r\noffer")
+            self.assertTrue(ok)
+            self.assertEqual(payload, "v=0\r\nsdp_answer_ok")
+            self.assertEqual(status, 200)
+            self.assertEqual(closed_flags, [True])
+
+        # When all candidates raise HTTPError, all errors are closed and 502 is returned
+        closed_flags.clear()
+
+        def fail_all_urlopen(req, timeout=10):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            raise TrackedHTTPError(url, 500, "Upstream Boom", HTTPMessage(), io.BytesIO(b"boom"))
+
+        with (
+            patch.object(srv, "resolve_camera_target", return_value=target),
+            patch.object(srv, "_get_go2rtc_base_url", return_value="http://198.51.100.10:1984"),
+            patch("urllib.request.urlopen", side_effect=fail_all_urlopen),
+        ):
+            ok, payload, status = srv.exchange_camera_webrtc("entry_cam", "v=0\r\noffer")
+            self.assertFalse(ok)
+            self.assertIn("500", payload)
+            self.assertEqual(status, 502)
+            self.assertEqual(len(closed_flags), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

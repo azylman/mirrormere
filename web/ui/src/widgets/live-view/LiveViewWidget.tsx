@@ -102,16 +102,18 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
       if (timerId) clearTimeout(timerId);
       timerId = setTimeout(() => {
         setIsIdle(true);
-        const store = useDisplayStore.getState();
-        if (store.screen.currentScreen > 0) {
-          store.setCurrentScreen(0);
-          Promise.resolve(
-            fetch('api/screen/select', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ screen_index: 0 }),
-            }),
-          ).catch(() => { /* ignore */ });
+        if (idleTimeoutSeconds !== undefined) {
+          const store = useDisplayStore.getState();
+          if (store.screen.currentScreen > 0) {
+            store.setCurrentScreen(0);
+            Promise.resolve(
+              fetch('api/screen/select', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ screen_index: 0 }),
+              }),
+            ).catch(() => { /* ignore */ });
+          }
         }
       }, idleMs);
     };
