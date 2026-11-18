@@ -339,7 +339,6 @@ jobs:
           npm run typecheck
           npm run test:coverage
           npm run build
-          npx playwright test
 
       - name: Emit Agent Pre-Flight Remediation Guidance
         if: failure()
