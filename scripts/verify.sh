@@ -436,7 +436,34 @@ run_ui_checks() {
     else
         (cd "$REPO_ROOT/web/ui" && npm run lint)
     fi
-    (cd "$REPO_ROOT/web/ui" && npm run deadcode && npm run typecheck && npm run test:coverage && npm run build)
+    (cd "$REPO_ROOT/web/ui" && npm run deadcode && npm run typecheck)
+    if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E '^(web/ui/(vite\.config\.ts|tsconfig\.json|package(-lock)?\.json)|scripts/verify\.sh)$'; then
+        staged_ui_src=$(echo "$STAGED_FILES" | grep -E '^web/ui/src/.*\.(ts|tsx)$' | grep -v '\.d\.ts$' | sed 's|^web/ui/||' | while read -r uf; do
+            [ -f "$REPO_ROOT/web/ui/$uf" ] && echo "$uf"
+        done)
+        if [ -n "$staged_ui_src" ]; then
+            staged_ui_dirs=$(echo "$staged_ui_src" | while read -r uf; do dirname "$uf"; done | sort -u)
+            staged_ui_tests=$(for d in $staged_ui_dirs; do
+                if [ -d "$REPO_ROOT/web/ui/$d" ]; then
+                    (cd "$REPO_ROOT/web/ui" && find "$d" -maxdepth 1 \( -name '*.test.ts' -o -name '*.test.tsx' \) -type f)
+                fi
+            done | sort -u)
+            staged_cov_include=$(for d in $staged_ui_dirs; do
+                printf '%s\n' "--coverage.include=$d/*.{ts,tsx}"
+            done)
+            staged_targets=$(printf '%s\n%s\n' "$staged_ui_src" "$staged_ui_tests" | sort -u | grep -v '^$')
+            # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
+            (cd "$REPO_ROOT/web/ui" && npx --no-install vitest related --run --coverage \
+                --coverage.thresholds.statements=85 \
+                --coverage.thresholds.branches=75 \
+                --coverage.thresholds.functions=70 \
+                --coverage.thresholds.lines=85 \
+                $staged_cov_include $staged_targets)
+        fi
+    else
+        (cd "$REPO_ROOT/web/ui" && npm run test:coverage)
+    fi
+    (cd "$REPO_ROOT/web/ui" && npm run build)
 }
 
 # 9. Vanilla JS lint (root eslint.config.js): web/static/js, web/test,
