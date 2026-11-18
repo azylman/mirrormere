@@ -1088,6 +1088,8 @@ class TestHandlerEndpoints(unittest.TestCase):
         with (
             patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
             patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
             patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
             patch("urllib.request.urlopen", side_effect=stream_urlopen),
         ):
@@ -1129,6 +1131,8 @@ class TestHandlerEndpoints(unittest.TestCase):
         srv.CAMERA_WARMER_STOP_EVENT.clear()
         with (
             patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
             patch.object(srv, "_get_configured_cameras", return_value=fake_cams),
             patch.object(srv, "_has_camera_event_changed", return_value=False),
             patch.object(srv, "fetch_camera_snapshot", side_effect=fake_fetch),
@@ -1761,6 +1765,8 @@ class TestHandlerEndpoints(unittest.TestCase):
         with (
             patch.dict(srv.CACHE, {}, clear=True),
             patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
             patch.dict(
                 srv.CAMERA_LAST_GOOD_FRAME,
                 {"nursery_cam": (t0 - 120.0, cached_jpeg, "image/jpeg")},
@@ -1840,6 +1846,364 @@ class TestHandlerEndpoints(unittest.TestCase):
             # 6. Immediate second warmer pass skips camera once good frame was stored
             warmed_again = srv.warm_camera_snapshots_once(stagger_sec=0)
             self.assertEqual(warmed_again, [])
+
+    def test_camera_snapshot_sends_connection_close_headers(self):
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+        stream_jpeg = b"\xff\xd8\xff\xe0close_hdr_jpeg\xff\xd9"
+        multipart_stream = (
+            b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + stream_jpeg + b"\r\n--frame\r\n"
+        )
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+        }
+        captured_reqs = []
+
+        def fake_urlopen(req, timeout=5):
+            captured_reqs.append(req)
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/camera_proxy/" in url:
+                r = MagicMock()
+                r.read.return_value = placeholder_png
+                r.headers = {"Content-Type": "image/png"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/frame.jpeg" in url:
+                raise TimeoutError("go2rtc single timeout")
+            if "/api/camera_proxy_stream/" in url:
+                bio = io.BytesIO(multipart_stream)
+                r = MagicMock()
+                r.read.side_effect = bio.read
+                r.headers = {"Content-Type": "multipart/x-mixed-replace; boundary=frame"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        with patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True), \
+             patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True), \
+             patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True), \
+             patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True), \
+             patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            data, ctype = srv.fetch_camera_snapshot("front_yard_camera", force_refresh=True)
+            self.assertEqual(data, stream_jpeg)
+            self.assertEqual(ctype, "image/jpeg")
+
+        go2rtc_reqs = [r for r in captured_reqs if "/api/frame.jpeg" in r.full_url]
+        stream_reqs = [r for r in captured_reqs if "/api/camera_proxy_stream/" in r.full_url]
+        self.assertEqual(len(go2rtc_reqs), 1)
+        self.assertEqual(len(stream_reqs), 1)
+        self.assertEqual(go2rtc_reqs[0].get_header("Connection"), "close")
+        self.assertEqual(stream_reqs[0].get_header("Connection"), "close")
+
+    def test_camera_go2rtc_404_cooldown_suppresses_go2rtc_and_ha_stream(self):
+        import urllib.error
+        from http.client import HTTPMessage
+
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+        recovered_jpeg = b"\xff\xd8\xff\xe0recovered_bedroom_frame\xff\xd9"
+        fake_cams = [
+            {
+                "id": "bedroom_bedroom_camera",
+                "entity_id": "camera.bedroom_bedroom_camera",
+                "go2rtc_src": "bedroom_bedroom_camera",
+                "event_driven": False,
+            }
+        ]
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+            "CAMERA_FAILURE_COOLDOWN_SEC": 300.0,
+        }
+        go2rtc_hits = []
+        stream_hits = []
+        go2rtc_should_404 = [True]
+
+        def fake_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/camera_proxy/" in url:
+                r = MagicMock()
+                r.read.return_value = placeholder_png
+                r.headers = {"Content-Type": "image/png"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/frame.jpeg" in url:
+                go2rtc_hits.append((url, req.get_header("Connection")))
+                if go2rtc_should_404[0]:
+                    raise urllib.error.HTTPError(
+                        url, 404, "Not Found", HTTPMessage(), io.BytesIO(b"stream not found")
+                    )
+                r = MagicMock()
+                r.read.return_value = recovered_jpeg
+                r.headers = {"Content-Type": "image/jpeg"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/camera_proxy_stream/" in url:
+                stream_hits.append(url)
+                raise TimeoutError("blocking stream should not be called on 404")
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        t0 = 1794590000.0
+        srv.CAMERA_WARMER_STOP_EVENT.clear()
+        with patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True), \
+             patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True), \
+             patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True), \
+             patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True), \
+             patch.object(srv, "_get_configured_cameras", return_value=fake_cams), \
+             patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            # 1. First warmer pass hits go2rtc once, gets HTTP 404, enters 300s cooldown,
+            # and does NOT fall through to HA camera_proxy_stream.
+            with patch.object(srv.time, "time", return_value=t0):
+                warmed1 = srv.warm_camera_snapshots_once(stagger_sec=0)
+                self.assertEqual(warmed1, [])
+                self.assertEqual(len(go2rtc_hits), 1)
+                self.assertEqual(go2rtc_hits[0][1], "close")
+                self.assertEqual(stream_hits, [])
+
+            # 2. Subsequent warmer passes and direct force_refresh calls within 300s make
+            # zero go2rtc calls and zero HA stream calls.
+            with patch.object(srv.time, "time", return_value=t0 + 60.0):
+                warmed2 = srv.warm_camera_snapshots_once(stagger_sec=0)
+                self.assertEqual(warmed2, [])
+                data_cd, _ = srv.fetch_camera_snapshot("bedroom_bedroom_camera", force_refresh=True)
+                self.assertEqual(len(data_cd), srv.HA_NEST_PLACEHOLDER_LEN)
+                self.assertEqual(len(go2rtc_hits), 1)
+                self.assertEqual(stream_hits, [])
+
+            # 3. After 300s cooldown expires, go2rtc is probed again and recovers cleanly.
+            go2rtc_should_404[0] = False
+            with patch.object(srv.time, "time", return_value=t0 + 301.0):
+                warmed3 = srv.warm_camera_snapshots_once(stagger_sec=0)
+                self.assertEqual(warmed3, ["bedroom_bedroom_camera"])
+                self.assertEqual(len(go2rtc_hits), 2)
+                self.assertEqual(stream_hits, [])
+                self.assertEqual(srv.CAMERA_LAST_GOOD_FRAME["bedroom_bedroom_camera"][1], recovered_jpeg)
+
+    def test_camera_timeout_backoff_suppresses_repeated_go2rtc_and_stream_calls(self):
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+        recovered_jpeg = b"\xff\xd8\xff\xe0recovered_after_timeout\xff\xd9"
+        fake_cams = [
+            {
+                "id": "front_yard_camera",
+                "entity_id": "camera.front_yard_camera",
+                "go2rtc_src": "front_yard_camera",
+                "event_driven": False,
+            }
+        ]
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+            "CAMERA_FAILURE_COOLDOWN_SEC": 300.0,
+        }
+        go2rtc_hits = []
+        stream_hits = []
+        go2rtc_timeout_mode = [True]
+
+        def fake_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/camera_proxy/" in url:
+                r = MagicMock()
+                r.read.return_value = placeholder_png
+                r.headers = {"Content-Type": "image/png"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/frame.jpeg" in url:
+                go2rtc_hits.append(url)
+                if go2rtc_timeout_mode[0]:
+                    raise TimeoutError("go2rtc read timeout")
+                r = MagicMock()
+                r.read.return_value = recovered_jpeg
+                r.headers = {"Content-Type": "image/jpeg"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/camera_proxy_stream/" in url:
+                stream_hits.append(url)
+                raise TimeoutError("ha stream read timeout")
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        t0 = 1794595000.0
+        srv.CAMERA_WARMER_STOP_EVENT.clear()
+        with patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True), \
+             patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True), \
+             patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True), \
+             patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True), \
+             patch.object(srv, "_get_configured_cameras", return_value=fake_cams), \
+             patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            # 1. Background warmer pass 1: go2rtc times out #1; warmer skips blocking HA stream fallback.
+            with patch.object(srv.time, "time", return_value=t0):
+                self.assertEqual(srv.warm_camera_snapshots_once(stagger_sec=0), [])
+                self.assertEqual(len(go2rtc_hits), 1)
+                self.assertEqual(stream_hits, [])
+
+            # 2. Background warmer pass 2: go2rtc times out #2 -> triggers 300s cooldown.
+            with patch.object(srv.time, "time", return_value=t0 + 120.0):
+                self.assertEqual(srv.warm_camera_snapshots_once(stagger_sec=0), [])
+                self.assertEqual(len(go2rtc_hits), 2)
+                self.assertEqual(stream_hits, [])
+
+            # 3. During 300s cooldown (from t0+120 to t0+420), both warmer and foreground
+            # snapshot calls suppress go2rtc and HA stream calls.
+            with patch.object(srv.time, "time", return_value=t0 + 200.0):
+                self.assertEqual(srv.warm_camera_snapshots_once(stagger_sec=0), [])
+                srv.fetch_camera_snapshot("front_yard_camera", force_refresh=True)
+                self.assertEqual(len(go2rtc_hits), 2)
+                self.assertEqual(stream_hits, [])
+
+            # 4. After 300s cooldown expires, go2rtc recovers cleanly.
+            go2rtc_timeout_mode[0] = False
+            with patch.object(srv.time, "time", return_value=t0 + 425.0):
+                data_ok, ctype_ok = srv.fetch_camera_snapshot("front_yard_camera", force_refresh=True)
+                self.assertEqual(data_ok, recovered_jpeg)
+                self.assertEqual(ctype_ok, "image/jpeg")
+                self.assertEqual(len(go2rtc_hits), 3)
+                self.assertEqual(stream_hits, [])
+
+            # 5. Foreground fetch on a stalled camera where both go2rtc and HA stream time out:
+            # suppresses HA stream immediately after the first stream timeout, and puts go2rtc
+            # into cooldown once go2rtc reaches the 2-timeout threshold.
+            go2rtc_timeout_mode[0] = True
+            go2rtc_hits.clear()
+            stream_hits.clear()
+            with patch.object(srv.time, "time", return_value=t0 + 500.0):
+                srv.fetch_camera_snapshot("deck_camera", force_refresh=True)
+                self.assertEqual(len(go2rtc_hits), 1)
+                self.assertEqual(len(stream_hits), 1)
+            with patch.object(srv.time, "time", return_value=t0 + 530.0):
+                srv.fetch_camera_snapshot("deck_camera", force_refresh=True)
+                self.assertEqual(len(go2rtc_hits), 2)
+                self.assertEqual(len(stream_hits), 1)
+            with patch.object(srv.time, "time", return_value=t0 + 560.0):
+                srv.fetch_camera_snapshot("deck_camera", force_refresh=True)
+                self.assertEqual(len(go2rtc_hits), 2)
+                self.assertEqual(len(stream_hits), 1)
+
+    def test_camera_warmer_defaults_and_cached_frame_throttling_with_battery_guard(self):
+        import inspect
+
+        # 1. Verify relaxed defaults: 60s active interval, 120s warmer interval, 2.0s stagger.
+        self.assertEqual(srv.CAMERA_ACTIVE_INTERVAL_SEC, 60.0)
+        loop_sig = inspect.signature(srv._camera_warmer_loop)
+        self.assertEqual(loop_sig.parameters["interval_sec"].default, 120)
+        self.assertEqual(loop_sig.parameters["stagger_sec"].default, 2.0)
+        daemon_sig = inspect.signature(srv._start_camera_warmer_daemon)
+        self.assertEqual(daemon_sig.parameters["interval_sec"].default, 120)
+        self.assertEqual(daemon_sig.parameters["stagger_sec"].default, 2.0)
+
+        with patch("threading.Thread") as mock_thread:
+            mock_inst = MagicMock()
+            mock_thread.return_value = mock_inst
+            ret = srv._start_camera_warmer_daemon()
+            self.assertIs(ret, mock_inst)
+            mock_thread.assert_called_once_with(
+                target=srv._camera_warmer_loop,
+                kwargs={"interval_sec": 120, "stagger_sec": 2.0},
+                daemon=True,
+            )
+            mock_inst.start.assert_called_once()
+
+        srv.CAMERA_WARMER_STOP_EVENT.clear()
+        with patch.object(srv, "warm_camera_snapshots_once", return_value=[]) as mock_warm_once, \
+             patch.object(srv.CAMERA_WARMER_STOP_EVENT, "wait", return_value=True) as mock_wait:
+            srv._camera_warmer_loop()
+            mock_warm_once.assert_called_once_with(stagger_sec=2.0)
+            mock_wait.assert_called_once_with(120)
+
+        # 2. Verify active_refresh uses new 60s default interval when not overridden.
+        t0 = 1794600000.0
+        cached_jpeg = b"\xff\xd8\xff\xe0cached_60s_test\xff\xd9"
+        fresh_jpeg = b"\xff\xd8\xff\xe0fresh_60s_test\xff\xd9"
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+        }
+        with patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True), \
+             patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {"front_yard_camera": (t0 - 40.0, cached_jpeg, "image/jpeg")}, clear=True), \
+             patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True), \
+             patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True), \
+             patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)), \
+             patch.object(srv.time, "time", return_value=t0), \
+             patch("urllib.request.urlopen") as mock_urlopen:
+            # 40s old (< 60s default) -> served from cache without waking upstream
+            d_cached, _ = srv.fetch_camera_snapshot("front_yard_camera", force_refresh=False, active_refresh=True)
+            self.assertEqual(d_cached, cached_jpeg)
+            mock_urlopen.assert_not_called()
+
+        # 3. Verify background warmer skips cached non-battery cameras (< 300s old), refreshes stale
+        # non-battery cameras (>= 300s old), respects CAMERA_WARMER_ENABLED=false, and NEVER wakes
+        # battery Doorbell on cache age regardless of staleness.
+        fake_cams = [
+            {
+                "id": "doorbell",
+                "entity_id": "camera.doorbell",
+                "battery": True,
+                "event_driven": True,
+                "event_entities": ["event.doorbell_motion"],
+            },
+            {
+                "id": "front_yard_camera",
+                "entity_id": "camera.front_yard_camera",
+                "event_driven": True,
+                "event_entities": ["event.front_yard_camera_motion"],
+            },
+            {
+                "id": "deck_camera",
+                "entity_id": "camera.deck_camera",
+                "event_driven": False,
+            },
+        ]
+        fetch_calls = []
+
+        def fake_fetch(cam_id, force_refresh=False):
+            fetch_calls.append((cam_id, force_refresh))
+            return fresh_jpeg, "image/jpeg"
+
+        with patch.dict(
+            srv.CAMERA_LAST_GOOD_FRAME,
+            {
+                "doorbell": (t0 - 3600.0, cached_jpeg, "image/jpeg"),
+                "front_yard_camera": (t0 - 120.0, cached_jpeg, "image/jpeg"),
+                "deck_camera": (t0 - 120.0, cached_jpeg, "image/jpeg"),
+            },
+            clear=True,
+        ), \
+             patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True), \
+             patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True), \
+             patch.object(srv, "_get_configured_cameras", return_value=fake_cams), \
+             patch.object(srv, "_has_camera_event_changed", return_value=False), \
+             patch.object(srv, "fetch_camera_snapshot", side_effect=fake_fetch), \
+             patch.object(srv.time, "time", return_value=t0):
+            # Disabled flag returns immediately
+            with patch.object(srv, "_cfg", side_effect=lambda k, d="": "false" if k == "CAMERA_WARMER_ENABLED" else cfg_vals.get(k, d)):
+                self.assertEqual(srv.warm_camera_snapshots_once(stagger_sec=0), [])
+                self.assertEqual(fetch_calls, [])
+
+            # Cached frames < 300s old on non-battery cameras (and 3600s old on battery doorbell) are all skipped
+            with patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)):
+                self.assertEqual(srv.warm_camera_snapshots_once(stagger_sec=0), [])
+                self.assertEqual(fetch_calls, [])
+
+                # Age non-battery cameras past 300s background refresh threshold -> refreshes wired cameras ONLY;
+                # battery doorbell remains strictly untouched.
+                srv.CAMERA_LAST_GOOD_FRAME["front_yard_camera"] = (t0 - 305.0, cached_jpeg, "image/jpeg")
+                srv.CAMERA_LAST_GOOD_FRAME["deck_camera"] = (t0 - 305.0, cached_jpeg, "image/jpeg")
+                warmed = srv.warm_camera_snapshots_once(stagger_sec=0)
+                self.assertEqual(warmed, ["front_yard_camera", "deck_camera"])
+                self.assertEqual(
+                    fetch_calls,
+                    [("front_yard_camera", True), ("deck_camera", True)],
+                )
 
 
 if __name__ == "__main__":
