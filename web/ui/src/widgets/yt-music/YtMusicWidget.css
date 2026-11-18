@@ -188,6 +188,12 @@ body.theme-day .widget-yt-music .ytm-account-select,
   touch-action: manipulation;
 }
 
+.widget-yt-music .ctrl-btn.active {
+  background: rgba(16, 185, 129, 0.22);
+  color: var(--ytm-spk-active);
+  box-shadow: inset 0 0 0 1.5px var(--ytm-spk-active);
+}
+
 .widget-yt-music .ctrl-btn.play-main {
   background: var(--ytm-accent);
   color: #ffffff;
