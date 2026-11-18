@@ -774,6 +774,7 @@ jobs:
           fi
           roborev ci review \
             --agent claude-code \
+            --review-types default \
             --min-severity medium \
             --reasoning thorough | tee /tmp/roborev-review.md
           cat /tmp/roborev-review.md >> "$GITHUB_STEP_SUMMARY"
