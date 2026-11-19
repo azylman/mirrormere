@@ -186,7 +186,9 @@ const (
 
 // ThemeConfig defines visual theme mode and Day/Night switching behavior.
 type ThemeConfig struct {
-	Mode string `yaml:"mode,omitempty"` // "auto", "day", "night"
+	Mode       string `yaml:"mode,omitempty"`        // "auto", "day", "night"
+	NightStart string `yaml:"night_start,omitempty"` // optional 24-hour HH:MM start of night window in "auto" mode
+	NightEnd   string `yaml:"night_end,omitempty"`   // optional 24-hour HH:MM end of night window in "auto" mode
 }
 
 // GetMode returns the configured theme mode, defaulting to "day" if unspecified.
@@ -195,6 +197,54 @@ func (tc *ThemeConfig) GetMode() string {
 		return ThemeModeDay
 	}
 	return strings.ToLower(trimmedOr(tc.Mode, ThemeModeDay))
+}
+
+// HasNightSchedule reports whether either night_start or night_end is configured.
+func (tc *ThemeConfig) HasNightSchedule() bool {
+	if tc == nil {
+		return false
+	}
+	return strings.TrimSpace(tc.NightStart) != "" || strings.TrimSpace(tc.NightEnd) != ""
+}
+
+func parseTwoDigits(a, b byte, maxVal int) (int, bool) {
+	if a < '0' || a > '9' || b < '0' || b > '9' {
+		return 0, false
+	}
+	v := int(a-'0')*10 + int(b-'0')
+	return v, v <= maxVal
+}
+
+// ParseClockHHMM parses a strict 24-hour "HH:MM" clock time into minutes since midnight.
+func ParseClockHHMM(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if len(s) != 5 || s[2] != ':' {
+		return 0, fmt.Errorf("invalid clock time %q: must be 24-hour HH:MM", s)
+	}
+	h, hOK := parseTwoDigits(s[0], s[1], 23)
+	m, mOK := parseTwoDigits(s[3], s[4], 59)
+	if !hOK || !mOK {
+		return 0, fmt.Errorf("invalid clock time %q: must be 24-hour HH:MM (00:00..23:59)", s)
+	}
+	return h*60 + m, nil
+}
+
+// IsNightAt reports whether t falls within the configured [night_start, night_end) window.
+// The second return value is false when tc is nil or no valid schedule is configured.
+func (tc *ThemeConfig) IsNightAt(t time.Time) (active bool, configured bool) {
+	if !tc.HasNightSchedule() {
+		return false, false
+	}
+	startMins, errStart := ParseClockHHMM(tc.NightStart)
+	endMins, errEnd := ParseClockHHMM(tc.NightEnd)
+	if errStart != nil || errEnd != nil || startMins == endMins {
+		return false, false
+	}
+	nowMins := t.Hour()*60 + t.Minute()
+	if startMins > endMins {
+		return nowMins >= startMins || nowMins < endMins, true
+	}
+	return nowMins >= startMins && nowMins < endMins, true
 }
 
 // GetLocationConfig returns the device location configuration, falling back to header weather coordinates if present.
@@ -704,6 +754,27 @@ func (c *Config) applyDefaults() {
 	c.applyHeaderAndThemeDefaults()
 }
 
+func validateThemeSchedule(tc *ThemeConfig) error {
+	if !tc.HasNightSchedule() {
+		return nil
+	}
+	if strings.TrimSpace(tc.NightStart) == "" || strings.TrimSpace(tc.NightEnd) == "" {
+		return fmt.Errorf("theme night_start and night_end must both be set when configuring a night schedule")
+	}
+	startMins, err := ParseClockHHMM(tc.NightStart)
+	if err != nil {
+		return fmt.Errorf("invalid theme night_start: %w", err)
+	}
+	endMins, err := ParseClockHHMM(tc.NightEnd)
+	if err != nil {
+		return fmt.Errorf("invalid theme night_end: %w", err)
+	}
+	if startMins == endMins {
+		return fmt.Errorf("theme night_start and night_end must not be equal (%s)", strings.TrimSpace(tc.NightStart))
+	}
+	return nil
+}
+
 func (c *Config) validateTheme() error {
 	tc := c.Display.Theme
 	if tc == nil {
@@ -715,7 +786,10 @@ func (c *Config) validateTheme() error {
 	default:
 		return fmt.Errorf("invalid theme mode '%s': must be one of auto, day, night", tc.Mode)
 	}
-	if mode == ThemeModeAuto {
+	if err := validateThemeSchedule(tc); err != nil {
+		return err
+	}
+	if mode == ThemeModeAuto && !tc.HasNightSchedule() {
 		locCfg := c.GetLocationConfig()
 		if locCfg == nil || locCfg.Latitude == nil || locCfg.Longitude == nil {
 			return fmt.Errorf("theme mode 'auto' requires location coordinates (latitude and longitude) to be configured")

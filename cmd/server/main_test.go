@@ -268,6 +268,47 @@ func TestHouseholdHelpers(t *testing.T) {
 	}
 }
 
+func TestHouseholdThemeAt(t *testing.T) {
+	t.Parallel()
+	lat, lon := 37.7749, -122.4194
+	scheduledCfg := &config.Config{
+		Timezone: "America/Los_Angeles",
+		Display: config.DisplayConfig{
+			Theme: &config.ThemeConfig{Mode: "auto", NightStart: "20:30", NightEnd: "06:30"},
+		},
+	}
+	solarCfg := &config.Config{
+		Timezone:       "America/Los_Angeles",
+		LocationConfig: &config.LocationConfig{Latitude: &lat, Longitude: &lon},
+		Display: config.DisplayConfig{
+			Theme: &config.ThemeConfig{Mode: "auto"},
+		},
+	}
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		utc  time.Time
+		want string
+	}{
+		{name: "schedule before start 20:29 local", cfg: scheduledCfg, utc: time.Date(2026, 1, 16, 4, 29, 0, 0, time.UTC), want: "day"},
+		{name: "schedule at start 20:30 local", cfg: scheduledCfg, utc: time.Date(2026, 1, 16, 4, 30, 0, 0, time.UTC), want: "night"},
+		{name: "schedule before end 06:29 local", cfg: scheduledCfg, utc: time.Date(2026, 1, 15, 14, 29, 0, 0, time.UTC), want: "night"},
+		{name: "schedule at end 06:30 local", cfg: scheduledCfg, utc: time.Date(2026, 1, 15, 14, 30, 0, 0, time.UTC), want: "day"},
+		{name: "solar fallback midday local", cfg: solarCfg, utc: time.Date(2026, 1, 15, 20, 0, 0, 0, time.UTC), want: "day"},
+		{name: "solar fallback 02:00 local", cfg: solarCfg, utc: time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC), want: "night"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfgCopy := *tc.cfg
+			sp := &fakeSnapProvider{snap: &config.Snapshot{Config: &cfgCopy}}
+			if got := householdThemeAt(sp, tc.utc); got != tc.want {
+				t.Fatalf("householdThemeAt(%v) = %q, want %q", tc.utc, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildDisplayHandler_VoiceWaveform(t *testing.T) {
 	t.Parallel()
 	enabled := true

@@ -109,24 +109,33 @@ func householdNowFunc(sp render.StateSnapshotProvider) func() time.Time {
 
 func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
 	return func() string {
-		if sp == nil || sp.CurrentSnapshot() == nil || sp.CurrentSnapshot().Config == nil {
-			return config.ThemeModeDay
-		}
-		snap := sp.CurrentSnapshot()
-		if mode := snap.Config.Display.Theme.GetMode(); mode == config.ThemeModeNight || mode == config.ThemeModeDay {
-			return mode
-		}
-		if loc := snap.Config.GetLocationConfig(); loc != nil && loc.Latitude != nil && loc.Longitude != nil {
-			now := time.Now()
-			if snap.Config.Location() != nil {
-				now = now.In(snap.Config.Location())
-			}
-			if solar.IsNight(loc.GetLatitude(), loc.GetLongitude(), now) {
-				return config.ThemeModeNight
-			}
+		return householdThemeAt(sp, time.Now())
+	}
+}
+
+func householdThemeAt(sp render.StateSnapshotProvider, now time.Time) string {
+	if sp == nil || sp.CurrentSnapshot() == nil || sp.CurrentSnapshot().Config == nil {
+		return config.ThemeModeDay
+	}
+	snap := sp.CurrentSnapshot()
+	if mode := snap.Config.Display.Theme.GetMode(); mode == config.ThemeModeNight || mode == config.ThemeModeDay {
+		return mode
+	}
+	if snap.Config.Location() != nil {
+		now = now.In(snap.Config.Location())
+	}
+	if active, ok := snap.Config.Display.Theme.IsNightAt(now); ok {
+		if active {
+			return config.ThemeModeNight
 		}
 		return config.ThemeModeDay
 	}
+	if loc := snap.Config.GetLocationConfig(); loc != nil && loc.Latitude != nil && loc.Longitude != nil {
+		if solar.IsNight(loc.GetLatitude(), loc.GetLongitude(), now) {
+			return config.ThemeModeNight
+		}
+	}
+	return config.ThemeModeDay
 }
 
 func evaluateThemeTransition(currentTheme func() string, sp interface {
