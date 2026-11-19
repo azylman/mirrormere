@@ -573,3 +573,94 @@ func TestDisplayUI(t *testing.T) {
 		})
 	}
 }
+
+func TestThemeNightSchedule(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		in      string
+		want    int
+		wantErr bool
+	}{
+		{in: "00:00", want: 0},
+		{in: "06:30", want: 390},
+		{in: "20:30", want: 1230},
+		{in: "23:59", want: 1439},
+		{in: "24:00", wantErr: true},
+		{in: "12:60", wantErr: true},
+		{in: "8:30", wantErr: true},
+		{in: "abc", wantErr: true},
+		{in: "ab:cd", wantErr: true},
+		{in: "12:ab", wantErr: true},
+		{in: "12-30", wantErr: true},
+	} {
+		got, err := config.ParseClockHHMM(tc.in)
+		if tc.wantErr && err == nil {
+			t.Fatalf("ParseClockHHMM(%q) expected error, got %d", tc.in, got)
+		}
+		if !tc.wantErr && (err != nil || got != tc.want) {
+			t.Fatalf("ParseClockHHMM(%q) = (%d, %v), want (%d, nil)", tc.in, got, err, tc.want)
+		}
+	}
+
+	for _, tc := range []struct {
+		name, yaml, wantErr string
+	}{
+		{name: "valid overnight without coordinates", yaml: withBaseYAML("  theme:\n    mode: auto\n    night_start: \"20:30\"\n    night_end: \"06:30\"\n")},
+		{name: "valid same-day without coordinates", yaml: withBaseYAML("  theme:\n    mode: auto\n    night_start: \"01:00\"\n    night_end: \"05:30\"\n")},
+		{name: "missing night_end", yaml: withBaseYAML("  theme:\n    mode: auto\n    night_start: \"20:30\"\n"), wantErr: "night_start and night_end must both be set"},
+		{name: "missing night_start", yaml: withBaseYAML("  theme:\n    mode: auto\n    night_end: \"06:30\"\n"), wantErr: "night_start and night_end must both be set"},
+		{name: "invalid night_start 24:00", yaml: withBaseYAML("  theme:\n    mode: auto\n    night_start: \"24:00\"\n    night_end: \"06:30\"\n"), wantErr: "invalid theme night_start"},
+		{name: "invalid night_start 8:30", yaml: withBaseYAML("  theme:\n    mode: auto\n    night_start: \"8:30\"\n    night_end: \"06:30\"\n"), wantErr: "invalid theme night_start"},
+		{name: "invalid night_end abc", yaml: withBaseYAML("  theme:\n    mode: auto\n    night_start: \"20:30\"\n    night_end: \"abc\"\n"), wantErr: "invalid theme night_end"},
+		{name: "equal start and end", yaml: withBaseYAML("  theme:\n    mode: auto\n    night_start: \"20:30\"\n    night_end: \"20:30\"\n"), wantErr: "night_start and night_end must not be equal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := config.ParseWithEnv([]byte(tc.yaml), nil)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("ParseWithEnv() err = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertEq(t, "has schedule", cfg.Display.Theme.HasNightSchedule(), true)
+		})
+	}
+
+	var nilTheme *config.ThemeConfig
+	assertEq(t, "nil HasNightSchedule", nilTheme.HasNightSchedule(), false)
+	active, ok := nilTheme.IsNightAt(time.Date(2026, 1, 15, 22, 0, 0, 0, time.UTC))
+	assertEq(t, "nil IsNightAt", !active && !ok, true)
+	active, ok = (&config.ThemeConfig{Mode: "auto"}).IsNightAt(time.Date(2026, 1, 15, 22, 0, 0, 0, time.UTC))
+	assertEq(t, "unset IsNightAt", !active && !ok, true)
+	active, ok = (&config.ThemeConfig{NightStart: "20:30", NightEnd: "20:30"}).IsNightAt(time.Date(2026, 1, 15, 22, 0, 0, 0, time.UTC))
+	assertEq(t, "equal IsNightAt", !active && !ok, true)
+
+	overnight := &config.ThemeConfig{Mode: "auto", NightStart: "20:30", NightEnd: "06:30"}
+	sameDay := &config.ThemeConfig{Mode: "auto", NightStart: "01:00", NightEnd: "05:30"}
+	for _, tc := range []struct {
+		theme      *config.ThemeConfig
+		hour, min  int
+		wantActive bool
+	}{
+		{overnight, 20, 29, false},
+		{overnight, 20, 30, true},
+		{overnight, 23, 59, true},
+		{overnight, 0, 0, true},
+		{overnight, 6, 29, true},
+		{overnight, 6, 30, false},
+		{sameDay, 0, 59, false},
+		{sameDay, 1, 0, true},
+		{sameDay, 5, 29, true},
+		{sameDay, 5, 30, false},
+	} {
+		gotActive, gotOK := tc.theme.IsNightAt(time.Date(2026, 1, 15, tc.hour, tc.min, 0, 0, time.UTC))
+		if !gotOK || gotActive != tc.wantActive {
+			t.Fatalf("IsNightAt(%02d:%02d) = (%v, %v), want (%v, true)", tc.hour, tc.min, gotActive, gotOK, tc.wantActive)
+		}
+	}
+}
