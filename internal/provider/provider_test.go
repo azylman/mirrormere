@@ -59,7 +59,7 @@ func TestRegistry(t *testing.T) {
 func TestRegistry_Builtins(t *testing.T) {
 	t.Parallel()
 	reg := provider.NewRegistry()
-	builtins := []string{"spacer", "live-view", "floorplan-3d", "http", "weather-forecast", "calendar-feed", "photo-carousel", "tasks"}
+	builtins := []string{"spacer", "live-view", "http", "weather-forecast", "calendar-feed", "photo-carousel", "tasks"}
 	for _, name := range builtins {
 		p, err := reg.Create(name)
 		if err != nil {

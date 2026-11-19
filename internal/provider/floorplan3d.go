@@ -2,11 +2,16 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"strings"
 	"sync"
 )
+
+const floorplanHABindingsKey = "haBindings"
 
 func init() {
 	registerBuiltin("floorplan-3d", func() Provider {
@@ -17,9 +22,10 @@ func init() {
 // Floorplan3dProvider implements Provider for the 3D floorplan widget,
 // optionally hydrating live Home Assistant entity states when HA credentials are configured.
 type Floorplan3dProvider struct {
-	mu     sync.RWMutex
-	client *http.Client
-	ha     *HomeAssistantProvider
+	mu         sync.RWMutex
+	client     *http.Client
+	ha         *HomeAssistantProvider
+	hydrateAll bool
 }
 
 var _ Provider = (*Floorplan3dProvider)(nil)
@@ -44,16 +50,20 @@ func (p *Floorplan3dProvider) Init(ctx context.Context, config map[string]any, o
 
 	if !hasFloorplanHAConfig(config, opts) {
 		p.ha = nil
+		p.hydrateAll = false
 		return nil
 	}
 
+	hydrateAll := hasFloorplanLayoutURL(config) && !hasExplicitDomains(config)
 	effectiveCfg := withFloorplanDomains(config)
 	ha := NewHomeAssistantProviderWithClient(p.client, "", "")
 	if err := ha.Init(ctx, effectiveCfg, opts); err != nil {
 		p.ha = nil
+		p.hydrateAll = false
 		return err
 	}
 	p.ha = ha
+	p.hydrateAll = hydrateAll
 	return nil
 }
 
@@ -61,13 +71,22 @@ func (p *Floorplan3dProvider) Init(ctx context.Context, config map[string]any, o
 func (p *Floorplan3dProvider) Fetch(ctx context.Context) (any, error) {
 	p.mu.RLock()
 	ha := p.ha
+	hydrateAll := p.hydrateAll
 	p.mu.RUnlock()
 
 	if ha == nil {
 		return map[string]any{}, nil
 	}
 
-	states, err := ha.HydrateStates(ctx)
+	var (
+		states map[string]EntityState
+		err    error
+	)
+	if hydrateAll {
+		states, err = hydrateAllHAStates(ctx, ha)
+	} else {
+		states, err = ha.HydrateStates(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -84,6 +103,49 @@ func (*Floorplan3dProvider) Shutdown(context.Context) error {
 	return nil
 }
 
+func hydrateAllHAStates(ctx context.Context, ha *HomeAssistantProvider) (map[string]EntityState, error) {
+	ha.mu.RLock()
+	cleanBase := strings.TrimRight(ha.baseURL, "/")
+	token := ha.token
+	client := ha.client
+	ha.mu.RUnlock()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cleanBase+"/api/states", http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create states request: %w", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("states request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read states response: %w", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("states request returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var rawStates []EntityState
+	if err := json.Unmarshal(body, &rawStates); err != nil {
+		return nil, fmt.Errorf("failed to decode states: %w", err)
+	}
+
+	states := make(map[string]EntityState, len(rawStates))
+	for _, s := range rawStates {
+		if strings.TrimSpace(s.EntityID) != "" {
+			states[s.EntityID] = normalizeEntityState(s, cleanBase)
+		}
+	}
+	return states, nil
+}
+
 func hasFloorplanHAConfig(config map[string]any, opts InitOptions) bool {
 	for _, key := range []string{"url", "base_url", "url_env", "base_url_env", "token_env"} {
 		if _, ok := config[key]; ok {
@@ -96,11 +158,26 @@ func hasFloorplanHAConfig(config map[string]any, opts InitOptions) bool {
 	return resolveConfigField(config, opts, "url", "base_url") != "" || resolveToken(config, opts, "") != ""
 }
 
-func withFloorplanDomains(config map[string]any) map[string]any {
-	if config != nil {
-		if rawDomains, ok := config["domains"]; ok && len(toStringSlice(rawDomains)) > 0 {
-			return config
+func hasExplicitDomains(config map[string]any) bool {
+	if config == nil {
+		return false
+	}
+	rawDomains, ok := config["domains"]
+	return ok && len(deduplicateStrings(toStringSlice(rawDomains))) > 0
+}
+
+func hasFloorplanLayoutURL(config map[string]any) bool {
+	for _, key := range []string{"layout_url", "layoutUrl"} {
+		if raw, ok := config[key].(string); ok && strings.TrimSpace(raw) != "" {
+			return true
 		}
+	}
+	return false
+}
+
+func withFloorplanDomains(config map[string]any) map[string]any {
+	if hasExplicitDomains(config) {
+		return config
 	}
 
 	bindingDomains := extractFloorplanBindingDomains(config)
@@ -120,23 +197,24 @@ func extractFloorplanBindingDomains(config map[string]any) []string {
 	if config == nil {
 		return nil
 	}
-	var domains []string
-	domains = append(domains, domainsFromBindings(config["haBindings"])...)
-	if layout, ok := config["layout"].(map[string]any); ok {
-		domains = append(domains, domainsFromBindings(layout["haBindings"])...)
+	domains := domainsFromBindings(config[floorplanHABindingsKey])
+	switch layout := config["layout"].(type) {
+	case map[string]any:
+		domains = append(domains, domainsFromBindings(layout[floorplanHABindingsKey])...)
+	case string:
+		if trimmed := strings.TrimSpace(layout); trimmed != "" {
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+				domains = append(domains, domainsFromBindings(parsed[floorplanHABindingsKey])...)
+			}
+		}
 	}
 	return domains
 }
 
 func domainsFromBindings(raw any) []string {
 	var domains []string
-	appendFromMap := func(m map[string]any) {
-		var entityID string
-		if id, ok := m["entityId"].(string); ok {
-			entityID = id
-		} else if id, ok := m["entity_id"].(string); ok {
-			entityID = id
-		}
+	appendEntityDomain := func(entityID string) {
 		entityID = strings.TrimSpace(entityID)
 		if domain, _, ok := strings.Cut(entityID, "."); ok {
 			domain = strings.ToLower(strings.TrimSpace(domain))
@@ -145,18 +223,47 @@ func domainsFromBindings(raw any) []string {
 			}
 		}
 	}
+	appendFromMap := func(m map[string]any, fallbackKey string) {
+		appendEntityDomain(bindingEntityID(m, fallbackKey))
+	}
 
 	switch items := raw.(type) {
 	case []any:
 		for _, item := range items {
 			if m, ok := item.(map[string]any); ok {
-				appendFromMap(m)
+				appendFromMap(m, "")
 			}
 		}
 	case []map[string]any:
 		for _, m := range items {
-			appendFromMap(m)
+			appendFromMap(m, "")
+		}
+	case map[string]any:
+		for key, val := range items {
+			if m, ok := val.(map[string]any); ok {
+				appendFromMap(m, key)
+			} else {
+				appendEntityDomain(key)
+			}
+		}
+	case string:
+		if trimmed := strings.TrimSpace(items); trimmed != "" {
+			var decoded any
+			if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+				if _, isStr := decoded.(string); !isStr {
+					domains = append(domains, domainsFromBindings(decoded)...)
+				}
+			}
 		}
 	}
 	return domains
+}
+
+func bindingEntityID(m map[string]any, fallbackKey string) string {
+	for _, key := range []string{"entityId", "entity_id"} {
+		if id, ok := m[key].(string); ok && strings.TrimSpace(id) != "" {
+			return id
+		}
+	}
+	return fallbackKey
 }
