@@ -315,6 +315,51 @@ display:
 	}
 }
 
+func TestLoader_Floorplan3dFlexibleBindingAndLayoutFormats(t *testing.T) {
+	t.Parallel()
+	loader := widget.NewLoader(filepath.Join("..", "..", "widgets"), t.TempDir())
+
+	cases := []struct {
+		name       string
+		configYAML string
+	}{
+		{
+			name: "map-keyed haBindings",
+			configYAML: `
+        layout_url: "/static/floorplan-layout.json"
+        haBindings:
+          living-room:
+            entityId: light.living_room
+          kitchen: light.kitchen`,
+		},
+		{
+			name: "json-string haBindings",
+			configYAML: `
+        layout_url: "/static/floorplan-layout.json"
+        haBindings: '[{"roomId":"living-room","entityId":"light.living_room"}]'`,
+		},
+		{
+			name: "json-string layout",
+			configYAML: `
+        layout: '{"floors":[{"id":"ground","label":"Ground","rooms":[]}]}'`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			yamlData := "\ntimezone: America/Los_Angeles\ndisplay:\n  widgets:\n    - id: home-floorplan-flex\n      type: floorplan-3d\n      dimensions: [4, 2]\n      config:" + tc.configYAML + "\n    - id: pad\n      type: spacer\n      dimensions: [2, 2]\n"
+			snap, err := config.ValidatePipeline([]byte(yamlData), loader, nil)
+			if err != nil {
+				t.Fatalf("expected floorplan-3d configuration (%s) to validate: %v", tc.name, err)
+			}
+			if snap == nil || len(snap.Config.Display.Widgets) != 2 {
+				t.Fatalf("unexpected snapshot for %s: %+v", tc.name, snap)
+			}
+		})
+	}
+}
+
 func TestLoader_WeatherForecastAssetsBaseConfigValidation(t *testing.T) {
 	t.Parallel()
 	loader := widget.NewLoader(filepath.Join("..", "..", "widgets"), t.TempDir())

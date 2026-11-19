@@ -47,7 +47,10 @@ config_schema:
     cameraPresets:
       type: array
     haBindings:
-      type: array
+      type:
+        - array
+        - object
+        - string
     url:
       type: string
     url_env:
