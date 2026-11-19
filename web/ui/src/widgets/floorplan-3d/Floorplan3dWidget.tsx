@@ -14,15 +14,51 @@ type FloorSpec = SpecModule.FloorSpec;
 type FloorplanLayoutSpec = SpecModule.FloorplanLayoutSpec;
 type HaEntityBindingSpec = SpecModule.HaEntityBindingSpec;
 
+interface FloorplanWidgetHooks {
+  setPreset: (presetId: string) => void;
+  setFloor: (floorId: string) => void;
+  sceneReady: boolean;
+}
+
 declare global {
   interface Window {
-    __setFloorplanPreset?: (presetId: string) => void;
-    __setFloorplanFloor?: (floorId: string) => void;
+    __setFloorplanPreset?: (presetId: string, widgetId?: string) => void;
+    __setFloorplanFloor?: (floorId: string, widgetId?: string) => void;
     __floorplanSceneReady?: boolean;
+    __floorplanWidgets?: Record<string, FloorplanWidgetHooks>;
   }
 }
 
 interface FloorplanDeps { three: typeof ThreeModule; scene: typeof SceneModule; spec: typeof SpecModule }
+interface RegisteredFloorplanEntry { token: symbol; setPreset: (presetId: string) => void; setFloor: (floorId: string) => void }
+
+const floorplanWidgets = new Map<string, RegisteredFloorplanEntry>();
+const readyFloorplanScenes = new Map<symbol, string>();
+
+function syncFloorplanGlobals(): void {
+  if (readyFloorplanScenes.size > 0) window.__floorplanSceneReady = true;
+  else delete window.__floorplanSceneReady;
+  if (floorplanWidgets.size === 0) {
+    delete window.__floorplanWidgets;
+    delete window.__setFloorplanPreset;
+    delete window.__setFloorplanFloor;
+    return;
+  }
+  const readyIds = new Set(readyFloorplanScenes.values());
+  const map: Record<string, FloorplanWidgetHooks> = {};
+  for (const [wid, entry] of floorplanWidgets) {
+    map[wid] = { setPreset: entry.setPreset, setFloor: entry.setFloor, sceneReady: readyIds.has(wid) };
+  }
+  window.__floorplanWidgets = map;
+  const resolveTarget = (widgetId?: string): RegisteredFloorplanEntry | undefined => {
+    if (widgetId) return floorplanWidgets.get(widgetId);
+    const entries = Array.from(floorplanWidgets.values());
+    return entries[entries.length - 1];
+  };
+  window.__setFloorplanPreset = (presetId, widgetId) => { resolveTarget(widgetId)?.setPreset(presetId); };
+  window.__setFloorplanFloor = (floorId, widgetId) => { resolveTarget(widgetId)?.setFloor(floorId); };
+}
+
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 function readQueryParam(...keys: string[]): string | undefined {
@@ -153,6 +189,7 @@ interface WebglHandle {
 }
 
 function mountWebglViewport(
+  widgetId: string,
   deps: FloorplanDeps,
   container: HTMLDivElement,
   canvas: HTMLCanvasElement,
@@ -218,16 +255,14 @@ function mountWebglViewport(
   const capturePointer = (pointerId: number, capture: boolean) => {
     try {
       const c = canvas as { setPointerCapture?: (id: number) => void; releasePointerCapture?: (id: number) => void };
-      if (capture) c.setPointerCapture?.(pointerId);
-      else c.releasePointerCapture?.(pointerId);
+      if (capture) c.setPointerCapture?.(pointerId); else c.releasePointerCapture?.(pointerId);
     } catch { /* ignore unsupported or synthetic pointer events */ }
   };
   const onPointerDown = (e: PointerEvent) => {
     capturePointer(e.pointerId, true);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size === 1) {
-      Object.assign(gesture, { startX: e.clientX, startY: e.clientY, moved: false });
-    } else if (pointers.size === 2) {
+    if (pointers.size === 1) Object.assign(gesture, { startX: e.clientX, startY: e.clientY, moved: false });
+    else if (pointers.size === 2) {
       const [a, b] = Array.from(pointers.values());
       if (a && b) Object.assign(gesture, { pinchDist: Math.hypot(a.x - b.x, a.y - b.y), moved: true });
     }
@@ -250,27 +285,17 @@ function mountWebglViewport(
     orbit.theta -= (e.clientX - prev.x) * 0.0065;
     orbit.phi = clamp(orbit.phi - (e.clientY - prev.y) * 0.0055, 0.08, Math.PI * 0.46);
     camera.up.set(0, 1, 0);
-    camera.position.set(
-      orbit.target.x + orbit.radius * Math.sin(orbit.phi) * Math.sin(orbit.theta),
-      orbit.target.y + orbit.radius * Math.cos(orbit.phi),
-      orbit.target.z + orbit.radius * Math.sin(orbit.phi) * Math.cos(orbit.theta),
-    );
+    camera.position.set(orbit.target.x + orbit.radius * Math.sin(orbit.phi) * Math.sin(orbit.theta), orbit.target.y + orbit.radius * Math.cos(orbit.phi), orbit.target.z + orbit.radius * Math.sin(orbit.phi) * Math.cos(orbit.theta));
     camera.lookAt(orbit.target);
     renderNow();
   };
-  const onPointerEnd = (e: PointerEvent) => {
-    capturePointer(e.pointerId, false);
-    pointers.delete(e.pointerId);
-  };
+  const onPointerEnd = (e: PointerEvent) => { capturePointer(e.pointerId, false); pointers.delete(e.pointerId); };
   const onPointerUp = (e: PointerEvent) => {
     const wasTap = pointers.has(e.pointerId) && pointers.size === 1 && !gesture.moved;
     onPointerEnd(e);
     const rect = canvas.getBoundingClientRect();
     if (!wasTap || rect.width <= 0 || rect.height <= 0) return;
-    raycaster.setFromCamera(
-      new Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1),
-      camera,
-    );
+    raycaster.setFromCamera(new Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1), camera);
     for (const hit of raycaster.intersectObjects(built.scene.children, true)) {
       for (let cur: Object3D | null = hit.object; cur; cur = cur.parent) {
         const u = cur.userData as { fixtureId?: string; roomId?: string; room?: string } | undefined;
@@ -284,28 +309,26 @@ function mountWebglViewport(
     }
   };
   const onWheel = (e: WheelEvent) => { e.preventDefault(); zoomBy(e.deltaY > 0 ? 1.08 : 0.92); };
-  canvas.addEventListener('pointerdown', onPointerDown);
-  canvas.addEventListener('pointermove', onPointerMove);
-  canvas.addEventListener('pointerup', onPointerUp);
-  canvas.addEventListener('pointercancel', onPointerEnd);
-  canvas.addEventListener('lostpointercapture', onPointerEnd);
-  canvas.addEventListener('wheel', onWheel, { passive: false });
+  const listeners: [string, EventListener, AddEventListenerOptions?][] = [
+    ['pointerdown', onPointerDown as EventListener], ['pointermove', onPointerMove as EventListener],
+    ['pointerup', onPointerUp as EventListener], ['pointercancel', onPointerEnd as EventListener],
+    ['lostpointercapture', onPointerEnd as EventListener], ['wheel', onWheel as EventListener, { passive: false }],
+  ];
+  for (const [ev, fn, opts] of listeners) canvas.addEventListener(ev, fn, opts);
   const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(syncSize) : null;
   ro?.observe(container);
   syncSize();
-  window.__floorplanSceneReady = true;
+  const sceneToken = Symbol(widgetId);
+  readyFloorplanScenes.set(sceneToken, widgetId);
+  syncFloorplanGlobals();
   return {
     applyPreset,
     updateEntities: (states) => { built.updateEntities(states); renderNow(); },
     dispose: () => {
-      delete window.__floorplanSceneReady;
+      readyFloorplanScenes.delete(sceneToken);
+      syncFloorplanGlobals();
       ro?.disconnect();
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerup', onPointerUp);
-      canvas.removeEventListener('pointercancel', onPointerEnd);
-      canvas.removeEventListener('lostpointercapture', onPointerEnd);
-      canvas.removeEventListener('wheel', onWheel);
+      for (const [ev, fn] of listeners) canvas.removeEventListener(ev, fn);
       built.dispose();
       renderer.dispose();
     },
@@ -329,14 +352,8 @@ function Floorplan3dContent({ id, type, deps }: WidgetComponentProps & { deps: F
   }, [layoutUrl, parseFloorplanConfig]);
 
   const hasMetaLayout = Boolean(metaConfig && ('floors' in metaConfig || 'layout' in metaConfig));
-  const inlineLayoutKey = useMemo(
-    () => serializeInlineLayout(hasMetaLayout, hasMetaLayout ? metaConfig : entry.data),
-    [hasMetaLayout, metaConfig, entry.data],
-  );
-  const inlineSpec = useMemo(
-    () => parseInlineLayoutKey(inlineLayoutKey, parseFloorplanConfig, DEFAULT_DEMO_FLOORPLAN_SPEC),
-    [DEFAULT_DEMO_FLOORPLAN_SPEC, inlineLayoutKey, parseFloorplanConfig],
-  );
+  const inlineLayoutKey = useMemo(() => serializeInlineLayout(hasMetaLayout, hasMetaLayout ? metaConfig : entry.data), [hasMetaLayout, metaConfig, entry.data]);
+  const inlineSpec = useMemo(() => parseInlineLayoutKey(inlineLayoutKey, parseFloorplanConfig, DEFAULT_DEMO_FLOORPLAN_SPEC), [DEFAULT_DEMO_FLOORPLAN_SPEC, inlineLayoutKey, parseFloorplanConfig]);
   const layoutSpec = layoutUrl && fetchedLayout?.url === layoutUrl ? fetchedLayout.spec : inlineSpec;
   const [selectedFloorId, setSelectedFloorId] = useState<string | undefined>(() => readQueryParam('floor', 'tier'));
   const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(() => readQueryParam('floorplanPreset', 'view'));
@@ -365,33 +382,33 @@ function Floorplan3dContent({ id, type, deps }: WidgetComponentProps & { deps: F
     setSelectedFixtureId(null);
     setSelectedPresetId((prev) => (prev && nextPresets.some((p) => p.id === prev) ? prev : undefined));
   }, [DEFAULT_DEMO_FLOORPLAN_SPEC, layoutSpec]);
+  const switchFloorRef = useRef(switchFloor);
+  useEffect(() => { switchFloorRef.current = switchFloor; }, [switchFloor]);
   useEffect(() => {
-    window.__setFloorplanPreset = (presetId: string) => { setSelectedPresetId(presetId); };
-    window.__setFloorplanFloor = switchFloor;
-    return () => { delete window.__setFloorplanPreset; delete window.__setFloorplanFloor; };
-  }, [switchFloor]);
+    const token = Symbol(id);
+    floorplanWidgets.set(id, {
+      token,
+      setPreset: (presetId) => { setSelectedPresetId(presetId); },
+      setFloor: (floorId) => { switchFloorRef.current(floorId); },
+    });
+    syncFloorplanGlobals();
+    return () => { if (floorplanWidgets.get(id)?.token === token) { floorplanWidgets.delete(id); syncFloorplanGlobals(); } };
+  }, [id]);
   useEffect(() => {
     if (!webglSupported || !viewportRef.current || !canvasRef.current) return undefined;
-    const handle = mountWebglViewport(
-      deps, viewportRef.current, canvasRef.current, layoutSpec, activeFloor,
-      (hit) => {
-        if (hit.fixtureId) setSelectedFixtureId(hit.fixtureId);
-        if (hit.roomId && floorPresets.some((p) => p.id === hit.roomId)) setSelectedPresetId(hit.roomId);
-      },
-      () => { setWebglSupported(false); },
-    );
+    const handle = mountWebglViewport(id, deps, viewportRef.current, canvasRef.current, layoutSpec, activeFloor, (hit) => {
+      if (hit.fixtureId) setSelectedFixtureId(hit.fixtureId);
+      if (hit.roomId && floorPresets.some((p) => p.id === hit.roomId)) setSelectedPresetId(hit.roomId);
+    }, () => { setWebglSupported(false); });
     handleRef.current = handle;
     return () => { handle?.dispose(); handleRef.current = null; };
-  }, [deps, webglSupported, layoutSpec, activeFloor, floorPresets]);
+  }, [id, deps, webglSupported, layoutSpec, activeFloor, floorPresets]);
   useEffect(() => { handleRef.current?.applyPreset(activePreset, showUpperFloors); }, [activePreset, showUpperFloors, webglSupported, activeFloor]);
   useEffect(() => { handleRef.current?.updateEntities(entities); }, [entities, webglSupported, activeFloor]);
   const selectRoomTarget = (roomId: string) => { if (floorPresets.some((p) => p.id === roomId)) setSelectedPresetId(roomId); };
 
   return (
-    <div
-      className="fp3d-widget" data-widget-type={type} data-active-floor={activeFloor.id}
-      data-active-preset={activePreset.id} data-upper-floors={showUpperFloors ? 'true' : 'false'} data-kiosk={isKiosk ? 'true' : 'false'}
-    >
+    <div className="fp3d-widget" data-widget-type={type} data-active-floor={activeFloor.id} data-active-preset={activePreset.id} data-upper-floors={showUpperFloors ? 'true' : 'false'} data-kiosk={isKiosk ? 'true' : 'false'}>
       <div className="fp3d-viewport" ref={viewportRef}>
         {webglSupported ? (
           <canvas className="fp3d-canvas" ref={canvasRef} aria-label={`${layoutSpec.title} — ${activeFloor.label} 3D Canvas`} />
@@ -408,11 +425,7 @@ function Floorplan3dContent({ id, type, deps }: WidgetComponentProps & { deps: F
                   {roomFixtures.length > 0 && (
                     <div className="fp3d-fallback-fixtures">
                       {roomFixtures.map((fix) => (
-                        <button
-                          key={fix.id} type="button" className="fp3d-fixture-chip" data-fixture-id={fix.id}
-                          data-selected={selectedFixture?.id === fix.id ? 'true' : 'false'}
-                          onClick={() => { setSelectedFixtureId(fix.id); selectRoomTarget(room.id); }}
-                        >{fix.label}</button>
+                        <button key={fix.id} type="button" className="fp3d-fixture-chip" data-fixture-id={fix.id} data-selected={selectedFixture?.id === fix.id ? 'true' : 'false'} onClick={() => { setSelectedFixtureId(fix.id); selectRoomTarget(room.id); }}>{fix.label}</button>
                       ))}
                     </div>
                   )}
@@ -426,16 +439,8 @@ function Floorplan3dContent({ id, type, deps }: WidgetComponentProps & { deps: F
         <div className="fp3d-title-chip">{layoutSpec.title} · {activeFloor.label} · {activePreset.label}</div>
         <div className="fp3d-status-list">
           {hudPills.length > 0
-            ? hudPills.map((p) => (
-                <span key={p.key} className="fp3d-status-pill" data-status-key={p.key} data-entity-id={p.entityId} data-active={p.active ? 'true' : 'false'}>
-                  <span className="fp3d-status-dot" />{p.label}
-                </span>
-              ))
-            : activeFloor.rooms.map((room) => (
-                <span key={room.id} className="fp3d-status-pill" data-room-badge={room.id} data-active="true">
-                  <span className="fp3d-status-dot" />{room.label}
-                </span>
-              ))}
+            ? hudPills.map((p) => <span key={p.key} className="fp3d-status-pill" data-status-key={p.key} data-entity-id={p.entityId} data-active={p.active ? 'true' : 'false'}><span className="fp3d-status-dot" />{p.label}</span>)
+            : activeFloor.rooms.map((room) => <span key={room.id} className="fp3d-status-pill" data-room-badge={room.id} data-active="true"><span className="fp3d-status-dot" />{room.label}</span>)}
         </div>
       </div>
       {selectedFixture && (
@@ -446,35 +451,20 @@ function Floorplan3dContent({ id, type, deps }: WidgetComponentProps & { deps: F
           </div>
           <div className="fp3d-inspector-meta">
             <div>Kind: {selectedFixture.kind} · Room: {selectedFixture.roomId}</div>
-            <div>
-              Size: {(selectedFixture.bounds.xMax - selectedFixture.bounds.xMin).toFixed(1)} ×{' '}
-              {(selectedFixture.bounds.zMax - selectedFixture.bounds.zMin).toFixed(1)} ×{' '}
-              {(selectedFixture.yMax - selectedFixture.yMin).toFixed(1)} ft
-            </div>
+            <div>Size: {(selectedFixture.bounds.xMax - selectedFixture.bounds.xMin).toFixed(1)} × {(selectedFixture.bounds.zMax - selectedFixture.bounds.zMin).toFixed(1)} × {(selectedFixture.yMax - selectedFixture.yMin).toFixed(1)} ft</div>
           </div>
         </div>
       )}
-
       <div className="fp3d-controls" role="toolbar" aria-label="Floorplan Camera Controls">
         {layoutSpec.floors.map((floor) => (
-          <button
-            key={floor.id} type="button" className="fp3d-pill" data-testid={`floorplan-floor-${floor.id}-btn`}
-            data-floor-id={floor.id} data-active={activeFloor.id === floor.id ? 'true' : 'false'}
-            aria-pressed={activeFloor.id === floor.id} onClick={() => { switchFloor(floor.id); }}
-          >{floor.label}</button>
+          <button key={floor.id} type="button" className="fp3d-pill" data-testid={`floorplan-floor-${floor.id}-btn`} data-floor-id={floor.id} data-active={activeFloor.id === floor.id ? 'true' : 'false'} aria-pressed={activeFloor.id === floor.id} onClick={() => { switchFloor(floor.id); }}>{floor.label}</button>
         ))}
         <span className="fp3d-divider" aria-hidden="true" />
         {floorPresets.map((preset) => (
-          <button
-            key={preset.id} type="button" className="fp3d-pill" data-preset={preset.id}
-            data-active={activePreset.id === preset.id ? 'true' : 'false'}
-            aria-pressed={activePreset.id === preset.id} onClick={() => { setSelectedPresetId(preset.id); }}
-          >{preset.label}</button>
+          <button key={preset.id} type="button" className="fp3d-pill" data-preset={preset.id} data-active={activePreset.id === preset.id ? 'true' : 'false'} aria-pressed={activePreset.id === preset.id} onClick={() => { setSelectedPresetId(preset.id); }}>{preset.label}</button>
         ))}
         <span className="fp3d-divider" aria-hidden="true" />
-        <button type="button" className="fp3d-pill" data-toggle="upper-floors" aria-pressed={showUpperFloors} onClick={() => { setShowUpperFloors((prev) => !prev); }}>
-          Upper Massing
-        </button>
+        <button type="button" className="fp3d-pill" data-toggle="upper-floors" aria-pressed={showUpperFloors} onClick={() => { setShowUpperFloors((prev) => !prev); }}>Upper Massing</button>
       </div>
     </div>
   );
@@ -482,12 +472,23 @@ function Floorplan3dContent({ id, type, deps }: WidgetComponentProps & { deps: F
 
 export function Floorplan3dWidget(props: WidgetComponentProps) {
   const [deps, setDeps] = useState<FloorplanDeps | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
     void Promise.all([import('three'), import('./buildFloorplanScene'), import('./floorplanSpec')])
-      .then(([three, scene, spec]) => { if (!cancelled) setDeps({ three, scene, spec }); });
+      .then(([three, scene, spec]) => { if (!cancelled) setDeps({ three, scene, spec }); })
+      .catch(() => { if (!cancelled) setLoadFailed(true); });
     return () => { cancelled = true; };
   }, []);
+  if (loadFailed) {
+    return (
+      <div className="fp3d-widget" data-widget-type={props.type} data-load-error="true">
+        <div className="fp3d-viewport"><div className="fp3d-fallback" role="region" aria-label="3D Floorplan Fallback">
+          <div className="fp3d-fallback-room"><strong>3D floorplan unavailable</strong><div>Unable to load 3D viewport module.</div></div>
+        </div></div>
+      </div>
+    );
+  }
   if (!deps) return <div className="fp3d-widget" data-widget-type={props.type} data-loading="true" />;
   return <Floorplan3dContent {...props} deps={deps} />;
 }

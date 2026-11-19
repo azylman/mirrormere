@@ -593,4 +593,114 @@ describe('Floorplan3dWidget — Generic Config-Driven 3D Floorplan Widget', () =
     expect(releaseCaptureSpy).toHaveBeenCalledWith(12);
     expect(root.dataset.activePreset).toBe('studio');
   });
+
+  it('scopes window hooks and scene-ready state per widget ID across multiple mounted instances', async () => {
+    setupStubWebgl();
+    const makeConfig = (title: string) => ({
+      title,
+      defaultFloorId: 'floor-1',
+      defaultPresetId: 'dollhouse',
+      floors: [
+        { id: 'floor-1', label: 'Floor 1', level: 1, rooms: [{ id: 'room-1', label: 'Room 1', bounds: { xMin: -5, xMax: 5, zMin: -5, zMax: 5 } }] },
+        { id: 'floor-2', label: 'Floor 2', level: 2, rooms: [{ id: 'room-2', label: 'Room 2', bounds: { xMin: -5, xMax: 5, zMin: -5, zMax: 5 } }] },
+      ],
+      cameraPresets: [
+        { id: 'dollhouse', label: 'Dollhouse', position: [0, 20, 22], target: [0, 2, 0] },
+        { id: 'topdown', label: 'Top-Down', position: [0, 34, 0.01], target: [0, 0, 0] },
+        { id: 'entryway', label: 'Entryway', position: [4, 10, 12], target: [0, 2, 0] },
+      ],
+    });
+    useDisplayStore.setState((s) => ({
+      ...s,
+      widgets: {
+        'fp-multi-a': {
+          state: 'ok',
+          timestamp: '2026-11-17T10:00:00Z',
+          meta: { type: 'floorplan-3d', origin: [0, 0], assets_base: '', dimensions: [4, 2], config: makeConfig('Widget A') },
+          data: {},
+        },
+        'fp-multi-b': {
+          state: 'ok',
+          timestamp: '2026-11-17T10:00:00Z',
+          meta: { type: 'floorplan-3d', origin: [4, 0], assets_base: '', dimensions: [4, 2], config: makeConfig('Widget B') },
+          data: {},
+        },
+      },
+    }));
+
+    const viewA = await renderLoadedWidget('fp-multi-a');
+    const viewB = await renderLoadedWidget('fp-multi-b');
+    const rootA = viewA.container.querySelector('.fp3d-widget') as HTMLElement;
+    const rootB = viewB.container.querySelector('.fp3d-widget') as HTMLElement;
+
+    expect(window.__floorplanSceneReady).toBe(true);
+    expect(window.__floorplanWidgets?.['fp-multi-a']?.sceneReady).toBe(true);
+    expect(window.__floorplanWidgets?.['fp-multi-b']?.sceneReady).toBe(true);
+
+    act(() => {
+      window.__setFloorplanPreset?.('topdown', 'fp-multi-a');
+      window.__setFloorplanFloor?.('floor-2', 'fp-multi-b');
+      window.__setFloorplanPreset?.('entryway', 'missing-widget');
+      window.__setFloorplanFloor?.('floor-2', 'missing-widget');
+    });
+    expect(rootA.dataset.activePreset).toBe('topdown');
+    expect(rootA.dataset.activeFloor).toBe('floor-1');
+    expect(rootB.dataset.activePreset).toBe('dollhouse');
+    expect(rootB.dataset.activeFloor).toBe('floor-2');
+
+    act(() => {
+      window.__floorplanWidgets?.['fp-multi-b']?.setPreset('entryway');
+    });
+    expect(rootB.dataset.activePreset).toBe('entryway');
+    expect(rootA.dataset.activePreset).toBe('topdown');
+
+    viewB.unmount();
+    expect(window.__floorplanSceneReady).toBe(true);
+    expect(window.__floorplanWidgets?.['fp-multi-b']).toBeUndefined();
+    expect(window.__floorplanWidgets?.['fp-multi-a']?.sceneReady).toBe(true);
+
+    act(() => {
+      window.__setFloorplanPreset?.('entryway');
+      window.__setFloorplanFloor?.('floor-2', 'fp-multi-a');
+    });
+    expect(rootA.dataset.activePreset).toBe('entryway');
+    expect(rootA.dataset.activeFloor).toBe('floor-2');
+
+    const dupA = await renderLoadedWidget('fp-multi-a');
+    viewA.unmount();
+    expect(window.__floorplanSceneReady).toBe(true);
+    expect(window.__floorplanWidgets?.['fp-multi-a']?.sceneReady).toBe(true);
+    act(() => {
+      window.__setFloorplanPreset?.('topdown', 'fp-multi-a');
+    });
+    expect((dupA.container.querySelector('.fp3d-widget') as HTMLElement).dataset.activePreset).toBe('topdown');
+
+    dupA.unmount();
+    expect(window.__floorplanSceneReady).toBeUndefined();
+    expect(window.__floorplanWidgets).toBeUndefined();
+    expect(window.__setFloorplanPreset).toBeUndefined();
+    expect(window.__setFloorplanFloor).toBeUndefined();
+  });
+
+  it('clears loading state and renders fallback UI when dynamic chunk import rejects', async () => {
+    vi.resetModules();
+    vi.doMock('./buildFloorplanScene', () => {
+      throw new Error('Failed to fetch dynamically imported module');
+    });
+    const { Floorplan3dWidget: FreshWidget } = await import('./Floorplan3dWidget');
+    const { container, unmount } = render(<FreshWidget id="fp-import-err" type="floorplan-3d" />);
+    expect(container.querySelector('.fp3d-widget')?.getAttribute('data-loading')).toBe('true');
+
+    await waitFor(() => {
+      const root = container.querySelector<HTMLElement>('.fp3d-widget');
+      expect(root?.getAttribute('data-loading')).toBeNull();
+      expect(root?.getAttribute('data-load-error')).toBe('true');
+    });
+    expect(screen.getByRole('region', { name: /3D Floorplan Fallback/i })).toBeTruthy();
+    expect(screen.getByText(/3D floorplan unavailable/i)).toBeTruthy();
+
+    unmount();
+    vi.doUnmock('./buildFloorplanScene');
+    vi.resetModules();
+  });
 });
