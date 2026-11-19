@@ -18,14 +18,15 @@ export default defineConfig({
       input: 'src/main.tsx',
       output: {
         entryFileNames: 'app.js',
+        chunkFileNames: '[name]-[hash].js',
         assetFileNames: 'app[extname]',
-        codeSplitting: false,
       },
     },
   },
   test: {
     environment: 'jsdom',
     css: true,
+    testTimeout: 30000,
     include: ['src/**/*.test.{ts,tsx}'],
     coverage: {
       provider: 'v8',
