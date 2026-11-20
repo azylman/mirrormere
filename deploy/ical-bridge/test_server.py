@@ -2639,6 +2639,33 @@ class TestHandlerEndpoints(unittest.TestCase):
                 srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
             self.assertEqual(probed_srcs, ["yard_cam", "yard_cam_legacy"])
 
+    def test_camera_backoff_decays_after_idle_gap_and_honors_max_below_base(self):
+        self.assertEqual(srv._compute_backoff_cooldown(300.0, 0, 60.0), 60.0)
+        self.assertEqual(srv._compute_backoff_cooldown(300.0, 2, 60.0), 60.0)
+
+        t0 = 1794630000.0
+        cfg_vals = {
+            "CAMERA_FAILURE_COOLDOWN_SEC": 300.0,
+            "CAMERA_FAILURE_COOLDOWN_MAX_SEC": 3600.0,
+        }
+        with (
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+        ):
+            # Cycle 1: 2 failures -> 300s cooldown, escalations=1
+            self.assertFalse(srv._record_upstream_failure("camera:idle_cam", now=t0))
+            self.assertTrue(srv._record_upstream_failure("camera:idle_cam", now=t0 + 10.0))
+            self.assertAlmostEqual(srv.CAMERA_FAILURE_COOLDOWN["camera:idle_cam"], t0 + 310.0)
+
+            # Long idle gap past cooldown (300s) + grace window (300s) -> escalation decays to 0
+            t_idle = t0 + 10.0 + 601.0
+            self.assertFalse(srv._record_upstream_failure("camera:idle_cam", now=t_idle))
+            self.assertTrue(srv._record_upstream_failure("camera:idle_cam", now=t_idle + 10.0))
+            self.assertAlmostEqual(
+                srv.CAMERA_FAILURE_COOLDOWN["camera:idle_cam"], t_idle + 10.0 + 300.0
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1995,7 +1995,7 @@ def _compute_backoff_cooldown(base_sec, escalations, max_sec):
     else:
         dur = base_sec * 3.0 * (4.0 ** (escalations - 1))
     if max_sec > 0:
-        return min(max(base_sec, max_sec), dur)
+        return min(max_sec, dur)
     return dur
 
 
@@ -2036,24 +2036,30 @@ def _record_upstream_failure(
         prev = CAMERA_FAILURE_STREAK.get(key)
         prev_escalations = 0
         streak_window = base_cooldown
-        if isinstance(prev, tuple) and len(prev) == 4:
-            prev_streak, prev_ts, prev_escalations, prev_window = prev
-            if prev_window > 0:
-                streak_window = max(streak_window, prev_window)
-            if streak_window > 0 and (now - prev_ts) > streak_window:
-                prev_streak = 0
-        elif isinstance(prev, tuple) and len(prev) == 3:
-            prev_streak, prev_ts, prev_escalations = prev
-            if streak_window > 0 and (now - prev_ts) > streak_window:
-                prev_streak = 0
-        elif isinstance(prev, tuple) and len(prev) == 2:
-            prev_streak, prev_ts = prev
-            if streak_window > 0 and (now - prev_ts) > streak_window:
-                prev_streak = 0
+        prev_ts = None
+        if isinstance(prev, tuple) and len(prev) >= 2:
+            prev_streak = prev[0]
+            prev_ts = prev[1]
+            if len(prev) >= 3:
+                prev_escalations = prev[2]
+            if len(prev) >= 4 and prev[3] > 0:
+                streak_window = max(streak_window, prev[3])
         elif isinstance(prev, int):
             prev_streak = prev
         else:
             prev_streak = 0
+
+        if prev_ts is not None and streak_window > 0:
+            elapsed = now - prev_ts
+            if elapsed > streak_window:
+                prev_streak = 0
+            # Preserve escalation across immediate post-cooldown retries, but decay
+            # back to base_cooldown after an idle gap past cooldown + grace window.
+            escalation_window = streak_window + (
+                base_cooldown if base_cooldown > 0 else streak_window
+            )
+            if elapsed > escalation_window:
+                prev_escalations = 0
 
         streak = prev_streak + 1
         triggered = bool(immediate_cooldown or streak >= max(1, int(threshold)))
