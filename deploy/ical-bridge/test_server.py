@@ -2394,6 +2394,251 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertEqual(status, 502)
             self.assertEqual(len(closed_flags), 3)
 
+    def test_go2rtc_snapshot_timeout_default_and_override(self):
+        good_jpeg = b"\xff\xd8\xff\xe0timeout_test_frame\xff\xd9"
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+        fake_cams = [
+            {
+                "id": "yard_cam",
+                "entity_id": "camera.yard_cam",
+                "go2rtc_src": "yard_cam",
+                "event_driven": False,
+            }
+        ]
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+        }
+        observed_timeouts = []
+
+        def fake_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/camera_proxy/" in url:
+                r = MagicMock()
+                r.read.return_value = placeholder_png
+                r.headers = {"Content-Type": "image/png"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/frame.jpeg" in url:
+                observed_timeouts.append(timeout)
+                r = MagicMock()
+                r.read.return_value = good_jpeg
+                r.headers = {"Content-Type": "image/jpeg"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
+            patch.object(srv, "_get_configured_cameras", return_value=fake_cams),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            data, ctype = srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertEqual(data, good_jpeg)
+            self.assertEqual(ctype, "image/jpeg")
+            self.assertEqual(observed_timeouts, [20.0])
+
+            cfg_vals["GO2RTC_SNAPSHOT_TIMEOUT_SEC"] = "27.5"
+            data2, _ = srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertEqual(data2, good_jpeg)
+            self.assertEqual(observed_timeouts, [20.0, 27.5])
+
+            cfg_vals["GO2RTC_SNAPSHOT_TIMEOUT_SEC"] = "invalid"
+            srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertEqual(observed_timeouts, [20.0, 27.5, 20.0])
+
+    def test_camera_exponential_backoff_and_reset_on_success(self):
+        good_jpeg = b"\xff\xd8\xff\xe0recovered_backoff\xff\xd9"
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+        fake_cams = [
+            {
+                "id": "yard_cam",
+                "entity_id": "camera.yard_cam",
+                "go2rtc_src": "yard_cam",
+                "event_driven": False,
+            }
+        ]
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+            "CAMERA_FAILURE_COOLDOWN_SEC": 300.0,
+            "CAMERA_FAILURE_COOLDOWN_MAX_SEC": 3600.0,
+        }
+        go2rtc_hits = []
+        should_timeout = [True]
+
+        def fake_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/camera_proxy/" in url:
+                r = MagicMock()
+                r.read.return_value = placeholder_png
+                r.headers = {"Content-Type": "image/png"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/frame.jpeg" in url:
+                go2rtc_hits.append(url)
+                if should_timeout[0]:
+                    raise TimeoutError("go2rtc keyframe timeout")
+                r = MagicMock()
+                r.read.return_value = good_jpeg
+                r.headers = {"Content-Type": "image/jpeg"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/camera_proxy_stream/" in url:
+                raise TimeoutError("stream timeout")
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        t0 = 1794610000.0
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
+            patch.object(srv, "_get_configured_cameras", return_value=fake_cams),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            # Cycle 1: 2 timeouts -> 300s cooldown
+            with patch.object(srv.time, "time", return_value=t0):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            with patch.object(srv.time, "time", return_value=t0 + 60.0):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertAlmostEqual(srv.CAMERA_FAILURE_COOLDOWN["camera:yard_cam"], t0 + 360.0)
+            self.assertAlmostEqual(srv.CAMERA_FAILURE_COOLDOWN["go2rtc:yard_cam"], t0 + 360.0)
+            self.assertTrue(srv._is_in_failure_cooldown("camera:yard_cam", now=t0 + 359.0))
+
+            # Cycle 2: after 300s expires, 2 more timeouts -> 900s cooldown
+            t1 = t0 + 361.0
+            with patch.object(srv.time, "time", return_value=t1):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            with patch.object(srv.time, "time", return_value=t1 + 60.0):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertAlmostEqual(srv.CAMERA_FAILURE_COOLDOWN["camera:yard_cam"], t1 + 960.0)
+            self.assertAlmostEqual(srv.CAMERA_FAILURE_COOLDOWN["go2rtc:yard_cam"], t1 + 960.0)
+            self.assertTrue(srv._is_in_failure_cooldown("camera:yard_cam", now=t1 + 959.0))
+
+            # Cycle 3: after 900s expires, 2 more timeouts -> 3600s cooldown (capped)
+            t2 = t1 + 961.0
+            with patch.object(srv.time, "time", return_value=t2):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            with patch.object(srv.time, "time", return_value=t2 + 60.0):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertAlmostEqual(srv.CAMERA_FAILURE_COOLDOWN["camera:yard_cam"], t2 + 3660.0)
+            self.assertAlmostEqual(srv.CAMERA_FAILURE_COOLDOWN["go2rtc:yard_cam"], t2 + 3660.0)
+            self.assertTrue(srv._is_in_failure_cooldown("camera:yard_cam", now=t2 + 3659.0))
+
+            # Cycle 4: still capped at 3600s
+            t3 = t2 + 3661.0
+            with patch.object(srv.time, "time", return_value=t3):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            with patch.object(srv.time, "time", return_value=t3 + 60.0):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertAlmostEqual(srv.CAMERA_FAILURE_COOLDOWN["camera:yard_cam"], t3 + 3660.0)
+
+            # Recovery clears escalation state; subsequent timeouts start back at 300s
+            should_timeout[0] = False
+            t4 = t3 + 3661.0
+            with patch.object(srv.time, "time", return_value=t4):
+                data_ok, _ = srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertEqual(data_ok, good_jpeg)
+            self.assertNotIn("camera:yard_cam", srv.CAMERA_FAILURE_STREAK)
+            self.assertNotIn("go2rtc:yard_cam", srv.CAMERA_FAILURE_STREAK)
+
+            should_timeout[0] = True
+            t5 = t4 + 10.0
+            with patch.object(srv.time, "time", return_value=t5):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            with patch.object(srv.time, "time", return_value=t5 + 60.0):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertAlmostEqual(srv.CAMERA_FAILURE_COOLDOWN["camera:yard_cam"], t5 + 360.0)
+            self.assertAlmostEqual(srv.CAMERA_FAILURE_COOLDOWN["go2rtc:yard_cam"], t5 + 360.0)
+
+    def test_camera_go2rtc_alias_404_applies_24h_cooldown(self):
+        import urllib.error
+        from http.client import HTTPMessage
+
+        placeholder_png = b"\x89PNG" + (b"\x00" * (srv.HA_NEST_PLACEHOLDER_LEN - 4))
+        fake_cams = [
+            {
+                "id": "yard_cam",
+                "entity_id": "camera.yard_cam",
+                "go2rtc_src": "yard_cam",
+                "aliases": ["yard_cam_legacy"],
+                "event_driven": False,
+            }
+        ]
+        cfg_vals = {
+            "HA_BASE_URL": "http://198.51.100.10:8123",
+            "HA_ACCESS_TOKEN": "test_ha_tok",
+            "GO2RTC_BASE_URL": "http://198.51.100.10:1984",
+            "CAMERA_FAILURE_COOLDOWN_SEC": 300.0,
+        }
+        probed_srcs = []
+
+        def fake_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/camera_proxy/" in url:
+                r = MagicMock()
+                r.read.return_value = placeholder_png
+                r.headers = {"Content-Type": "image/png"}
+                r.__enter__.return_value = r
+                r.__exit__.return_value = False
+                return r
+            if "/api/frame.jpeg" in url:
+                src = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("src", [""])[0]
+                probed_srcs.append(src)
+                if src == "yard_cam_legacy":
+                    raise urllib.error.HTTPError(
+                        url, 404, "Not Found", HTTPMessage(), io.BytesIO(b"stream not found")
+                    )
+                raise TimeoutError("primary stream timeout")
+            if "/api/camera_proxy_stream/" in url:
+                raise TimeoutError("stream timeout")
+            raise RuntimeError(f"Unexpected URL: {url}")
+
+        t0 = 1794620000.0
+        with (
+            patch.dict(srv.CAMERA_SNAP_CACHE, {}, clear=True),
+            patch.dict(srv.CAMERA_LAST_GOOD_FRAME, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_COOLDOWN, {}, clear=True),
+            patch.dict(srv.CAMERA_FAILURE_STREAK, {}, clear=True),
+            patch.object(srv, "_get_configured_cameras", return_value=fake_cams),
+            patch.object(srv, "_cfg", side_effect=lambda k, d="": cfg_vals.get(k, d)),
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            # Pass 1: primary times out, alias returns 404 -> alias enters 86400s cooldown
+            with patch.object(srv.time, "time", return_value=t0):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertEqual(probed_srcs, ["yard_cam", "yard_cam_legacy"])
+            self.assertAlmostEqual(
+                srv.CAMERA_FAILURE_COOLDOWN["go2rtc:yard_cam_legacy"], t0 + 86400.0
+            )
+
+            # Pass 2 & later passes within 24h: alias is never probed again even when primary retries
+            probed_srcs.clear()
+            with patch.object(srv.time, "time", return_value=t0 + 60.0):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            with patch.object(srv.time, "time", return_value=t0 + 365.0):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertEqual(probed_srcs, ["yard_cam", "yard_cam"])
+            self.assertTrue(srv._is_in_failure_cooldown("go2rtc:yard_cam_legacy", now=t0 + 86399.0))
+
+            # After 24h expires, alias may be probed again
+            probed_srcs.clear()
+            with patch.object(srv.time, "time", return_value=t0 + 86401.0):
+                srv.fetch_camera_snapshot("yard_cam", force_refresh=True)
+            self.assertEqual(probed_srcs, ["yard_cam", "yard_cam_legacy"])
+
 
 if __name__ == "__main__":
     unittest.main()

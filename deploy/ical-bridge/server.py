@@ -54,7 +54,7 @@ CAMERA_LAST_EVENT_STATE = {}
 CAMERA_PENDING_SNAPSHOT_REFRESH: set[str] = set()
 _CAMERA_EVENT_EPOCH: dict[str, float] = {}
 CAMERA_FAILURE_COOLDOWN: dict[str, float] = {}
-CAMERA_FAILURE_STREAK: dict[str, tuple[int, float]] = {}
+CAMERA_FAILURE_STREAK: dict[str, tuple[int, ...]] = {}
 CAMERA_SNAP_LOCK = threading.Lock()
 CAMERA_SNAP_TTL = 2.0
 CAMERA_ACTIVE_INTERVAL_SEC = 60.0
@@ -62,6 +62,9 @@ CAMERA_WARMER_INTERVAL_SEC = 120
 CAMERA_WARMER_STAGGER_SEC = 2.0
 CAMERA_WARMER_REFRESH_SEC = 300.0
 CAMERA_FAILURE_COOLDOWN_SEC = 300.0
+CAMERA_FAILURE_COOLDOWN_MAX_SEC = 3600.0
+CAMERA_NOT_FOUND_COOLDOWN_SEC = 86400.0
+GO2RTC_SNAPSHOT_TIMEOUT_SEC = 20.0
 CAMERA_TIMEOUT_THRESHOLD = 2
 AUTO_LIVE_WINDOW_SECONDS = 60
 MAX_AUTO_LIVE_STREAMS = 2
@@ -1953,12 +1956,47 @@ def _has_camera_event_changed(target, ha_states_map=None):
         return cid in CAMERA_PENDING_SNAPSHOT_REFRESH
 
 
-def _get_failure_cooldown_sec():
+def _cfg_nonneg_float(key, default, positive_only=False):
     try:
-        val = float(_cfg("CAMERA_FAILURE_COOLDOWN_SEC", CAMERA_FAILURE_COOLDOWN_SEC))
+        val = float(_cfg(key, default))
+        if positive_only:
+            return val if val > 0 else default
         return max(0.0, val)
     except (ValueError, TypeError):
-        return CAMERA_FAILURE_COOLDOWN_SEC
+        return default
+
+
+def _get_failure_cooldown_sec():
+    return _cfg_nonneg_float("CAMERA_FAILURE_COOLDOWN_SEC", CAMERA_FAILURE_COOLDOWN_SEC)
+
+
+def _get_failure_cooldown_max_sec():
+    return _cfg_nonneg_float("CAMERA_FAILURE_COOLDOWN_MAX_SEC", CAMERA_FAILURE_COOLDOWN_MAX_SEC)
+
+
+def _get_not_found_cooldown_sec():
+    return _cfg_nonneg_float("CAMERA_NOT_FOUND_COOLDOWN_SEC", CAMERA_NOT_FOUND_COOLDOWN_SEC)
+
+
+def _get_go2rtc_snapshot_timeout_sec():
+    return _cfg_nonneg_float(
+        "GO2RTC_SNAPSHOT_TIMEOUT_SEC", GO2RTC_SNAPSHOT_TIMEOUT_SEC, positive_only=True
+    )
+
+
+def _compute_backoff_cooldown(base_sec, escalations, max_sec):
+    """Compute exponential cooldown duration (1x -> 3x -> 12x, capped at max_sec)."""
+    if base_sec <= 0:
+        return 0.0
+    if escalations <= 0:
+        dur = base_sec
+    elif escalations == 1:
+        dur = base_sec * 3.0
+    else:
+        dur = base_sec * 3.0 * (4.0 ** (escalations - 1))
+    if max_sec > 0:
+        return min(max(base_sec, max_sec), dur)
+    return dur
 
 
 def _is_in_failure_cooldown(key, now=None):
@@ -1980,26 +2018,80 @@ def _record_upstream_failure(
     cooldown_sec=None,
     threshold=CAMERA_TIMEOUT_THRESHOLD,
 ):
+    """Record an upstream camera failure and apply exponential cooldown backoff."""
     if now is None:
         now = time.time()
-    if cooldown_sec is None:
-        cooldown_sec = _get_failure_cooldown_sec()
+    explicit_cooldown = cooldown_sec is not None
+    if explicit_cooldown:
+        try:
+            base_cooldown = max(0.0, float(cooldown_sec))
+        except (ValueError, TypeError):
+            base_cooldown = _get_failure_cooldown_sec()
+            explicit_cooldown = False
+    else:
+        base_cooldown = _get_failure_cooldown_sec()
+    max_cooldown = _get_failure_cooldown_max_sec()
+
     with CAMERA_SNAP_LOCK:
         prev = CAMERA_FAILURE_STREAK.get(key)
-        if isinstance(prev, tuple) and len(prev) == 2:
+        prev_escalations = 0
+        streak_window = base_cooldown
+        if isinstance(prev, tuple) and len(prev) == 4:
+            prev_streak, prev_ts, prev_escalations, prev_window = prev
+            if prev_window > 0:
+                streak_window = max(streak_window, prev_window)
+            if streak_window > 0 and (now - prev_ts) > streak_window:
+                prev_streak = 0
+        elif isinstance(prev, tuple) and len(prev) == 3:
+            prev_streak, prev_ts, prev_escalations = prev
+            if streak_window > 0 and (now - prev_ts) > streak_window:
+                prev_streak = 0
+        elif isinstance(prev, tuple) and len(prev) == 2:
             prev_streak, prev_ts = prev
-            if cooldown_sec > 0 and (now - prev_ts) > cooldown_sec:
+            if streak_window > 0 and (now - prev_ts) > streak_window:
                 prev_streak = 0
         elif isinstance(prev, int):
             prev_streak = prev
         else:
             prev_streak = 0
+
         streak = prev_streak + 1
-        CAMERA_FAILURE_STREAK[key] = (streak, now)
-        if immediate_cooldown or streak >= max(1, int(threshold)):
-            if cooldown_sec > 0:
-                CAMERA_FAILURE_COOLDOWN[key] = now + cooldown_sec
+        triggered = bool(immediate_cooldown or streak >= max(1, int(threshold)))
+        already_cooling = CAMERA_FAILURE_COOLDOWN.get(key, 0.0) > now
+        if triggered:
+            if explicit_cooldown:
+                effective_cooldown = base_cooldown
+                if effective_cooldown > 0:
+                    CAMERA_FAILURE_COOLDOWN[key] = now + effective_cooldown
+                CAMERA_FAILURE_STREAK[key] = (
+                    streak,
+                    now,
+                    prev_escalations,
+                    effective_cooldown,
+                )
+            elif already_cooling:
+                CAMERA_FAILURE_STREAK[key] = (
+                    streak,
+                    now,
+                    prev_escalations,
+                    streak_window,
+                )
+            else:
+                effective_cooldown = _compute_backoff_cooldown(
+                    base_cooldown, prev_escalations, max_cooldown
+                )
+                next_escalations = prev_escalations + 1
+                if effective_cooldown > 0:
+                    CAMERA_FAILURE_COOLDOWN[key] = now + effective_cooldown
+                CAMERA_FAILURE_STREAK[key] = (
+                    streak,
+                    now,
+                    next_escalations,
+                    effective_cooldown,
+                )
             return True
+
+        CAMERA_FAILURE_STREAK[key] = (streak, now, prev_escalations, base_cooldown)
         return False
 
 
@@ -2131,6 +2223,7 @@ def fetch_camera_snapshot(
 
         all_srcs_404_or_cooldown = bool(candidate_srcs)
         saw_404_or_cooldown = False
+        go2rtc_timeout_sec = _get_go2rtc_snapshot_timeout_sec()
         for src in candidate_srcs:
             src_cooldown_key = f"go2rtc:{src}"
             if _is_in_failure_cooldown(src_cooldown_key, now=now):
@@ -2139,7 +2232,7 @@ def fetch_camera_snapshot(
             url = f"{go2rtc_base}/api/frame.jpeg?src={urllib.parse.quote(src)}"
             req = urllib.request.Request(url, headers={"Connection": "close"})
             try:
-                with urllib.request.urlopen(req, timeout=8) as r:
+                with urllib.request.urlopen(req, timeout=go2rtc_timeout_sec) as r:
                     data = r.read()
                     ctype = r.headers.get("Content-Type", "image/jpeg")
                     if data and len(data) != HA_NEST_PLACEHOLDER_LEN:
@@ -2159,7 +2252,15 @@ def fetch_camera_snapshot(
                 print(f"[HEARTH-Bridge] go2rtc frame.jpeg warning for {src}: {e}", flush=True)
                 if e.code == 404:
                     saw_404_or_cooldown = True
-                    _record_upstream_failure(src_cooldown_key, now=now, immediate_cooldown=True)
+                    not_found_cooldown = (
+                        _get_not_found_cooldown_sec() if src != target["go2rtc_src"] else None
+                    )
+                    _record_upstream_failure(
+                        src_cooldown_key,
+                        now=now,
+                        immediate_cooldown=True,
+                        cooldown_sec=not_found_cooldown,
+                    )
                 else:
                     all_srcs_404_or_cooldown = False
                     _record_upstream_failure(src_cooldown_key, now=now)
