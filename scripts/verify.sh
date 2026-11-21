@@ -56,7 +56,7 @@ check_utf8_bom() {
         BOM_HEX=$(printf '\357\273\277')
         if [ "$MODE" = "staged" ]; then
             existing_staged=$(echo "$STAGED_FILES" | while read -r sf; do
-                [ -f "$sf" ] && echo "$sf"
+                if [ -f "$sf" ]; then echo "$sf"; fi
             done)
             [ -z "$existing_staged" ] && return 0
             # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
@@ -378,7 +378,7 @@ run_coverage_gate() {
 run_node_tests() {
     if has_cmd node; then
         echo "   [node test] Running web client, perf, and sidecar test suites..."
-        TZ=UTC node --test scripts/build-metadata.test.cjs web/test/*.test.js sidecars/eink-renderer/test/*.test.js
+        TZ=UTC node --test scripts/build-metadata.test.cjs scripts/perf/*.test.js sidecars/eink-renderer/test/*.test.js
     fi
 }
 
@@ -474,11 +474,11 @@ run_ui_checks() {
     fi
 }
 
-# 9. Vanilla JS lint (root eslint.config.js): web/static/js, web/test,
+# 9. Vanilla JS lint (root eslint.config.js): web/static/js,
 # sidecars/eink-renderer and scripts/perf. web/ui is linted by its own config.
 # --staged lints only staged files in scope (whole scope when the root lint
 # config or this script is staged); --full and CI always lint the whole scope.
-JS_LINT_FILES='^(web/static/js|web/test|sidecars/eink-renderer|scripts/perf)/.*\.(js|mjs|cjs)$'
+JS_LINT_FILES='^(web/static/js|sidecars/eink-renderer|scripts/perf)/.*\.(js|mjs|cjs)$'
 JS_LINT_CONFIG='^(eslint\.config\.js|package(-lock)?\.json|scripts/verify\.sh)$'
 
 run_js_lint() {
@@ -646,29 +646,12 @@ if [ "$MODE" = "staged" ]; then
         if echo "$STAGED_FILES" | grep -q -E '^scripts/build-metadata(\.test)?\.cjs$'; then
             staged_node_tests="${staged_node_tests:+$staged_node_tests }scripts/build-metadata.test.cjs"
         fi
-        staged_web_tests=$(echo "$STAGED_FILES" | grep -E '^web/test/.*\.test\.js$' | while read -r tf; do
-            [ -f "$REPO_ROOT/$tf" ] && echo "$tf"
-        done)
-        if [ -n "$staged_web_tests" ]; then
-            staged_node_tests="${staged_node_tests:+$staged_node_tests }$staged_web_tests"
-        fi
         if echo "$STAGED_FILES" | grep -q -E '^scripts/perf/'; then
-            staged_node_tests="${staged_node_tests:+$staged_node_tests }web/test/check_budget.test.js web/test/perf-swipe-point.test.js"
+            staged_node_tests="${staged_node_tests:+$staged_node_tests }scripts/perf/check-budget.test.js scripts/perf/swipe-point.test.js scripts/perf/perf.test.js"
         fi
-        if echo "$STAGED_FILES" | grep -q -E '^web/(templates/display\.html|static/css/hud\.css|static/js/display\.js)$'; then
-            staged_node_tests="${staged_node_tests:+$staged_node_tests }web/test/clock.test.js web/test/cursor.test.js web/test/header_video.test.js web/test/next_event.test.js web/test/reload.test.js web/test/style_heartbeat.test.js web/test/tasks.test.js web/test/theme.test.js web/test/video_hud.test.js web/test/carousel_node.test.js"
+        if echo "$STAGED_FILES" | grep -q -E '^web/static/js/perf\.js$'; then
+            staged_node_tests="${staged_node_tests:+$staged_node_tests }scripts/perf/perf.test.js"
         fi
-        if echo "$STAGED_FILES" | grep -q -E '^web/static/js/carousel\.js$'; then
-            staged_node_tests="${staged_node_tests:+$staged_node_tests }web/test/carousel_hydration_marker.test.js web/test/carousel_node.test.js web/test/carousel_swipe_follow.test.js web/test/photo_carousel.test.js"
-        fi
-        if echo "$STAGED_FILES" | grep -q -E '^web/static/js/audio\.js$'; then
-            staged_node_tests="${staged_node_tests:+$staged_node_tests }web/test/audio.test.js web/test/voice.test.js"
-        fi
-        for js_mod in calendar_family live_view perf sse video video_hud voice waveform; do
-            if echo "$STAGED_FILES" | grep -q -E "^web/static/js/${js_mod}\.js$"; then
-                staged_node_tests="${staged_node_tests:+$staged_node_tests }web/test/${js_mod}.test.js"
-            fi
-        done
         if [ -n "$staged_node_tests" ]; then
             # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
             staged_node_tests=$(printf '%s\n' $staged_node_tests | sort -u)

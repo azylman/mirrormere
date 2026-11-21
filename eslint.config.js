@@ -1,7 +1,7 @@
 // Root ESLint config for Mirrormere's vanilla JS outside web/ui. web/ui keeps
 // its own type-checked config and is linted from there, so it is ignored here.
 // CommonJS on purpose: the root package.json must not set "type": "module",
-// because web/test and sidecars/eink-renderer are CommonJS run by node --test.
+// because scripts/perf tests and sidecars/eink-renderer are CommonJS run by node --test.
 const js = require('@eslint/js');
 const globals = require('globals');
 
@@ -31,8 +31,7 @@ module.exports = [
     linterOptions: { reportUnusedDisableDirectives: 'error' },
   },
   {
-    // Classic browser scripts loaded by web/templates; each also exports via
-    // `module.exports` behind a `typeof module` guard for web/test.
+    // Classic browser scripts served from web/static/js.
     files: ['web/static/js/**/*.js'],
     languageOptions: {
       sourceType: 'script',
@@ -47,9 +46,7 @@ module.exports = [
     },
   },
   {
-    // node --test suites for web/static/js; they stub window/document on
-    // globalThis and then exercise the browser scripts against them.
-    files: ['web/test/**/*.js'],
+    files: ['scripts/perf/**/*.test.js'],
     languageOptions: {
       sourceType: 'commonjs',
       globals: { ...globals.node, ...globals.browser },

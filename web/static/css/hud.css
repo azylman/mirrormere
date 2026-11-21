@@ -154,11 +154,8 @@ body[data-theme="night"],
 }
 
 /* Night Mode Component Overrides */
-[data-theme="night"] .header-pill,
 [data-theme="night"] .weather-pill,
-[data-theme="night"] .status-pill,
-[data-theme="night"] .next-event-pill,
-[data-theme="night"] .header-clock-pill {
+[data-theme="night"] .next-event-pill {
   background: rgba(71, 65, 94, 0.85);
   border-color: rgba(197, 163, 255, 0.2);
   color: var(--mm-text-body);
@@ -337,31 +334,9 @@ body[data-theme="night"],
   color: var(--mm-lavender);
 }
 
-[data-theme="night"] .calendar-family-card,
-[data-theme="night"] .calendar-feed-container,
-[data-theme="night"] .tasks-card,
-[data-theme="night"] .weather-forecast-card,
-[data-theme="night"] .photo-frame-card {
+[data-theme="night"] .calendar-feed-container {
   background: var(--mm-bg-card);
   border-color: var(--mm-card-border);
-}
-
-[data-theme="night"] .calendar-day-header {
-  color: var(--mm-lavender);
-  background: transparent;
-}
-
-[data-theme="night"] .calendar-grid-cell {
-  background: var(--mm-bg-surface);
-  border-color: var(--mm-divider);
-}
-
-[data-theme="night"] .calendar-grid-cell.other-month {
-  opacity: 0.35;
-}
-
-[data-theme="night"] .calendar-grid-cell.today {
-  border-color: var(--mm-cal-today-border, var(--mm-lavender));
 }
 
 [data-theme="night"] .cf-day.cf-today {
@@ -387,7 +362,6 @@ body[data-theme="night"],
   color: var(--mm-cal-today-badge-text, #3b364c);
 }
 
-[data-theme="night"] .view-toggle-btn,
 [data-theme="night"] .cf-view-switcher {
   background: rgba(59, 54, 76, 0.85);
   border: 1px solid rgba(197, 163, 255, 0.18);
@@ -402,7 +376,6 @@ body[data-theme="night"],
   color: var(--mm-text-title);
 }
 
-[data-theme="night"] .view-toggle-btn.active,
 [data-theme="night"] .cf-view-btn.active {
   background: var(--mm-coral);
   color: #3b364c;
@@ -410,21 +383,8 @@ body[data-theme="night"],
   box-shadow: 0 2px 6px rgba(20, 16, 32, 0.4);
 }
 
-[data-theme="night"] .nav-arrow-btn {
-  background: var(--mm-bg-surface);
-  border-color: var(--mm-card-border);
-  color: var(--mm-text-title);
-}
-
-[data-theme="night"] .nav-today-btn {
-  background: var(--mm-bg-surface);
-  border-color: var(--mm-card-border);
-  color: var(--mm-lavender);
-}
-
 [data-theme="night"] .task-item,
-[data-theme="night"] .task-item-active,
-[data-theme="night"] .forecast-day-card {
+[data-theme="night"] .task-item-active {
   background: var(--mm-bg-surface);
   border-color: var(--mm-card-border);
 }
@@ -641,19 +601,6 @@ body[data-theme="night"],
   color: var(--mm-lavender);
 }
 
-[data-theme="night"] .video-hud-play-primary {
-  background: var(--mm-coral);
-  color: #3b364c;
-  border-color: var(--mm-coral);
-  box-shadow: 0 4px 16px rgba(255, 133, 127, 0.45);
-}
-
-[data-theme="night"] .video-hud-play-primary:hover {
-  background: #ff9994;
-  border-color: #ff9994;
-  color: #3b364c;
-}
-
 [data-theme="night"] .video-hud-skip,
 [data-theme="night"] .video-hud-media-btn {
   color: var(--mm-lavender);
@@ -695,7 +642,6 @@ body[data-theme="night"],
   border: none;
   box-shadow: none;
 }
-
 
 /* Base Body & Reset */
 html, body {
@@ -1339,24 +1285,6 @@ button, .touch-target {
   background-color: #000;
 }
 
-.video-error-slot {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  background: #181524;
-  color: var(--mm-rose);
-  font-family: var(--mm-font-family);
-  font-size: 1rem;
-  font-weight: 700;
-  gap: 8px;
-  padding: 16px;
-  box-sizing: border-box;
-  text-align: center;
-}
-
 /* Video Stream Loading Spinner & Wake Animation */
 .video-stream-spinner {
   position: absolute;
@@ -1695,14 +1623,6 @@ button, .touch-target {
   transform: translateY(-50%) scale(1);
 }
 
-.video-hud-button-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: nowrap;
-  gap: 12px;
-}
-
 /* Center Play/Pause Floating Action Button */
 .video-hud-play-center {
   position: absolute;
@@ -1749,17 +1669,6 @@ button, .touch-target {
   align-items: center;
   justify-content: center;
   font-size: 2.5rem;
-}
-
-.video-hud-play-primary {
-  background: var(--mm-coral);
-  color: #ffffff;
-  border-color: var(--mm-coral);
-  box-shadow: 0 4px 14px rgba(255, 111, 89, 0.35);
-}
-
-.video-hud-play-primary:hover {
-  background: #ff5a43;
 }
 
 /* Action Buttons */
@@ -2204,8 +2113,7 @@ button, .touch-target {
 }
 
 /* Day Divider */
-.calendar-day-divider,
-.calendar-day-header {
+.calendar-day-divider {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2213,8 +2121,7 @@ button, .touch-target {
   margin-top: 4px;
 }
 
-.calendar-day-divider:first-child,
-.calendar-day-header:first-child {
+.calendar-day-divider:first-child {
   margin-top: 0;
   padding-top: 0;
 }
@@ -2252,20 +2159,6 @@ button, .touch-target {
   flex: 1;
   height: 1px;
   background: var(--mm-divider);
-}
-
-.day-rel {
-  font-size: 0.85rem;
-  font-weight: 800;
-  color: var(--mm-coral);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.day-full {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--mm-text-dim);
 }
 
 /* Calendar Event Item */
@@ -2436,10 +2329,6 @@ button, .touch-target {
   text-overflow: ellipsis;
 }
 
-.event-meta-row {
-  display: none !important;
-}
-
 .calendar-empty, .tasks-empty, .photo-empty, .cf-empty {
   display: flex;
   flex-direction: column;
@@ -2497,12 +2386,6 @@ button, .touch-target {
   justify-content: center;
   flex-shrink: 0;
   box-shadow: 0 1px 3px rgba(56, 178, 143, 0.12);
-}
-
-.tasks-title-stack {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
 }
 
 .tasks-title, .weather-header-title, .cf-range-label {
@@ -3157,7 +3040,6 @@ button, .touch-target {
   50% { transform: translateZ(0) scale(1.001); opacity: 1; }
   100% { transform: translateZ(0) scale(1); opacity: 0.999; }
 }
-
 
 /* Voice waveform mouth (waveform.js): bottom-right, shown while speaking with fresh reply levels. */
 .mm-voice-waveform {
