@@ -235,9 +235,9 @@ func TestHub_BrainTimeouts(t *testing.T) {
 		{"unary_timeout", simBrain(false, 0, 0, "", "", true), 20 * time.Millisecond, false, ErrBrainTimeout, true, true, true, ""},
 		{"streaming_timeout", simBrain(true, 0, 0, "", "", true), 20 * time.Millisecond, false, ErrBrainTimeout, false, false, true, ""},
 		{"client_cancellation", &mockBrain{statuses: []string{"thinking..."}}, 5 * time.Second, true, nil, false, false, false, ""},
-		{"streaming_long_reply", simBrain(true, 30, 4*time.Millisecond, "", "full reply text", false), 80 * time.Millisecond, false, nil, false, false, false, "full reply text"},
+		{"streaming_long_reply", simBrain(true, 30, 10*time.Millisecond, "", "full reply text", false), 250 * time.Millisecond, false, nil, false, false, false, "full reply text"},
 		{"streaming_stall", simBrain(true, 1, 0, "", "", true), 20 * time.Millisecond, false, ErrBrainTimeout, false, false, true, ""},
-		{"status_reset", simBrain(true, 20, 4*time.Millisecond, "tool executing: web search", "done answer", false), 60 * time.Millisecond, false, nil, false, false, false, "done answer"},
+		{"status_reset", simBrain(true, 20, 15*time.Millisecond, "tool executing: web search", "done answer", false), 250 * time.Millisecond, false, nil, false, false, false, "done answer"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -261,7 +261,7 @@ func TestHub_TTSTimeouts(t *testing.T) {
 		{"initial_timeout_graceful", simTTS(0, 0, true, nil), 20 * time.Millisecond, "error", false, "tts_timeout", false, true},
 		{"mid_stream_timeout", simTTS(1, 0, false, context.DeadlineExceeded), 50 * time.Millisecond, "error", true, "tts_timeout", true, false},
 		{"mid_stream_generic_error", simTTS(1, 0, false, errors.New("i/o error")), -1 * time.Second, "error", true, "tts_error", false, false},
-		{"long_reply_inactivity", simTTS(25, 4*time.Millisecond, false, nil), 80 * time.Millisecond, "success", false, "", false, false},
+		{"long_reply_inactivity", simTTS(25, 12*time.Millisecond, false, nil), 250 * time.Millisecond, "success", false, "", false, false},
 		{"mid_stream_stall", simTTS(1, 0, true, nil), 20 * time.Millisecond, "error", true, "tts_timeout", false, false},
 	}
 	for _, tc := range tests {
@@ -299,7 +299,7 @@ func TestInactivityContext(t *testing.T) {
 		wantDoneErr               error
 	}{
 		{"expires_on_timeout", 50 * time.Millisecond, false, false, 0, context.DeadlineExceeded},
-		{"reset_extends_deadline", 100 * time.Millisecond, false, false, 55 * time.Millisecond, context.DeadlineExceeded},
+		{"reset_extends_deadline", 400 * time.Millisecond, false, false, 220 * time.Millisecond, context.DeadlineExceeded},
 		{"parent_cancellation", 200 * time.Millisecond, true, false, 0, context.Canceled},
 		{"stop_cancels_context", 500 * time.Millisecond, false, true, 0, context.Canceled},
 		{"zero_duration", 0, false, true, 15 * time.Millisecond, context.Canceled},

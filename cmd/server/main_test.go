@@ -401,7 +401,7 @@ func runDaemonSmokeEndpoints(t *testing.T, baseURL string) {
 		{"/api/audio", `"volume":75`, 200},
 		{"/api/video/state", `"mode":"widgets"`, 200},
 		{"/display", "static/ui/app.js", 200},
-		{"/display?ui=legacy", "mirrormere-app", 200},
+		{"/display?ui=react", "static/ui/app.js", 200},
 		{"/style.css", "", 200},
 	}
 	for _, ep := range endpoints {

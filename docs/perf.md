@@ -6,9 +6,9 @@ a summary. Use both to compare changes against the same baseline.
 
 ## What is measured
 
-All timings are milliseconds. The legacy and React displays both record them when the page is
-loaded with `?perf=1` (`/display?perf=1` and `/display?ui=react&perf=1`). Each sample is tagged
-`ui="react"` when the React bundle is in the page and `ui="legacy"` otherwise.
+All timings are milliseconds. The display records them when the page is loaded with `?perf=1`
+(`/display?perf=1`). Each sample is tagged `ui="react"` when the React bundle is in the page and
+`ui="legacy"` otherwise; the server now serves only the React shell, so samples are `react`.
 
 | Metric | Measures |
 | --- | --- |
@@ -47,8 +47,6 @@ with a 1 s gap. It prints `window.__mmPerf.snapshot()` as JSON on stdout, plus
 out the cold-load tasks in the snapshot. Progress messages go to stderr, so the output can be
 piped into a file.
 
-For the React display, use `--url 'http://localhost:8080/display?ui=react'`.
-
 `--swipe-x <px>` and `--swipe-y <px>` set the centre of each swipe (default: the viewport centre).
 Before each swipe the bench reads the rects of the swipe-blocking elements and of the widgets in
 `#grid-canvas`, and `scripts/perf/swipe-point.mjs` moves the centre off a blocking element onto the
@@ -61,10 +59,10 @@ which usually means the swipe centre is on a blocking widget.
 
 The performance budget check (`scripts/perf/bench.mjs` + `scripts/perf/check-budget.mjs`) is run manually
 against a local server rather than as an active job in `.github/workflows/ci.yml`. It runs the bench at 4x CPU
-throttle with 20 swipes against `/display?ui=react`, and then runs `scripts/perf/check-budget.mjs`:
+throttle with 20 swipes against `/display`, and then runs `scripts/perf/check-budget.mjs`:
 
 ```sh
-node scripts/perf/bench.mjs --url 'http://localhost:8080/display?ui=react&perf=1' --cpu-throttle 4 --swipes 20 > bench.json
+node scripts/perf/bench.mjs --url 'http://localhost:8080/display?perf=1' --cpu-throttle 4 --swipes 20 > bench.json
 node scripts/perf/check-budget.mjs --bench bench.json --budget scripts/perf/budget.json --app-js web/static/ui/app.js
 ```
 
@@ -149,7 +147,7 @@ The payload carries timings only, no user data.
 
 ## Loading behaviour
 
-`static/js/perf.js` is included only when the display page is requested with `?perf=1`, on both
-`display.html` and `display_react.html`. Without the parameter, the page loads no perf script.
+`static/js/perf.js` is included only when the display page (`display_react.html`) is requested
+with `?perf=1`. Without the parameter, the page loads no perf script.
 The legacy `carousel.js` and the React carousel both set `body.dataset.animating` during
 transitions; perf.js reads it for `frame` and, in React mode, for `swipe_settle`.

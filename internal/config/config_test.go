@@ -545,30 +545,27 @@ func TestDisplayUI(t *testing.T) {
 	tests := []struct {
 		name    string
 		yaml    string
-		wantUI  string
 		wantErr string
 	}{
-		{name: "omitted defaults to react", yaml: withBaseYAML(""), wantUI: "react"},
-		{name: "explicit legacy", yaml: withBaseYAML("  ui: legacy\n"), wantUI: "legacy"},
-		{name: "react", yaml: withBaseYAML("  ui: react\n"), wantUI: "react"},
-		{name: "react normalized case and whitespace", yaml: withBaseYAML("  ui: \" React \"\n"), wantUI: "react"},
-		{name: "unknown shell rejected", yaml: withBaseYAML("  ui: vue\n"), wantErr: "invalid display ui 'vue': must be one of legacy, react"},
+		{name: "omitted defaults to react", yaml: withBaseYAML("")},
+		{name: "react", yaml: withBaseYAML("  ui: react\n")},
+		{name: "react normalized case and whitespace", yaml: withBaseYAML("  ui: \" React \"\n")},
+		{name: "legacy rejected", yaml: withBaseYAML("  ui: legacy\n"), wantErr: "display ui 'legacy' is no longer supported: the legacy shell was removed"},
+		{name: "legacy rejected regardless of case", yaml: withBaseYAML("  ui: Legacy\n"), wantErr: "display ui 'legacy' is no longer supported"},
+		{name: "unknown shell rejected", yaml: withBaseYAML("  ui: vue\n"), wantErr: "invalid display ui 'vue': must be react"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cfg, err := config.ParseWithEnv([]byte(tc.yaml), nil)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("error: got %v, want substring %q", err, tc.wantErr)
+			_, err := config.ParseWithEnv([]byte(tc.yaml), nil)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got := cfg.Display.GetUI(); got != tc.wantUI {
-				t.Fatalf("GetUI: got %q, want %q", got, tc.wantUI)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error: got %v, want substring %q", err, tc.wantErr)
 			}
 		})
 	}

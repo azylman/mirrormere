@@ -89,7 +89,7 @@ type Config struct {
 
 // DisplayConfig specifies visual presentation, rotation parameters, and active widget instances.
 type DisplayConfig struct {
-	UI                 string              `yaml:"ui,omitempty"` // "react" (default) or "legacy"; ?ui= on /display overrides
+	UI                 string              `yaml:"ui,omitempty"` // only "react" (the default) is accepted; the legacy shell was removed
 	HideCursor         bool                `yaml:"hide_cursor,omitempty"`
 	RemoteURL          string              `yaml:"remote_url,omitempty"`
 	AllowLayoutEdit    *bool               `yaml:"allow_layout_edit,omitempty"`
@@ -100,11 +100,6 @@ type DisplayConfig struct {
 	Widgets            []WidgetConfig      `yaml:"widgets"`
 	Theme              *ThemeConfig        `yaml:"theme,omitempty"`
 	Voice              *DisplayVoiceConfig `yaml:"voice,omitempty"`
-}
-
-// GetUI returns the display shell selected by config: "react" (default) or "legacy".
-func (dc DisplayConfig) GetUI() string {
-	return strings.ToLower(trimmedOr(dc.UI, "react"))
 }
 
 // IsLayoutEditAllowed returns true if live canvas layout editing is permitted (default true).
@@ -798,12 +793,16 @@ func (c *Config) validateTheme() error {
 	return nil
 }
 
+// validateUI accepts an omitted display.ui or "react", the only display shell. "legacy" gets its
+// own error because that shell was removed; on reload the LKGC keeps the previous config.
 func (c *Config) validateUI() error {
-	switch ui := c.Display.GetUI(); ui {
-	case "legacy", "react":
+	switch strings.ToLower(trimmedOr(c.Display.UI, "react")) {
+	case "react":
 		return nil
+	case "legacy":
+		return fmt.Errorf("display ui 'legacy' is no longer supported: the legacy shell was removed; remove display.ui or set it to react")
 	default:
-		return fmt.Errorf("invalid display ui '%s': must be one of legacy, react", c.Display.UI)
+		return fmt.Errorf("invalid display ui '%s': must be react", c.Display.UI)
 	}
 }
 
