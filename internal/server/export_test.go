@@ -21,19 +21,6 @@ func (s *Server) Addr() string {
 	return s.addr
 }
 
-// SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
-func SetWriteCountersDirForTest(fn func(string) error) func() {
-	writeCountersDirMu.Lock()
-	prev := writeCountersDirFn
-	writeCountersDirFn = fn
-	writeCountersDirMu.Unlock()
-	return func() {
-		writeCountersDirMu.Lock()
-		writeCountersDirFn = prev
-		writeCountersDirMu.Unlock()
-	}
-}
-
 // ResolveSupportedDimensionsForTest exports resolveSupportedDimensions for testing.
 func (h *DefaultLayoutEditorHandler) ResolveSupportedDimensionsForTest(wType string, dim domain.Dimension, pkgs map[string]*domain.Package) [][]int {
 	return h.resolveSupportedDimensions(wType, dim, pkgs)

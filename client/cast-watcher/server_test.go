@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -47,18 +45,6 @@ func (m *mockMediaActionSender) GetStatus() StatusSnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.status
-}
-
-func SetWriteCountersDirForTest(fn func(string) error) func() {
-	writeCountersDirMu.Lock()
-	defer writeCountersDirMu.Unlock()
-	prev := writeCountersDirFn
-	writeCountersDirFn = fn
-	return func() {
-		writeCountersDirMu.Lock()
-		defer writeCountersDirMu.Unlock()
-		writeCountersDirFn = prev
-	}
 }
 
 func TestActionServer_HandleAction(t *testing.T) {
@@ -158,34 +144,6 @@ func (*errResponseWriter) WriteHeader(statusCode int) {}
 func TestWriteJSON_Error(t *testing.T) {
 	t.Parallel()
 	writeJSON(&errResponseWriter{header: make(http.Header)}, http.StatusOK, map[string]string{"foo": "bar"})
-}
-
-func TestActionServer_HandleCoverageFlush(t *testing.T) {
-	server := NewActionServer(ServerConfig{Port: 0}, &mockMediaActionSender{})
-	tests := []struct {
-		name, method, wantSub string
-		writeErr              error
-		wantCode              int
-	}{
-		{name: "method_not_allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed},
-		{name: "valid_flush_tar", method: http.MethodPost, wantCode: http.StatusOK, wantSub: "covcounters.test"},
-		{name: "write_error_500", method: http.MethodGet, writeErr: errors.New("write failed"), wantCode: http.StatusInternalServerError, wantSub: "write failed"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			defer SetWriteCountersDirForTest(func(dir string) error {
-				if tc.writeErr != nil {
-					return tc.writeErr
-				}
-				return os.WriteFile(filepath.Join(dir, "covcounters.test"), []byte("cov"), 0o600)
-			})()
-			rec := httptest.NewRecorder()
-			server.mux.ServeHTTP(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", http.NoBody))
-			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
-				t.Fatalf("got code %d body %q, want %d %q", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
-			}
-		})
-	}
 }
 
 func TestExtractTargetTime(t *testing.T) {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,10 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"runtime/coverage"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/azylman/mirrormere/internal/covflush"
@@ -32,13 +29,6 @@ type ServerConfig struct {
 	Port   int
 	Logger *slog.Logger
 }
-
-var (
-	flushMu            sync.Mutex
-	writeCountersDirMu sync.RWMutex
-	writeMetaDirFn     = coverage.WriteMetaDir
-	writeCountersDirFn = coverage.WriteCountersDir
-)
 
 // ActionServer handles incoming transport webhook actions and health probes.
 type ActionServer struct {
@@ -65,7 +55,7 @@ func NewActionServer(cfg ServerConfig, client MediaActionSender) *ActionServer {
 	s := &ActionServer{cfg: cfg, client: client, mux: mux, logger: cfg.Logger}
 	mux.HandleFunc("/action", s.handleAction)
 	mux.HandleFunc("/healthz", s.handleHealthz)
-	mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
+	mux.HandleFunc("/debug/coverage/flush", covflush.Handler())
 	s.server = &http.Server{Addr: fmt.Sprintf("%s:%d", cfg.Host, cfg.Port), Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 1 << 20}
 	return s
 }
@@ -159,32 +149,6 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-func (s *ActionServer) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		w.Header().Set("Allow", "GET, POST")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	flushMu.Lock()
-	defer flushMu.Unlock()
-
-	writeCountersDirMu.RLock()
-	metaFn, fn := writeMetaDirFn, writeCountersDirFn
-	writeCountersDirMu.RUnlock()
-
-	var buf bytes.Buffer
-	if err := covflush.WriteArchive(&buf, metaFn, fn); err != nil {
-		s.logger.Error("coverage flush failed", "error", err)
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/x-tar")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(buf.Bytes()); err != nil {
-		return
 	}
 }
 

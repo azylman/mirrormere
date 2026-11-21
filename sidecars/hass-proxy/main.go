@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/azylman/mirrormere/internal/runutil"
 )
 
 var (
@@ -105,7 +107,7 @@ func RunWithReady(
 	} else {
 		listener = l
 	}
-	defer closeListenerSafe(listener, logger)
+	defer runutil.CloseListener(listener, logger)
 
 	if readyChan != nil {
 		close(readyChan)
@@ -129,15 +131,6 @@ func RunWithReady(
 		return nil
 	case err := <-errChan:
 		return err
-	}
-}
-
-func closeListenerSafe(l net.Listener, logger *slog.Logger) {
-	if l == nil {
-		return
-	}
-	if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		logger.Debug("listener close", "error", err)
 	}
 }
 
