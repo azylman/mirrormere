@@ -44,8 +44,8 @@ See `README.md` for the product overview.
 
 ## web/ui/ (React display shell)
 
-`web/ui/` is the Vite + React 19 + TypeScript (strict) source for the React display shell, served at
-`/display?ui=react` (or `display.ui: react` in config). Running `git add -A && sh scripts/verify.sh --staged`
+`web/ui/` is the Vite + React 19 + TypeScript (strict) source for the React display shell, the only
+display shell, served at `/display` (`?ui=react` is still accepted and ignored). Running `git add -A && sh scripts/verify.sh --staged`
 from the repository root automatically executes the full `web/ui/` verification pipeline (`npm ci` when
 `node_modules` is missing, per-widget CSS co-location check, `npm run lint`, `npm run deadcode`,
 `npm run typecheck`, `npm run test:coverage`, and `npm run build`) inside a subshell whenever `web/ui/` files

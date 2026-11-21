@@ -2,7 +2,7 @@
   "name": "mirrormere-ui",
   "private": true,
   "version": "0.1.0",
-  "description": "React display shell for Mirrormere, served behind /display?ui=react",
+  "description": "React display shell for Mirrormere, served at /display",
   "type": "module",
   "engines": {
     "node": ">=22 <23"

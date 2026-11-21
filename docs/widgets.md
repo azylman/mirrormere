@@ -3,8 +3,8 @@
 ## Rendering under the React UI
 
 A widget package is a directory with `manifest.yaml` and `views/widget.html`, plus an optional `assets/`
-directory. Built-in packages live in `widgets/`, custom ones in `/config/widgets/`. Both the legacy page
-(`/display`) and the React shell (`/display?ui=react`) render the same server fragment from
+directory. Built-in packages live in `widgets/`, custom ones in `/config/widgets/`. The React shell
+(`/display`) renders a package without a React component from the server fragment at
 `GET api/widgets/{id}/render`.
 
 The React shell looks up a component for each widget type in `WIDGET_COMPONENTS`
@@ -13,12 +13,12 @@ The React shell looks up a component for each widget type in `WIDGET_COMPONENTS`
 any React code. `LegacyWidget`:
 
 - fetches the fragment on mount and again when the widget's `timestamp` changes (the `widget.update`
-  signal). It passes the page's `node` query parameter, as the legacy page does. Each request has its own
+  signal). It passes the page's `node` query parameter. Each request has its own
   `AbortController`, and the previous one is aborted before a new fetch and on unmount.
 - while its pane is not current, keeps its content and does not re-fetch on update. It fetches once when
   the pane becomes current, if the timestamp changed meanwhile.
 - inserts the fragment's `.widget-card` into a container it owns, with `replaceChildren`. React never
-  reconciles the legacy DOM. Sibling `<style>` and `<script>` nodes move into the card. A
+  reconciles the fragment's DOM. Sibling `<style>` and `<script>` nodes move into the card. A
   `<script type="application/json">` block stays in the card as inert data for controllers to read.
 - replaces a `<img onload="window.MirrormereX.mount(this.closest('...'))">` hook with an explicit call.
   The first global named in the hook that is defined gets `mount(element)` after the card is in the

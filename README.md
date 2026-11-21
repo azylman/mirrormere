@@ -60,7 +60,7 @@ mirrormere/
 │   └── server/             # mirrormere-core entrypoint binary (main.go)
 ├── internal/               # Private Go core application packages (api, config, layout, providers, storage)
 ├── widgets/                # Core widget packages (manifest.yaml, views/widget.html, assets/)
-├── web/                    # Web display client runtime (static CSS/JS HUD tokens, display.html shell)
+├── web/                    # Web display client runtime (static CSS/JS HUD tokens, display_react.html shell)
 ├── sidecars/               # Off-device server sidecars (eink-renderer, voice-fingerprinter, hass-proxy)
 ├── client/                 # On-device hardware daemons (ear, remote, cast-watcher, eink-node)
 ├── deploy/                 # Docker Compose manifests, go2rtc config, and host display launch units

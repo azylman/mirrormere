@@ -16,8 +16,8 @@ location:
 
 # Display and layout configuration
 display:
-  # Display shell served at /display: "react" (display_react.html + web/static/ui/app.js, default) or "legacy" (display.html).
-  # The ?ui=react or ?ui=legacy query parameter overrides this per request.
+  # Display shell served at /display. Only "react" (display_react.html + web/static/ui/app.js) is
+  # accepted and it is the default; "legacy" is rejected because that shell was removed.
   ui: "react"
 
   # Live canvas layout editing and atomic disk override file path (optional)

@@ -11,13 +11,26 @@ import (
 	"github.com/azylman/mirrormere/internal/display"
 )
 
+// writeTemplate writes content to a fresh display template file and returns a HandlerOption
+// pointing the handler at it with no local fallback.
+func writeTemplate(t *testing.T, content []byte) display.HandlerOption {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "display_react.html")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+	return display.WithTemplatePath(path)
+}
+
 func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
-	primPath := filepath.Join(tempDir, "display.html")
+	primPath := filepath.Join(tempDir, "display_react.html")
 	localPath := filepath.Join(tempDir, "local.html")
+	malformedPath := filepath.Join(tempDir, "malformed.html")
 	_ = os.WriteFile(primPath, []byte("<h1>primary</h1>"), 0o644)
 	_ = os.WriteFile(localPath, []byte("<h1>local</h1>"), 0o644)
+	_ = os.WriteFile(malformedPath, []byte("<div>{{ bad"), 0o644)
 
 	tests := []struct {
 		name     string
@@ -29,10 +42,9 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 	}{
 		{"options", http.MethodOptions, "default", http.StatusNoContent, "", false},
 		{"post_not_allowed", http.MethodPost, "default", http.StatusMethodNotAllowed, `"status":"error"`, false},
-		{"head_ok", http.MethodHead, "content", http.StatusOK, "", true},
+		{"head_ok", http.MethodHead, "primary", http.StatusOK, "", true},
 		{"primary_path", http.MethodGet, "primary", http.StatusOK, "<h1>primary</h1>", false},
 		{"local_fallback", http.MethodGet, "local", http.StatusOK, "<h1>local</h1>", false},
-		{"template_content", http.MethodGet, "content", http.StatusOK, "<h1>content</h1>", false},
 		{"malformed_syntax", http.MethodGet, "malformed", http.StatusOK, "<div>{{ bad", false},
 		{"not_found", http.MethodGet, "missing", http.StatusNotFound, `"status":"error"`, false},
 	}
@@ -40,18 +52,15 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var h *display.Handler
-			legacyOpt := display.WithUIProvider(func() string { return "legacy" })
 			switch tc.kind {
 			case "primary":
-				h = display.NewHandler(legacyOpt, display.WithTemplatePath(primPath), display.WithLocalTemplatePath(""))
+				h = display.NewHandler(display.WithTemplatePath(primPath), display.WithLocalTemplatePath(""))
 			case "local":
-				h = display.NewHandler(legacyOpt, display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath(localPath))
-			case "content":
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent([]byte("<h1>content</h1>")))
+				h = display.NewHandler(display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath(localPath))
 			case "malformed":
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent([]byte("<div>{{ bad")))
+				h = display.NewHandler(display.WithTemplatePath(malformedPath), display.WithLocalTemplatePath(""))
 			case "missing":
-				h = display.NewHandler(legacyOpt, display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath("/no/such/local"))
+				h = display.NewHandler(display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath("/no/such/local"))
 			default:
 				h = display.NewHandler()
 			}
@@ -73,18 +82,18 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 	}
 }
 
-func buildTzAndCursorHandler(t *testing.T, mode string, tmpl []byte, legacyOpt display.HandlerOption, wantGetter string) (*display.Handler, bool) {
+func buildTzAndCursorHandler(t *testing.T, mode string, tmplOpt display.HandlerOption, wantGetter string) (*display.Handler, bool) {
 	t.Helper()
 	switch mode {
 	case "static_tz":
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithTimezoneProvider(func() string { return "America/Los_Angeles" }))
+		h := display.NewHandler(tmplOpt, display.WithTimezoneProvider(func() string { return "America/Los_Angeles" }))
 		if h.Timezone() != wantGetter {
 			t.Fatalf("tz getter: got %s, want %s", h.Timezone(), wantGetter)
 		}
 		return h, true
 	case "dyn_tz":
 		tz := "Europe/London"
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithTimezoneProvider(func() string { return tz }))
+		h := display.NewHandler(tmplOpt, display.WithTimezoneProvider(func() string { return tz }))
 		if h.Timezone() != "Europe/London" {
 			t.Fatalf("tz initial: got %s, want Europe/London", h.Timezone())
 		}
@@ -95,20 +104,20 @@ func buildTzAndCursorHandler(t *testing.T, mode string, tmpl []byte, legacyOpt d
 		tz = "Europe/London"
 		return h, true
 	case "static_hide":
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return true }))
+		h := display.NewHandler(tmplOpt, display.WithHideCursorProvider(func() bool { return true }))
 		if !h.HideCursor() {
 			t.Fatalf("hide getter: expected true")
 		}
 		return h, true
 	case "static_unhide":
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return false }))
+		h := display.NewHandler(tmplOpt, display.WithHideCursorProvider(func() bool { return false }))
 		if h.HideCursor() {
 			t.Fatalf("hide getter: expected false")
 		}
 		return h, true
 	case "dyn_hide", "set_hide":
 		val := false
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return val }))
+		h := display.NewHandler(tmplOpt, display.WithHideCursorProvider(func() bool { return val }))
 		val = true
 		if !h.HideCursor() {
 			t.Fatalf("hide getter: expected true")
@@ -119,32 +128,32 @@ func buildTzAndCursorHandler(t *testing.T, mode string, tmpl []byte, legacyOpt d
 	}
 }
 
-func buildMediaAndThemeHandler(t *testing.T, mode string, tmpl []byte, legacyOpt display.HandlerOption, wantGetter string) (*display.Handler, bool) {
+func buildMediaAndThemeHandler(t *testing.T, mode string, tmplOpt display.HandlerOption, wantGetter string) (*display.Handler, bool) {
 	t.Helper()
 	switch mode {
 	case "static_video":
 		vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "cam1", StreamURL: "http://cam.lan", ControlURL: "http://ctrl.lan", Type: "webrtc"}
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
+		h := display.NewHandler(tmplOpt, display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
 		if h.HeaderVideo() != vData {
 			t.Fatalf("video getter mismatch")
 		}
 		return h, true
 	case "dyn_video":
 		vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "live-cam"}
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
+		h := display.NewHandler(tmplOpt, display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
 		if h.HeaderVideo().StreamID != wantGetter {
 			t.Fatalf("dyn video getter mismatch")
 		}
 		return h, true
 	case "dyn_theme":
 		th := "night"
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithThemeProvider(func() string { return th }))
+		h := display.NewHandler(tmplOpt, display.WithThemeProvider(func() string { return th }))
 		if h.Theme() != wantGetter {
 			t.Fatalf("theme getter: got %s, want %s", h.Theme(), wantGetter)
 		}
 		return h, true
 	case "dyn_grid":
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithGridProvider(func() string { return "3x6" }))
+		h := display.NewHandler(tmplOpt, display.WithGridProvider(func() string { return "3x6" }))
 		if h.Grid() != wantGetter {
 			t.Fatalf("grid getter: got %s, want %s", h.Grid(), wantGetter)
 		}
@@ -154,24 +163,24 @@ func buildMediaAndThemeHandler(t *testing.T, mode string, tmpl []byte, legacyOpt
 	}
 }
 
-func buildTemplateHandlerForMode(t *testing.T, mode string, tmpl []byte, legacyOpt display.HandlerOption, wantGetter string) *display.Handler {
+func buildTemplateHandlerForMode(t *testing.T, mode string, tmplOpt display.HandlerOption, wantGetter string) *display.Handler {
 	t.Helper()
-	if h, ok := buildTzAndCursorHandler(t, mode, tmpl, legacyOpt, wantGetter); ok {
+	if h, ok := buildTzAndCursorHandler(t, mode, tmplOpt, wantGetter); ok {
 		return h
 	}
-	if h, ok := buildMediaAndThemeHandler(t, mode, tmpl, legacyOpt, wantGetter); ok {
+	if h, ok := buildMediaAndThemeHandler(t, mode, tmplOpt, wantGetter); ok {
 		return h
 	}
 	switch mode {
 	case "static_remote":
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithRemoteURLProvider(func() string { return "http://remote.lan" }))
+		h := display.NewHandler(tmplOpt, display.WithRemoteURLProvider(func() string { return "http://remote.lan" }))
 		if h.RemoteURL() != wantGetter {
 			t.Fatalf("remote getter: got %s, want %s", h.RemoteURL(), wantGetter)
 		}
 		return h
 	case "dyn_remote":
 		url := "http://dyn.lan"
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithRemoteURLProvider(func() string { return url }))
+		h := display.NewHandler(tmplOpt, display.WithRemoteURLProvider(func() string { return url }))
 		if h.RemoteURL() != "http://dyn.lan" {
 			t.Fatalf("remote initial: got %s, want http://dyn.lan", h.RemoteURL())
 		}
@@ -182,7 +191,7 @@ func buildTemplateHandlerForMode(t *testing.T, mode string, tmpl []byte, legacyO
 		url = "http://dyn.lan"
 		return h
 	default:
-		h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl))
+		h := display.NewHandler(tmplOpt)
 		if h.Timezone() != "UTC" || h.HideCursor() || h.RemoteURL() != "" || h.Theme() != "day" || h.HeaderVideo() != nil {
 			t.Fatalf("defaults mismatch")
 		}
@@ -220,8 +229,7 @@ func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			legacyOpt := display.WithUIProvider(func() string { return "legacy" })
-			h := buildTemplateHandlerForMode(t, tc.mode, tmpl, legacyOpt, tc.wantGetter)
+			h := buildTemplateHandlerForMode(t, tc.mode, writeTemplate(t, tmpl), tc.wantGetter)
 			rec := httptest.NewRecorder()
 			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, http.NoBody))
 			if tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub) {
@@ -240,19 +248,17 @@ func TestGetStatic(t *testing.T) {
 	localDir := t.TempDir()
 
 	files := map[string][]byte{
-		"app.js":                []byte("console.log('primary');"),
-		"test.css":              []byte(".a { color: red; }"),
-		"test.js":               []byte("const x = 1;"),
-		"test.svg":              []byte("<svg></svg>"),
-		"test.png":              {0x89, 'P', 'N', 'G'},
-		"test.jpg":              {0xFF, 0xD8, 0xFF},
-		"test.woff2":            []byte("wOF2"),
-		"test.html":             []byte("<html>test</html>"),
-		"test.bin":              []byte("binary data"),
-		"test.custom":           []byte("custom data"),
-		"js/calendar_family.js": []byte("console.log('calendar controller');"),
+		"app.js":      []byte("console.log('primary');"),
+		"test.css":    []byte(".a { color: red; }"),
+		"test.js":     []byte("const x = 1;"),
+		"test.svg":    []byte("<svg></svg>"),
+		"test.png":    {0x89, 'P', 'N', 'G'},
+		"test.jpg":    {0xFF, 0xD8, 0xFF},
+		"test.woff2":  []byte("wOF2"),
+		"test.html":   []byte("<html>test</html>"),
+		"test.bin":    []byte("binary data"),
+		"test.custom": []byte("custom data"),
 	}
-	_ = os.MkdirAll(filepath.Join(tempDir, "js"), 0o755)
 	for relPath, data := range files {
 		_ = os.WriteFile(filepath.Join(tempDir, relPath), data, 0o644)
 	}
@@ -284,7 +290,6 @@ func TestGetStatic(t *testing.T) {
 		{"local_fallback", http.MethodGet, "theme.css", true, http.StatusOK, "", "background: #000", false},
 		{"head_method", http.MethodHead, "app.js", false, http.StatusOK, "", "", true},
 		{"missing_file", http.MethodGet, "missing.txt", false, http.StatusNotFound, "", `"status":"error"`, false},
-		{"calendar_alias", http.MethodGet, "js/calendar_grid.js", false, http.StatusOK, "", "calendar controller", false},
 		{"mime_css", http.MethodGet, "test.css", false, http.StatusOK, "text/css; charset=utf-8", "", false},
 		{"mime_js", http.MethodGet, "test.js", false, http.StatusOK, "text/javascript; charset=utf-8", "", false},
 		{"mime_svg", http.MethodGet, "test.svg", false, http.StatusOK, "image/svg+xml", "", false},
@@ -323,9 +328,9 @@ func TestGetStatic(t *testing.T) {
 func TestVoiceWaveformProvider(t *testing.T) {
 	t.Parallel()
 	tmpl := []byte(`<body>{{ if and .VoiceWaveform .VoiceWaveform.Enabled }}<wave url="{{ .VoiceWaveform.LevelsURL }}" gain="{{ .VoiceWaveform.Gain }}"></wave>{{ end }}</body>`)
-	legacyOpt := display.WithUIProvider(func() string { return "legacy" })
+	tmplOpt := writeTemplate(t, tmpl)
 
-	h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl))
+	h := display.NewHandler(tmplOpt)
 	if h.VoiceWaveform() != nil {
 		t.Fatal("voice waveform without provider should be nil")
 	}
@@ -336,7 +341,7 @@ func TestVoiceWaveformProvider(t *testing.T) {
 	}
 
 	wave := &display.VoiceWaveformTemplateData{Enabled: true, LevelsURL: "http://127.0.0.1:8765/levels", Gain: 2.2}
-	h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return wave }))
+	h = display.NewHandler(tmplOpt, display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return wave }))
 	if h.VoiceWaveform() != wave {
 		t.Fatal("voice waveform getter did not return provider value")
 	}
@@ -348,7 +353,7 @@ func TestVoiceWaveformProvider(t *testing.T) {
 	}
 
 	disabled := &display.VoiceWaveformTemplateData{Enabled: false, LevelsURL: "http://127.0.0.1:8765/levels", Gain: 2.2}
-	h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return disabled }))
+	h = display.NewHandler(tmplOpt, display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return disabled }))
 	rec = httptest.NewRecorder()
 	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", http.NoBody))
 	if strings.Contains(rec.Body.String(), "<wave") {
@@ -356,38 +361,26 @@ func TestVoiceWaveformProvider(t *testing.T) {
 	}
 }
 
-func TestGetDisplay_UIShellSelection(t *testing.T) {
+// TestGetDisplay_UIQueryIgnored checks that the React shell is the only display shell: the old
+// ?ui= switch (react, legacy or anything else) no longer selects a different page.
+func TestGetDisplay_UIQueryIgnored(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	legacyPath := filepath.Join(dir, "display.html")
-	reactPath := filepath.Join(dir, "display_react.html")
-	_ = os.WriteFile(legacyPath, []byte("LEGACY {{ .Timezone }}"), 0o644)
-	_ = os.WriteFile(reactPath, []byte("REACT {{ .Timezone }} {{ .Grid }}"), 0o644)
+	tmplOpt := writeTemplate(t, []byte("REACT {{ .Timezone }} {{ .Grid }}"))
 
 	tests := []struct {
-		name     string
-		configUI string
-		query    string
-		want     string
+		name  string
+		query string
+		want  string
 	}{
-		{"default is react", "", "", "REACT UTC 6x2"},
-		{"explicit legacy config", "legacy", "", "LEGACY UTC"},
-		{"react config", "react", "", "REACT UTC 6x2"},
-		{"query react overrides legacy config", "legacy", "ui=react", "REACT UTC 6x2"},
-		{"query legacy overrides react config", "react", "ui=legacy", "LEGACY UTC"},
-		{"unknown query value falls back to react config", "react", "ui=bogus", "REACT UTC 6x2"},
-		{"unknown query value falls back to legacy config", "legacy", "ui=bogus", "LEGACY UTC"},
-		{"unknown query value falls back to default react", "", "ui=bogus", "REACT UTC 6x2"},
+		{"no query", "", "REACT UTC 6x2"},
+		{"ui react", "ui=react", "REACT UTC 6x2"},
+		{"ui legacy serves react", "ui=legacy", "REACT UTC 6x2"},
+		{"unknown ui value", "ui=bogus", "REACT UTC 6x2"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := display.NewHandler(
-				display.WithTemplatePath(legacyPath), display.WithLocalTemplatePath(""),
-				display.WithReactTemplatePath(reactPath), display.WithLocalReactTemplatePath(""),
-				display.WithUIProvider(func() string { return tc.configUI }),
-				display.WithTimezoneProvider(func() string { return "UTC" }),
-			)
+			h := display.NewHandler(tmplOpt, display.WithLocalTemplatePath(""), display.WithTimezoneProvider(func() string { return "UTC" }))
 			rec := httptest.NewRecorder()
 			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?"+tc.query, http.NoBody))
 			if rec.Code != http.StatusOK {
@@ -400,49 +393,9 @@ func TestGetDisplay_UIShellSelection(t *testing.T) {
 	}
 }
 
-// TestGetDisplay_PerfScriptGatedByQuery checks the real display.html template: the perf
-// instrumentation script is emitted only for ?perf=1 and no other page load pulls it in.
-func TestGetDisplay_PerfScriptGatedByQuery(t *testing.T) {
-	t.Parallel()
-	const perfScript = "static/js/perf.js"
-	tests := []struct {
-		name     string
-		path     string
-		wantPerf bool
-	}{
-		{"no_query", "/display", false},
-		{"perf_zero", "/display?perf=0", false},
-		{"perf_empty", "/display?perf=", false},
-		{"perf_one", "/display?perf=1", true},
-		{"perf_one_with_other_params", "/display?hide_cursor=true&perf=1", true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			h := display.NewHandler(
-				display.WithUIProvider(func() string { return "legacy" }),
-				display.WithTemplatePath("../../web/templates/display.html"),
-				display.WithLocalTemplatePath(""),
-			)
-			rec := httptest.NewRecorder()
-			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, http.NoBody))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("code: got %d, want 200", rec.Code)
-			}
-			if got := strings.Contains(rec.Body.String(), perfScript); got != tc.wantPerf {
-				t.Fatalf("perf.js present = %v, want %v", got, tc.wantPerf)
-			}
-		})
-	}
-}
-
 func TestGetDisplay_ReactShellMissingAndHead(t *testing.T) {
 	t.Parallel()
-	// Inline legacy content must never stand in for the React shell.
-	h := display.NewHandler(
-		display.WithTemplateContent([]byte("<h1>legacy</h1>")),
-		display.WithReactTemplatePath("/no/such/react"), display.WithLocalReactTemplatePath("/no/such/local"),
-	)
+	h := display.NewHandler(display.WithTemplatePath("/no/such/react"), display.WithLocalTemplatePath("/no/such/local"))
 	rec := httptest.NewRecorder()
 	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?ui=react", http.NoBody))
 	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "display template not found") {
@@ -459,9 +412,8 @@ func TestGetDisplay_ReactShellMissingAndHead(t *testing.T) {
 func TestGetDisplay_ReactShellRepoTemplate(t *testing.T) {
 	t.Parallel()
 	h := display.NewHandler(
-		display.WithReactTemplatePath("../../web/templates/display_react.html"),
-		display.WithLocalReactTemplatePath(""),
-		display.WithTemplateContent([]byte("<h1>legacy</h1>")),
+		display.WithTemplatePath("../../web/templates/display_react.html"),
+		display.WithLocalTemplatePath(""),
 		display.WithHideCursorProvider(func() bool { return true }),
 		display.WithRemoteURLProvider(func() string { return "http://remote.example/display" }),
 	)
@@ -480,13 +432,10 @@ func TestGetDisplay_ReactShellRepoTemplate(t *testing.T) {
 			t.Fatalf("react shell missing %q", want)
 		}
 	}
-	if strings.Contains(body, "<h1>legacy</h1>") {
-		t.Fatal("react request served legacy inline content")
-	}
 }
 
 // TestGetDisplay_ReactPerfScriptGatedByQuery checks the real display_react.html template: the
-// perf instrumentation loads ahead of the React bundle only for ?ui=react&perf=1 (#779).
+// perf instrumentation loads ahead of the React bundle only for ?perf=1 (#779).
 func TestGetDisplay_ReactPerfScriptGatedByQuery(t *testing.T) {
 	t.Parallel()
 	const perfScript = `<script src="static/js/perf.js"></script>`
@@ -505,9 +454,8 @@ func TestGetDisplay_ReactPerfScriptGatedByQuery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			h := display.NewHandler(
-				display.WithReactTemplatePath("../../web/templates/display_react.html"),
-				display.WithLocalReactTemplatePath(""),
-				display.WithTemplateContent([]byte("<h1>legacy</h1>")),
+				display.WithTemplatePath("../../web/templates/display_react.html"),
+				display.WithLocalTemplatePath(""),
 			)
 			rec := httptest.NewRecorder()
 			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, http.NoBody))
