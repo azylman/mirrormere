@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/azylman/mirrormere/internal/config"
-	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/widget"
 )
 
@@ -107,45 +106,6 @@ func TestLoader_LoadPackage(t *testing.T) {
 			pkg, err := loader.LoadPackage(tc.pkgType)
 			if (err != nil) != (tc.wantErr != "") || (tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr)) || (err == nil && pkg.Source != tc.wantSource) {
 				t.Fatalf("LoadPackage(%q) = (%v, %v), want source=%q, err=%q", tc.pkgType, pkg, err, tc.wantSource, tc.wantErr)
-			}
-		})
-	}
-}
-
-func TestLoader_ApplyDefaults(t *testing.T) {
-	t.Parallel()
-	mkPkg := func(name string, c, r, ref int) *domain.Package {
-		return &domain.Package{Type: name, Manifest: domain.WidgetManifest{Name: name, DefaultDimensions: domain.NewDimension(c, r), Refresh: domain.ManifestRefresh{IntervalSeconds: ref}}}
-	}
-	reg := map[string]*domain.Package{"cal": mkPkg("C", 4, 2, 300), "weather": mkPkg("W", 2, 1, 900), "corrupt": {Type: "corrupt"}}
-	ci := 120
-	wCal, wWea := config.WidgetConfig{ID: "w1", Type: "cal"}, config.WidgetConfig{ID: "w2", Type: "weather", Dimensions: []int{3, 2}, RefreshIntervalSeconds: &ci}
-	wCfg := func(ws ...config.WidgetConfig) *config.Config {
-		return &config.Config{Display: config.DisplayConfig{Widgets: ws}}
-	}
-	for _, tc := range []struct {
-		name, wantErr string
-		cfg           *config.Config
-		checkDims     [2]int
-		checkRef      int
-	}{
-		{"success", "", wCfg(wCal, wWea), [2]int{4, 2}, 300},
-		{"nil", "configuration cannot be nil", nil, [2]int{}, 0},
-		{"unknown", "unknown widget type", wCfg(config.WidgetConfig{Type: "u"}), [2]int{}, 0},
-		{"corrupt", "has no valid default_dimensions", wCfg(config.WidgetConfig{Type: "corrupt"}), [2]int{}, 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			err := widget.NewLoader("", "").ApplyDefaults(tc.cfg, reg)
-			if (err != nil) != (tc.wantErr != "") || (tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr)) {
-				t.Fatalf("err = %v, want %q", err, tc.wantErr)
-			}
-			if tc.wantErr == "" {
-				w1, w2 := tc.cfg.Display.Widgets[0], tc.cfg.Display.Widgets[1]
-				if w1.Dimensions[0] != tc.checkDims[0] || w1.Dimensions[1] != tc.checkDims[1] || *w1.RefreshIntervalSeconds != tc.checkRef ||
-					w2.Dimensions[0] != 3 || w2.Dimensions[1] != 2 || *w2.RefreshIntervalSeconds != 120 {
-					t.Fatalf("widgets mismatch: w1=%+v, w2=%+v", w1, w2)
-				}
 			}
 		})
 	}

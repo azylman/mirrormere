@@ -20,7 +20,6 @@ import (
 
 // VoiceCoordinator abstracts voice coordinator state manipulation.
 type VoiceCoordinator interface {
-	GetState() events.VoiceStateData
 	SetState(state string, transcript, reply, ttsEngine *string) (events.VoiceStateData, error)
 }
 

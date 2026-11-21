@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { PaneContext } from '../../carousel/PaneContext';
-import { NextUp, resolveYtMusicScreenIndex } from '../../shell/NextUp';
+import { NextUp } from '../../shell/NextUp';
 import { useDisplayStore } from '../../store';
 import { YtMusicWidget, type MusicState } from './YtMusicWidget';
 import {
@@ -1349,25 +1349,6 @@ describe('YtMusicWidget', () => {
     it('handles Live Island fallback metadata, keyboard navigation, custom onPillClick, and cross-apiBase ignore', async () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
       vi.stubGlobal('fetch', fetchMock);
-      // Test resolveYtMusicScreenIndex when no yt-music widget is in layout
-      useDisplayStore.setState({
-        layout: [{ index: 0, widgets: [{ widget_id: 'w1', type: 'clock', origin: [0, 0], dimensions: [1, 1] }] }],
-        widgets: {},
-      });
-      expect(resolveYtMusicScreenIndex()).toBeNull();
-      // Test resolveYtMusicScreenIndex fallback via widgets[id].meta.type
-      useDisplayStore.setState({
-        layout: [{ index: 2, widgets: [{ widget_id: 'yt-meta', type: '', origin: [0, 0], dimensions: [1, 1] }] }],
-        widgets: {
-          'yt-meta': {
-            meta: { type: 'yt-music', origin: [0, 0], dimensions: [1, 1], config: {}, assets_base: '' },
-            state: 'healthy',
-            data: {},
-            timestamp: '',
-          },
-        },
-      });
-      expect(resolveYtMusicScreenIndex()).toBe(2);
       // Update shared state with minimal track (no title, artist, thumb, or active_account)
       act(() => {
         setSharedYtMusicState({

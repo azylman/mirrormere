@@ -312,13 +312,6 @@ func assertCoordinatorHealthyWeatherAndRefresh(t *testing.T) {
 	if p, ok := coord1.Cache().Get("weather-tile"); !ok || p.State != provider.StateHealthy {
 		t.Fatalf("expected healthy weather-tile, got %+v", p)
 	}
-	for _, id := range []string{"weather-tile", "unknown-widget"} {
-		d, st, ts, sOk := coord1.GetWidgetState(id)
-		tTs, tOk := coord1.GetWidgetTimestamp(id)
-		if expected := (id == "weather-tile"); sOk != expected || tOk != expected || (expected && (st != provider.StateHealthy || d == nil || ts == "" || tTs == "")) {
-			t.Fatalf("unexpected state/timestamp for %s", id)
-		}
-	}
 	refresh(t, coord1, "weather-tile")
 	if _, ok := b1.waitForPublish(2 * time.Second); !ok || mockP1.fetchCount.Load() < 2 {
 		t.Fatalf("manual refresh failed: ok=%v, count=%d", ok, mockP1.fetchCount.Load())

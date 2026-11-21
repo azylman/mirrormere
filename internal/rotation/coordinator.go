@@ -87,18 +87,6 @@ func (c *Coordinator) ScreenLayout() ScreenLayoutSnapshot {
 	return out
 }
 
-func (c *Coordinator) CurrentScreen() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.currentScreen
-}
-
-func (c *Coordinator) ScreenRotateData() events.ScreenRotateData {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.buildRotateDataLocked()
-}
-
 func (c *Coordinator) validateActiveScreensLocked() (int, error) {
 	if c.stopped {
 		return 0, errors.New("coordinator stopped")

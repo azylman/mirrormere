@@ -112,6 +112,7 @@ export function useYtMusicPrimaryInstance(isCurrentPane: boolean): boolean {
   );
 }
 
+/** Test hook: clears primary-instance registrations and restores the shared store. */
 export function resetSharedYtMusicState(): void {
   ytmInstances.clear();
   notifyYtMusicPrimaryListeners();

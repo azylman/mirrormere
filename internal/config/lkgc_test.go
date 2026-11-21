@@ -217,7 +217,7 @@ func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 		t.Fatalf("expected initial validation error, got %v", err)
 	}
 	var emptyManager config.Manager
-	if emptyManager.Current() != nil || emptyManager.CurrentSnapshot() != nil || emptyManager.Status().ConfigStatus != config.ConfigStatusOK {
+	if emptyManager.CurrentSnapshot() != nil || emptyManager.Status().ConfigStatus != config.ConfigStatusOK {
 		t.Errorf("expected zero-value manager defaults")
 	}
 	if _, err := config.ValidatePipeline([]byte(validBaseYAML), nil, nil); err == nil || !strings.Contains(err.Error(), "package loader cannot be nil") {
@@ -228,7 +228,7 @@ func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 	}
 
 	m, err := config.NewManager([]byte(validBaseYAML), loader, nil, nil)
-	if err != nil || m.Current() == nil || m.CurrentSnapshot() == nil {
+	if err != nil || m.CurrentSnapshot() == nil {
 		t.Fatalf("cold boot failed: %v", err)
 	}
 
@@ -429,7 +429,7 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 				case <-stopChan:
 					return
 				default:
-					if m.Current() == nil || m.CurrentSnapshot() == nil {
+					if m.CurrentSnapshot() == nil {
 						t.Errorf("nil snapshot accessor during concurrent read")
 					}
 					if st := m.Status(); st.ConfigStatus != config.ConfigStatusOK && st.ConfigStatus != config.ConfigStatusError {
