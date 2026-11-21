@@ -61,22 +61,31 @@ func (h *DefaultLayoutEditorHandler) GetLayoutEditor(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusOK, h.buildResponse(snap))
 }
 
+// requireEditableLayout writes the error response and returns false unless the
+// config manager is available and layout editing is allowed.
+func (h *DefaultLayoutEditorHandler) requireEditableLayout(w http.ResponseWriter) bool {
+	if h.mgr == nil {
+		writeAPIError(w, http.StatusInternalServerError, "config manager not configured")
+		return false
+	}
+	snap := h.mgr.CurrentSnapshot()
+	if snap == nil || snap.Config == nil {
+		writeAPIError(w, http.StatusInternalServerError, "current configuration not available")
+		return false
+	}
+	if !snap.Config.Display.IsLayoutEditAllowed() {
+		writeAPIError(w, http.StatusForbidden, "layout editing is disabled by configuration")
+		return false
+	}
+	return true
+}
+
 // PutLayoutEditor handles PUT /api/layout/editor.
 func (h *DefaultLayoutEditorHandler) PutLayoutEditor(w http.ResponseWriter, r *http.Request) {
 	if !requireCORSAndMethod(w, r, "PUT, OPTIONS", http.MethodPut) {
 		return
 	}
-	if h.mgr == nil {
-		writeAPIError(w, http.StatusInternalServerError, "config manager not configured")
-		return
-	}
-	snap := h.mgr.CurrentSnapshot()
-	if snap == nil || snap.Config == nil {
-		writeAPIError(w, http.StatusInternalServerError, "current configuration not available")
-		return
-	}
-	if !snap.Config.Display.IsLayoutEditAllowed() {
-		writeAPIError(w, http.StatusForbidden, "layout editing is disabled by configuration")
+	if !h.requireEditableLayout(w) {
 		return
 	}
 	var req api.LayoutEditorUpdateRequest
@@ -137,17 +146,7 @@ func (h *DefaultLayoutEditorHandler) DeleteLayoutEditor(w http.ResponseWriter, r
 	if !requireCORSAndMethod(w, r, "DELETE, OPTIONS", http.MethodDelete) {
 		return
 	}
-	if h.mgr == nil {
-		writeAPIError(w, http.StatusInternalServerError, "config manager not configured")
-		return
-	}
-	snap := h.mgr.CurrentSnapshot()
-	if snap == nil || snap.Config == nil {
-		writeAPIError(w, http.StatusInternalServerError, "current configuration not available")
-		return
-	}
-	if !snap.Config.Display.IsLayoutEditAllowed() {
-		writeAPIError(w, http.StatusForbidden, "layout editing is disabled by configuration")
+	if !h.requireEditableLayout(w) {
 		return
 	}
 	newSnap, diff, err := h.mgr.ResetLayoutOverride()

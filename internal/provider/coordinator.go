@@ -769,7 +769,9 @@ func (c *ProviderCoordinator) PushWidgetData(ctx context.Context, widgetID strin
 	return p, nil
 }
 
-func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]any) (WidgetPayload, error) {
+// recordWidgetPushLocked resolves the target widget under the read lock, asks
+// build for the payload to record, then stores it in the cache and state sink.
+func (c *ProviderCoordinator) recordWidgetPushLocked(widgetID string, build func(w *config.WidgetConfig) (any, error)) (WidgetPayload, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -792,39 +794,48 @@ func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]
 		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
 	}
 
-	providerName := resolveProviderName(targetWidget, c.snapshot)
-	if targetWidget.Type == "tasks" || providerName == "tasks" {
-		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrListWidgetPushForbidden, widgetID)
-	}
-	if providerName != "http" && providerName != providerChatLog {
-		return WidgetPayload{}, fmt.Errorf("%w: widget %q uses provider %q", ErrNonHTTPWidgetPushForbidden, widgetID, providerName)
-	}
-
-	var pkg *domain.Package
-	if c.snapshot.Packages != nil {
-		pkg = c.snapshot.Packages[targetWidget.Type]
-	}
-
-	if pkg != nil {
-		if err := c.validateResponseSchema(targetWidget.Type, pkg.Manifest.ResponseSchema, data); err != nil {
-			return WidgetPayload{}, err
-		}
-	}
-
-	if providerName == providerChatLog && c.chatLog != nil {
-		// The pushed transcript becomes this widget's own conversation in the
-		// shared in-memory store (same TTL and cap as voice turns).
-		msgs, err := chatlog.ParsePush(data)
-		if err != nil {
-			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
-		}
-		c.chatLog.Replace(chatlog.WidgetKey(widgetID), msgs)
+	data, err := build(targetWidget)
+	if err != nil {
+		return WidgetPayload{}, err
 	}
 
 	now := c.nowFunc()
 	p, _ := c.cache.RecordPush(widgetID, data, now)
 	c.syncStateSink(p)
 	return p, nil
+}
+
+func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]any) (WidgetPayload, error) {
+	return c.recordWidgetPushLocked(widgetID, func(targetWidget *config.WidgetConfig) (any, error) {
+		providerName := resolveProviderName(targetWidget, c.snapshot)
+		if targetWidget.Type == "tasks" || providerName == "tasks" {
+			return nil, fmt.Errorf("%w: %q", ErrListWidgetPushForbidden, widgetID)
+		}
+		if providerName != "http" && providerName != providerChatLog {
+			return nil, fmt.Errorf("%w: widget %q uses provider %q", ErrNonHTTPWidgetPushForbidden, widgetID, providerName)
+		}
+
+		var pkg *domain.Package
+		if c.snapshot.Packages != nil {
+			pkg = c.snapshot.Packages[targetWidget.Type]
+		}
+		if pkg != nil {
+			if err := c.validateResponseSchema(targetWidget.Type, pkg.Manifest.ResponseSchema, data); err != nil {
+				return nil, err
+			}
+		}
+
+		if providerName == providerChatLog && c.chatLog != nil {
+			// The pushed transcript becomes this widget's own conversation in the
+			// shared in-memory store (same TTL and cap as voice turns).
+			msgs, err := chatlog.ParsePush(data)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+			}
+			c.chatLog.Replace(chatlog.WidgetKey(widgetID), msgs)
+		}
+		return data, nil
+	})
 }
 
 // PushWidgetPhotos ingests a batch of photo URLs for a photo-carousel widget instance,
@@ -844,47 +855,21 @@ func (c *ProviderCoordinator) PushWidgetPhotos(ctx context.Context, widgetID str
 }
 
 func (c *ProviderCoordinator) recordPhotoPushLocked(widgetID string, photos []string, albumName string) (WidgetPayload, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.stopped {
-		return WidgetPayload{}, errors.New("coordinator is stopped")
-	}
-
-	if c.snapshot == nil || c.snapshot.Config == nil {
-		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
-	}
-
-	var targetWidget *config.WidgetConfig
-	for i := range c.snapshot.Config.Display.Widgets {
-		if c.snapshot.Config.Display.Widgets[i].ID == widgetID {
-			targetWidget = &c.snapshot.Config.Display.Widgets[i]
-			break
+	return c.recordWidgetPushLocked(widgetID, func(*config.WidgetConfig) (any, error) {
+		w, ok := c.workers[widgetID]
+		if !ok {
+			return nil, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
 		}
-	}
-	if targetWidget == nil {
-		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
-	}
-
-	w, ok := c.workers[widgetID]
-	if !ok {
-		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
-	}
-
-	pp, ok := w.provider.(*PhotosProvider)
-	if !ok {
-		return WidgetPayload{}, fmt.Errorf("%w: widget %q does not use photo provider", ErrPhotoPushNotSupported, widgetID)
-	}
-
-	snap, err := pp.IngestPushedPhotos(photos, albumName)
-	if err != nil {
-		return WidgetPayload{}, err
-	}
-
-	now := c.nowFunc()
-	p, _ := c.cache.RecordPush(widgetID, snap, now)
-	c.syncStateSink(p)
-	return p, nil
+		pp, ok := w.provider.(*PhotosProvider)
+		if !ok {
+			return nil, fmt.Errorf("%w: widget %q does not use photo provider", ErrPhotoPushNotSupported, widgetID)
+		}
+		snap, err := pp.IngestPushedPhotos(photos, albumName)
+		if err != nil {
+			return nil, err
+		}
+		return snap, nil
+	})
 }
 
 func (c *ProviderCoordinator) validateResponseSchema(widgetType string, schemaMap map[string]any, data map[string]any) error {
