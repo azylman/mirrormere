@@ -6,7 +6,7 @@ const { pathToFileURL } = require('node:url');
 // scripts/perf/swipe-point.mjs is an ES module; load it with a dynamic import from this CommonJS test.
 let pickSwipePoint;
 before(async () => {
-  const file = path.join(__dirname, '../../scripts/perf/swipe-point.mjs');
+  const file = path.join(__dirname, 'swipe-point.mjs');
   ({ pickSwipePoint } = await import(pathToFileURL(file).href));
 });
 

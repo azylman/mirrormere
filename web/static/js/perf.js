@@ -1,7 +1,7 @@
 /**
  * Mirrormere display performance instrumentation (legacy and React UI).
  *
- * Loaded only when the page is requested with ?perf=1 (see display.html and
+ * Loaded only when the page is requested with ?perf=1 (see display_react.html and
  * display_react.html). Records long tasks, Event Timing interactions, frame timing during
  * screen transitions, and gesture / screen / widget latency. Samples are flushed to POST api/perf every 10 s
  * and kept in memory for window.__mmPerf.snapshot() (p50 / p95 / max per metric).

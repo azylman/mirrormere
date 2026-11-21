@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-const budgetPath = path.join(__dirname, '../../scripts/perf/budget.json');
-const checkPath = path.join(__dirname, '../../scripts/perf/check-budget.mjs');
+const budgetPath = path.join(__dirname, 'budget.json');
+const checkPath = path.join(__dirname, 'check-budget.mjs');
 
 async function loadChecker() {
   return import(pathToFileURL(checkPath).href);

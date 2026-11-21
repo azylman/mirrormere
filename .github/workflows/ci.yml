@@ -244,7 +244,7 @@ jobs:
           node --test scripts/build-metadata.test.cjs
           if [ "${{ needs.changes.outputs.web }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
             echo "Running web client test suite..."
-            TZ=UTC node --test web/test/*.test.js
+            TZ=UTC node --test scripts/perf/*.test.js
             if [ "${{ needs.changes.outputs.go_core }}" != "true" ] && [ "${{ needs.changes.outputs.ci_scripts }}" != "true" ] && [ "${{ inputs.force_all }}" != "true" ]; then
               echo "Validating HTML templates and widget manifests with Go tests..."
               go test ./web ./internal/render ./internal/server ./internal/widget

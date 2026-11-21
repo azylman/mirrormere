@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const perfPath = path.join(__dirname, '../static/js/perf.js');
+const perfPath = path.join(__dirname, '../../web/static/js/perf.js');
 const perf = require(perfPath);
 
 test('percentile uses nearest-rank and handles empty input', () => {
