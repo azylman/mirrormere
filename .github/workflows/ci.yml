@@ -337,7 +337,7 @@ jobs:
           npm run lint
           npm run deadcode
           npm run typecheck
-          npm run test:coverage
+          npm run test:coverage -- --maxWorkers=2
           npm run build
 
       - name: Emit Agent Pre-Flight Remediation Guidance
