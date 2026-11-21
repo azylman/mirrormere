@@ -66,6 +66,7 @@ jobs:
               - 'go.sum'
               - '.golangci.yml'
               - '.code-health-baseline.json'
+              - '.code-health-config.json'
               - 'cmd/**'
               - 'internal/**'
               - 'api/**'
@@ -456,11 +457,11 @@ jobs:
       - name: Auto-sort Server Routes and Handlers
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         run: |
-          go run ./scripts/code-health -fix -root . -baseline .code-health-baseline.json
+          GOFLAGS=-mod=mod go run github.com/azylman/aerial/scripts/code-health@fc8e678006b9b84a63486b5cc08cc24bc77c966c -fix -root . -baseline .code-health-baseline.json -config .code-health-config.json
           if ! git diff --quiet; then
             git fetch origin "${GITHUB_HEAD_REF}"
             git checkout -B "${GITHUB_HEAD_REF}" "origin/${GITHUB_HEAD_REF}"
-            go run ./scripts/code-health -fix -root . -baseline .code-health-baseline.json
+            GOFLAGS=-mod=mod go run github.com/azylman/aerial/scripts/code-health@fc8e678006b9b84a63486b5cc08cc24bc77c966c -fix -root . -baseline .code-health-baseline.json -config .code-health-config.json
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git commit -am "chore: auto-sort server routes and handlers [skip ci]"
@@ -482,11 +483,10 @@ jobs:
           BIN_DIR="${GOPATH_DIR:-$HOME/go}/bin"
           export PATH="$BIN_DIR:$PATH"
           mkdir -p "$BIN_DIR"
-          CODE_HEALTH_BIN="$BIN_DIR/mirrormere-code-health"
-          SRC_SUM=$(cksum scripts/code-health/*.go 2>/dev/null || true)
-          if [ ! -x "$CODE_HEALTH_BIN" ] || [ -z "$SRC_SUM" ] || [ "$(cat "${CODE_HEALTH_BIN}.cksum" 2>/dev/null || true)" != "$SRC_SUM" ]; then
-            (cd scripts/code-health && go build -o "$CODE_HEALTH_BIN" .)
-            printf '%s\n' "$SRC_SUM" > "${CODE_HEALTH_BIN}.cksum"
+          CODE_HEALTH_BIN="$BIN_DIR/aerial-code-health-fc8e678006b9"
+          if [ ! -x "$CODE_HEALTH_BIN" ]; then
+            GOBIN="$BIN_DIR" GOFLAGS=-mod=mod go install github.com/azylman/aerial/scripts/code-health@fc8e678006b9b84a63486b5cc08cc24bc77c966c
+            mv "$BIN_DIR/code-health" "$CODE_HEALTH_BIN"
           fi
           if ! command -v deadcode >/dev/null 2>&1; then
             go install golang.org/x/tools/cmd/deadcode@v0.52.0
@@ -498,7 +498,7 @@ jobs:
           LOG_DEAD_PROD=$(mktemp)
           LOG_DEAD_TEST=$(mktemp)
 
-          "$CODE_HEALTH_BIN" -root . -baseline .code-health-baseline.json > "$LOG_HEALTH" 2>&1 &
+          "$CODE_HEALTH_BIN" -root . -baseline .code-health-baseline.json -config .code-health-config.json > "$LOG_HEALTH" 2>&1 &
           P_HEALTH=$!
           golangci-lint run --allow-parallel-runners ./... > "$LOG_LINT" 2>&1 &
           P_LINT=$!
