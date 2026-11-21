@@ -1,0 +1,5 @@
+{
+  "check_ordering": true,
+  "banned_test_filename_suffixes": [],
+  "disabled_test_rules": ["http-default-client", "http-client-literal"]
+}

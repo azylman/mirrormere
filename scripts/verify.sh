@@ -80,7 +80,7 @@ check_gofmt() {
                 return 0
             fi
             existing_go=$(echo "$staged_go" | while read -r gf; do
-                [ -f "$gf" ] && echo "$gf"
+                [ -f "$gf" ] && echo "$gf" || true
             done)
             if [ -z "$existing_go" ]; then
                 return 0
@@ -193,15 +193,15 @@ check_dependabot_coverage() {
 
 # 2. Ratcheted Code Health Gate (Cached Binary)
 CODE_HEALTH_BIN=""
+CODE_HEALTH_REF="github.com/azylman/aerial/scripts/code-health@fc8e678006b9b84a63486b5cc08cc24bc77c966c"
 ensure_code_health() {
     gopath="$(go env GOPATH 2>/dev/null || true)"
     bin_dir="${gopath:-$HOME/go}/bin"
     mkdir -p "$bin_dir"
-    CODE_HEALTH_BIN="$bin_dir/mirrormere-code-health"
-    src_sum=$(cksum "$REPO_ROOT/scripts/code-health/"*.go 2>/dev/null || true)
-    if [ ! -x "$CODE_HEALTH_BIN" ] || [ -z "$src_sum" ] || [ "$(cat "${CODE_HEALTH_BIN}.cksum" 2>/dev/null || true)" != "$src_sum" ]; then
-        (cd "$REPO_ROOT/scripts/code-health" && go build -o "$CODE_HEALTH_BIN" .)
-        printf '%s\n' "$src_sum" > "${CODE_HEALTH_BIN}.cksum"
+    CODE_HEALTH_BIN="$bin_dir/aerial-code-health-fc8e678006b9"
+    if [ ! -x "$CODE_HEALTH_BIN" ]; then
+        GOBIN="$bin_dir" GOFLAGS=-mod=mod go install "$CODE_HEALTH_REF"
+        mv "$bin_dir/code-health" "$CODE_HEALTH_BIN"
     fi
 }
 
@@ -209,9 +209,9 @@ run_code_health() {
     echo "   [code-health] Checking ratcheted complexity and length limits..."
     if has_cmd go; then
         ensure_code_health
-        if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E '^(\.code-health-baseline\.json|scripts/code-health/|scripts/verify\.sh$)'; then
+        if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E '^(\.code-health-baseline\.json|\.code-health-config\.json|scripts/verify\.sh$)'; then
             staged_go_files=$(echo "$STAGED_FILES" | grep '\.go$' | while read -r gf; do
-                [ -f "$gf" ] && echo "$gf"
+                [ -f "$gf" ] && echo "$gf" || true
             done)
             if [ -z "$staged_go_files" ]; then
                 return 0
@@ -225,7 +225,7 @@ run_code_health() {
                 done
                 if [ -n "$staged_clean" ]; then
                     # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
-                    "$CODE_HEALTH_BIN" -fix -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json" $staged_clean >/dev/null 2>&1 || true
+                    "$CODE_HEALTH_BIN" -fix -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json" -config "$REPO_ROOT/.code-health-config.json" $staged_clean >/dev/null 2>&1 || true
                     for f in $staged_clean; do
                         if [ -f "$f" ] && ! git diff --quiet -- "$f" 2>/dev/null; then
                             git add "$f"
@@ -242,9 +242,9 @@ run_code_health() {
                 fi
             done | sort -u)
             # shellcheck disable=SC2086 # POSIX sh has no arrays: intentional word splitting of a newline/space-separated path or package list
-            "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json" $code_health_targets
+            "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json" -config "$REPO_ROOT/.code-health-config.json" $code_health_targets
         else
-            "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json"
+            "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json" -config "$REPO_ROOT/.code-health-config.json"
         fi
     else
         echo "🚨 [Mirrormere Verify] Error: go not found in PATH." >&2
@@ -622,7 +622,7 @@ if [ "$MODE" = "staged" ]; then
         run_frontend_checks
     fi
 
-    if echo "$STAGED_FILES" | grep -q -E '\.go$|\.code-health-baseline\.json$|^scripts/verify\.sh$'; then
+    if echo "$STAGED_FILES" | grep -q -E '\.go$|\.code-health-baseline\.json$|\.code-health-config\.json$|^scripts/verify\.sh$'; then
         run_code_health
     fi
 
@@ -633,7 +633,7 @@ if [ "$MODE" = "staged" ]; then
     if echo "$STAGED_FILES" | grep -q -E '^go\.(mod|sum)$'; then
         run_coverage_gate
     elif echo "$STAGED_FILES" | grep -q '\.go$'; then
-        pkgs=$(echo "$STAGED_FILES" | grep '\.go$' | grep -v '^scripts/code-health/' | while read -r f; do dirname "$f"; done | sort -u)
+        pkgs=$(echo "$STAGED_FILES" | grep '\.go$' | while read -r f; do dirname "$f"; done | sort -u)
         for p in $pkgs; do
             if [ -d "$p" ]; then
                 sh "$REPO_ROOT/scripts/check-coverage.sh" --check --service "$p"
