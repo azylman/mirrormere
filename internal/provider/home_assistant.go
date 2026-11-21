@@ -382,12 +382,6 @@ func (*HomeAssistantProvider) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// CallService executes a Home Assistant service call via POST /api/services/{domain}/{service}.
-func (p *HomeAssistantProvider) CallService(ctx context.Context, domain, service string, serviceData map[string]any) error {
-	_, err := p.CallServiceWithResponse(ctx, domain, service, serviceData)
-	return err
-}
-
 // CallServiceWithResponse executes a Home Assistant service call and returns the resulting entity states.
 func (p *HomeAssistantProvider) CallServiceWithResponse(ctx context.Context, domain, service string, serviceData map[string]any) ([]EntityState, error) {
 	domain = strings.TrimSpace(domain)

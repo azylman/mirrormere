@@ -5,7 +5,6 @@ import { CalendarWeekView } from './CalendarWeekView';
 import {
   addDays,
   addMonths,
-  buildMonthViewFromDays,
   computeDayLayout,
   computeNowIndicatorPct,
   formatDayLabel,
@@ -20,13 +19,11 @@ import {
   parseISODate,
   parseTimeMinutes,
   sliceWeekWindow,
-  startOfWeek,
   stripMealiePrefix,
 } from './dateUtils';
 import type {
   CollapsedHoursGap,
   FamilyDay,
-  FamilyMonthDay,
   FamilySpanEvent,
   FamilyViewModel,
 } from './types';
@@ -49,16 +46,6 @@ describe('dateUtils', () => {
 
     const nextMonth = addMonths(d, 1);
     expect(formatISODate(nextMonth)).toBe('2026-11-01');
-  });
-
-  it('computes startOfWeek', () => {
-    // 2026-10-27 is a Tuesday
-    const d = parseISODate('2026-10-27');
-    const sun = startOfWeek(d, 0); // Sunday
-    expect(formatISODate(sun)).toBe('2026-10-25');
-
-    const mon = startOfWeek(d, 1); // Monday
-    expect(formatISODate(mon)).toBe('2026-10-26');
   });
 
   it('formats short dates and labels', () => {
@@ -132,23 +119,6 @@ describe('dateUtils', () => {
 
     expect(computeDayLayout([], days, 'day', '2026-10-26')).toEqual([]);
     expect(computeDayLayout(undefined, days, 'day', '2026-10-26')).toEqual([]);
-  });
-
-  it('builds month view from days in 7-day chunks', () => {
-    const monthDays: FamilyMonthDay[] = Array.from({ length: 14 }).map((_, i) => ({
-      date: `2026-10-${String(i + 1).padStart(2, '0')}`,
-      day_of_month: i + 1,
-      is_current_month: true,
-      is_today: false,
-      is_weekend: false,
-    }));
-
-    const weeks = buildMonthViewFromDays(monthDays);
-    expect(weeks.length).toBe(2);
-    expect(itemAt(weeks, 0).week_number).toBe(1);
-    expect(itemAt(weeks, 0).days.length).toBe(7);
-    expect(itemAt(weeks, 1).week_number).toBe(2);
-    expect(itemAt(weeks, 1).days.length).toBe(7);
   });
 
   describe('parseTimeMinutes', () => {

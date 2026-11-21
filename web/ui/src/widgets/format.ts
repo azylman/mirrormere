@@ -95,15 +95,11 @@ export {
 export {
   calendarFeedActiveCalendars,
   calendarFeedDayGroups,
-  type CalendarFeedActiveCalendar,
   type CalendarFeedEvent,
-  type CalendarFeedDayGroup,
 } from './formatCalendar';
 
 export {
   todayPrecipProb,
   computeHourlyGraphLayout,
   type WeatherHourlyGraphOptions,
-  type HourlyGraphLayout,
-  type HourlyPointLayout,
 } from './formatWeather';

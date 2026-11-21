@@ -137,14 +137,6 @@ func (m *Manager) applyDiskOverrideIfPresent(snapshot *Snapshot) *Snapshot {
 	return overriddenSnap
 }
 
-// Current returns the active running configuration snapshot (lock-free).
-func (m *Manager) Current() *Config {
-	if s := m.current.Load(); s != nil {
-		return s.Config
-	}
-	return nil
-}
-
 // CurrentSnapshot returns the complete running snapshot including packages and layout (lock-free).
 func (m *Manager) CurrentSnapshot() *Snapshot { return m.current.Load() }
 

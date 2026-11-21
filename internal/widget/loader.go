@@ -8,7 +8,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 )
 
@@ -96,32 +95,4 @@ func CheckPackageCompleteness(pkgDir string) bool {
 	_, mErr := os.Stat(filepath.Join(pkgDir, ManifestFilename))
 	_, vErr := os.Stat(filepath.Join(pkgDir, ViewFilename))
 	return mErr == nil && vErr == nil
-}
-
-// ApplyDefaults applies manifest default_dimensions and refresh intervals to widget instances in cfg.
-func (*Loader) ApplyDefaults(cfg *config.Config, registry map[string]*domain.Package) error {
-	if cfg == nil {
-		return fmt.Errorf("configuration cannot be nil")
-	}
-
-	for i := range cfg.Display.Widgets {
-		w := &cfg.Display.Widgets[i]
-		pkg, exists := registry[w.Type]
-		if !exists {
-			return fmt.Errorf("widget '%s': unknown widget type '%s'", w.ID, w.Type)
-		}
-
-		if len(w.Dimensions) == 0 {
-			if !pkg.Manifest.DefaultDimensions.IsValid() {
-				return fmt.Errorf("[Mirrormere Config Error] widget '%s' omits 'dimensions' and package manifest '%s' has no valid default_dimensions", w.ID, w.Type)
-			}
-			w.Dimensions = pkg.Manifest.DefaultDimensions.Slice()
-		}
-
-		if w.RefreshIntervalSeconds == nil && pkg.Manifest.Refresh.IntervalSeconds > 0 {
-			interval := pkg.Manifest.Refresh.IntervalSeconds
-			w.RefreshIntervalSeconds = &interval
-		}
-	}
-	return nil
 }

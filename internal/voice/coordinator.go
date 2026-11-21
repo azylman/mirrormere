@@ -82,13 +82,6 @@ func NewCoordinator(hub *events.Hub, sink ...VoiceStateSink) *Coordinator {
 	return c
 }
 
-// GetState returns the current voice pipeline state data.
-func (c *Coordinator) GetState() events.VoiceStateData {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.snapshotLocked()
-}
-
 func (c *Coordinator) snapshotLocked() events.VoiceStateData {
 	return events.VoiceStateData{
 		State:      c.state,

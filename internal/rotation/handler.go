@@ -17,7 +17,6 @@ type ScreenController interface {
 	AdvanceScreen(direction string) (events.ScreenRotateData, error)
 	PauseRotation(duration time.Duration) (int, error)
 	ResumeRotation() (int, error)
-	CurrentScreen() int
 	ScreenLayout() ScreenLayoutSnapshot
 }
 

@@ -75,10 +75,6 @@ function useHaLiveActivities(now: Date): HaLiveIslandActivity[] {
   });
 }
 
-export function resolveYtMusicScreenIndex(): number | null {
-  return resolveScreenIndexForWidgetType('yt-music');
-}
-
 export interface NextUpProps {
   now?: Date;
   timezone?: string | undefined;

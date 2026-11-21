@@ -119,7 +119,7 @@ export interface FamilyMonthDay {
   events?: FamilyEvent[];
 }
 
-export interface FamilyMonthWeek {
+interface FamilyMonthWeek {
   week_number: number;
   days: FamilyMonthDay[];
 }

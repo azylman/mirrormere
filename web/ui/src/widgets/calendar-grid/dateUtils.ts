@@ -3,8 +3,6 @@ import type {
   FamilyDay,
   FamilyEvent,
   FamilyMember,
-  FamilyMonthDay,
-  FamilyMonthWeek,
   FamilySpanEvent,
   FamilyViewModel,
   ViewMode,
@@ -43,15 +41,6 @@ export function addMonths(d: Date, n: number): Date {
   const res = new Date(d.getTime());
   res.setDate(1);
   res.setMonth(res.getMonth() + n);
-  return res;
-}
-
-export function startOfWeek(d: Date, weekStartsOn = 0): Date {
-  const res = new Date(d.getTime());
-  const day = res.getDay();
-  const diff = (day < weekStartsOn ? 7 : 0) + day - weekStartsOn;
-  res.setDate(res.getDate() - diff);
-  res.setHours(12, 0, 0, 0);
   return res;
 }
 
@@ -135,17 +124,6 @@ export function computeDayLayout(
   return allDayEvents.filter(
     (ev) => ev.start_col <= dayIdx + 1 && ev.start_col + ev.col_span > dayIdx + 1
   );
-}
-
-export function buildMonthViewFromDays(days: FamilyMonthDay[]): FamilyMonthWeek[] {
-  const weeks: FamilyMonthWeek[] = [];
-  for (let i = 0; i < days.length; i += 7) {
-    weeks.push({
-      week_number: Math.floor(i / 7) + 1,
-      days: days.slice(i, i + 7),
-    });
-  }
-  return weeks;
 }
 
 /**

@@ -185,24 +185,6 @@ func (c *ProviderCoordinator) Cache() *SWRCache {
 	return c.cache
 }
 
-// GetWidgetState retrieves current state, domain data, and timestamp for a widget instance,
-// directly satisfying the render.StateSnapshotProvider contract.
-func (c *ProviderCoordinator) GetWidgetState(widgetID string) (any, string, string, bool) {
-	if p, ok := c.cache.Get(widgetID); ok {
-		return p.Data, p.State, p.Timestamp, true
-	}
-	return nil, "", "", false
-}
-
-// GetWidgetTimestamp retrieves the cached timestamp for a widget instance,
-// directly satisfying the render.Engine timestamp provider contract.
-func (c *ProviderCoordinator) GetWidgetTimestamp(widgetID string) (string, bool) {
-	if p, ok := c.cache.Get(widgetID); ok && p.Timestamp != "" {
-		return p.Timestamp, true
-	}
-	return "", false
-}
-
 // RefreshWidget triggers an immediate, out-of-band poll for the given widgetID.
 func (c *ProviderCoordinator) RefreshWidget(widgetID string) error {
 	c.mu.RLock()

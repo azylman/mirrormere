@@ -94,8 +94,8 @@ func assertHaServiceSuccess(t *testing.T, states []EntityState, serverURL string
 
 func assertHaServiceCapturedReq(ctx context.Context, t *testing.T, p *HomeAssistantProvider, tc haServiceTestCase, recorded map[string]haServiceCapturedReq, mu *sync.Mutex) {
 	t.Helper()
-	if err := p.CallService(ctx, tc.domain, tc.service, tc.serviceData); err != nil {
-		t.Fatalf("CallService failed: %v", err)
+	if _, err := p.CallServiceWithResponse(ctx, tc.domain, tc.service, tc.serviceData); err != nil {
+		t.Fatalf("CallServiceWithResponse failed: %v", err)
 	}
 	mu.Lock()
 	capReq := recorded[tc.wantPath]
