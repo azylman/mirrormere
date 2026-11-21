@@ -1,13 +1,11 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
-	"runtime/coverage"
 	"sync"
 	"time"
 
@@ -286,7 +284,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/widgets/{widget_id}/render", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
 		h.GetWidgetRender(w, r, r.PathValue("widget_id"))
 	}))
-	s.mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
+	s.mux.HandleFunc("/debug/coverage/flush", covflush.Handler())
 	s.mux.HandleFunc("/display", dispatchHandler(s, func() DisplayHandler { return s.displayHandler }, isNil, func(h DisplayHandler, w http.ResponseWriter, r *http.Request) { h.GetDisplay(w, r) }))
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
@@ -316,40 +314,6 @@ func (*Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-var (
-	flushMu            sync.Mutex
-	writeCountersDirMu sync.RWMutex
-	writeMetaDirFn     = coverage.WriteMetaDir
-	writeCountersDirFn = coverage.WriteCountersDir
-)
-
-func (*Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		w.Header().Set("Allow", "GET, POST")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	flushMu.Lock()
-	defer flushMu.Unlock()
-
-	writeCountersDirMu.RLock()
-	metaFn, fn := writeMetaDirFn, writeCountersDirFn
-	writeCountersDirMu.RUnlock()
-
-	var buf bytes.Buffer
-	if err := covflush.WriteArchive(&buf, metaFn, fn); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/x-tar")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(buf.Bytes()); err != nil {
-		return
 	}
 }
 

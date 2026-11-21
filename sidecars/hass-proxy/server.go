@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,19 +8,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"runtime/coverage"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/azylman/mirrormere/internal/covflush"
-)
-
-var (
-	flushMu            sync.Mutex
-	writeCountersDirMu sync.RWMutex
-	writeMetaDirFn     = coverage.WriteMetaDir
-	writeCountersDirFn = coverage.WriteCountersDir
 )
 
 // Server encapsulates the HTTP handler and dependencies for the Home Assistant Fast-Path Proxy.
@@ -39,7 +29,7 @@ func NewServer(client HAClient, logger *slog.Logger) *Server {
 	s := &Server{client: client, logger: logger, mux: http.NewServeMux()}
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/intent", s.handleIntent)
-	s.mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
+	s.mux.HandleFunc("/debug/coverage/flush", covflush.Handler())
 	return s
 }
 
@@ -58,31 +48,6 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("OK\n")); err != nil {
 		s.logger.DebugContext(r.Context(), "healthz write failed", "error", err)
-	}
-}
-
-func (*Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		w.Header().Set("Allow", "GET, POST")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	flushMu.Lock()
-	defer flushMu.Unlock()
-
-	writeCountersDirMu.RLock()
-	metaFn, fn := writeMetaDirFn, writeCountersDirFn
-	writeCountersDirMu.RUnlock()
-
-	var buf bytes.Buffer
-	if err := covflush.WriteArchive(&buf, metaFn, fn); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/x-tar")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(buf.Bytes()); err != nil {
-		return
 	}
 }
 

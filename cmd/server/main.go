@@ -25,6 +25,7 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/render"
 	"github.com/azylman/mirrormere/internal/rotation"
+	"github.com/azylman/mirrormere/internal/runutil"
 	"github.com/azylman/mirrormere/internal/server"
 	"github.com/azylman/mirrormere/internal/solar"
 	"github.com/azylman/mirrormere/internal/video"
@@ -575,7 +576,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 
 	if _, err := fmt.Fprintf(stdout, "Mirrormere daemon listening on %s (v%s)\n", listener.Addr().String(), server.Version); err != nil {
-		closeListenerIgnoreClosed(listener)
+		runutil.CloseListener(listener, nil)
 		return err
 	}
 
@@ -621,12 +622,4 @@ func resolveWebDir(configPath string) string {
 		}
 	}
 	return "/app/web"
-}
-
-func closeListenerIgnoreClosed(l net.Listener) {
-	if l != nil {
-		if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			slog.Warn("Error closing listener", "err", err)
-		}
-	}
 }
