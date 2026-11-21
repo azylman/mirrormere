@@ -6,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -50,19 +48,6 @@ type errFlusher struct{ nonFlusher }
 
 func (*errFlusher) Write([]byte) (int, error) { return 0, errors.New("simulated write error") }
 func (*errFlusher) Flush()                    {}
-
-// SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
-func SetWriteCountersDirForTest(fn func(string) error) func() {
-	writeCountersDirMu.Lock()
-	prev := writeCountersDirFn
-	writeCountersDirFn = fn
-	writeCountersDirMu.Unlock()
-	return func() {
-		writeCountersDirMu.Lock()
-		writeCountersDirFn = prev
-		writeCountersDirMu.Unlock()
-	}
-}
 
 func TestServer_Intent(t *testing.T) {
 	t.Parallel()
@@ -151,33 +136,5 @@ func TestServer_HealthzAndBuild(t *testing.T) {
 	s := BuildHTTPServer(ServerConfig{Host: "127.0.0.1", Port: 9099, ReadTimeoutSeconds: 12, WriteTimeoutSeconds: 14}, http.NotFoundHandler())
 	if s.Addr != "127.0.0.1:9099" || s.ReadTimeout != 12*time.Second || s.WriteTimeout != 14*time.Second {
 		t.Errorf("unexpected build config: %+v", s)
-	}
-}
-
-func TestCoverageFlushEndpoint(t *testing.T) {
-	tests := []struct {
-		name, method, wantSub string
-		writeErr              error
-		wantCode              int
-	}{
-		{name: "method_not_allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed},
-		{name: "valid_flush_tar", method: http.MethodPost, wantCode: http.StatusOK, wantSub: "covcounters.test"},
-		{name: "write_error_500", method: http.MethodGet, writeErr: errors.New("err"), wantCode: http.StatusInternalServerError, wantSub: "err"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			defer SetWriteCountersDirForTest(func(dir string) error {
-				if tc.writeErr != nil {
-					return tc.writeErr
-				}
-				return os.WriteFile(filepath.Join(dir, "covcounters.test"), []byte("cov"), 0o600)
-			})()
-			srv := NewServer(&mockHAClient{}, nil)
-			rec := httptest.NewRecorder()
-			srv.ServeHTTP(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", http.NoBody))
-			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
-				t.Fatalf("code=%d want %d, body=%q want %q", rec.Code, tc.wantCode, rec.Body.String(), tc.wantSub)
-			}
-		})
 	}
 }

@@ -5,8 +5,11 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -172,5 +175,54 @@ func TestWriteArchive(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			runWriteArchiveCase(t, tc)
 		})
+	}
+}
+
+func TestHandler(t *testing.T) {
+	tests := []struct {
+		name        string
+		method      string
+		writeErr    error
+		wantCode    int
+		wantAllow   string
+		wantType    string
+		wantBodySub string
+	}{
+		{name: "method not allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed, wantAllow: "GET, POST"},
+		{name: "post tar", method: http.MethodPost, wantCode: http.StatusOK, wantType: "application/x-tar", wantBodySub: "covcounters.test"},
+		{name: "get tar", method: http.MethodGet, wantCode: http.StatusOK, wantType: "application/x-tar", wantBodySub: "covcounters.test"},
+		{name: "write error", method: http.MethodGet, writeErr: errors.New("simulated flush error"), wantCode: http.StatusInternalServerError, wantBodySub: "simulated flush error"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := handler(nil, func(dir string) error {
+				if tc.writeErr != nil {
+					return tc.writeErr
+				}
+				return os.WriteFile(filepath.Join(dir, "covcounters.test"), []byte("covdata"), 0o600)
+			})
+			rec := httptest.NewRecorder()
+			h(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", http.NoBody))
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if got := rec.Header().Get("Allow"); got != tc.wantAllow {
+				t.Fatalf("Allow = %q, want %q", got, tc.wantAllow)
+			}
+			if tc.wantType != "" && rec.Header().Get("Content-Type") != tc.wantType {
+				t.Fatalf("Content-Type = %q", rec.Header().Get("Content-Type"))
+			}
+			if tc.wantBodySub != "" && !strings.Contains(rec.Body.String(), tc.wantBodySub) {
+				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.wantBodySub)
+			}
+		})
+	}
+}
+
+func TestHandlerPublic(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Handler()(rec, httptest.NewRequest(http.MethodPut, "/", http.NoBody))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("code = %d", rec.Code)
 	}
 }

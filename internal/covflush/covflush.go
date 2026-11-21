@@ -2,10 +2,14 @@ package covflush
 
 import (
 	"archive/tar"
+	"bytes"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/coverage"
+	"sync"
 )
 
 var (
@@ -63,4 +67,37 @@ func WriteArchive(w io.Writer, metaFn, countersFn func(string) error) (retErr er
 	}
 
 	return tw.Close()
+}
+
+var flushMu sync.Mutex
+
+// Handler returns the shared GET/POST coverage flush endpoint handler that
+// streams a tar of the process coverage meta and counter files.
+func Handler() http.HandlerFunc {
+	return handler(coverage.WriteMetaDir, coverage.WriteCountersDir)
+}
+
+func handler(metaFn, countersFn func(string) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			w.Header().Set("Allow", "GET, POST")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		flushMu.Lock()
+		defer flushMu.Unlock()
+
+		var buf bytes.Buffer
+		if err := WriteArchive(&buf, metaFn, countersFn); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/x-tar")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(buf.Bytes()); err != nil {
+			return
+		}
+	}
 }

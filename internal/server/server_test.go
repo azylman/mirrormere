@@ -2,12 +2,9 @@ package server_test
 
 import (
 	"context"
-	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -91,39 +88,6 @@ func TestServer_CoreEndpoints(t *testing.T) {
 			}
 			if tc.method == http.MethodHead && rec.Body.Len() != 0 {
 				t.Errorf("expected empty body for HEAD, got %d bytes", rec.Body.Len())
-			}
-		})
-	}
-}
-
-func TestCoverageFlushEndpoint(t *testing.T) {
-	tests := []struct {
-		name        string
-		method      string
-		writeErr    error
-		wantCode    int
-		wantBodySub string
-	}{
-		{name: "method_not_allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed},
-		{name: "valid_flush_tar", method: http.MethodPost, wantCode: http.StatusOK, wantBodySub: "covcounters.test"},
-		{name: "write_error_500", method: http.MethodGet, writeErr: errors.New("simulated flush error"), wantCode: http.StatusInternalServerError, wantBodySub: "simulated flush error"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			defer server.SetWriteCountersDirForTest(func(dir string) error {
-				if tc.writeErr != nil {
-					return tc.writeErr
-				}
-				return os.WriteFile(filepath.Join(dir, "covcounters.test"), []byte("covdata"), 0o600)
-			})()
-
-			srv := server.New(server.Config{})
-			rec := doServerReq(srv, tc.method, "/debug/coverage/flush")
-			if rec.Code != tc.wantCode {
-				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
-			}
-			if tc.wantBodySub != "" && !strings.Contains(rec.Body.String(), tc.wantBodySub) {
-				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.wantBodySub)
 			}
 		})
 	}
