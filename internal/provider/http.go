@@ -13,30 +13,14 @@ import (
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/azylman/mirrormere/internal/api"
 )
 
 const (
 	// MaxHTTPResponseBodySize limits inbound payload size to 1MB to prevent memory exhaustion.
 	MaxHTTPResponseBodySize = 1 << 20
 )
-
-// HTTPStatusError represents a non-2xx HTTP response from an upstream provider.
-// It implements HTTPStatusCoder and error.
-type HTTPStatusError struct {
-	Code int
-	Body string
-}
-
-func (e *HTTPStatusError) Error() string {
-	if e.Body == "" {
-		return fmt.Sprintf("HTTP %d", e.Code)
-	}
-	return fmt.Sprintf("HTTP %d: %s", e.Code, e.Body)
-}
-
-func (e *HTTPStatusError) StatusCode() int {
-	return e.Code
-}
 
 // HTTPProvider implements the Provider interface for out-of-process generic HTTP sidecars
 // .
@@ -194,7 +178,7 @@ func (p *HTTPProvider) Fetch(ctx context.Context) (any, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &HTTPStatusError{
+		return nil, api.UpstreamHTTPError{
 			Code: resp.StatusCode,
 			Body: strings.TrimSpace(string(bodyBytes)),
 		}

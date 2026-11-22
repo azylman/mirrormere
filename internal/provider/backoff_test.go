@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
@@ -46,10 +47,10 @@ func TestIsNetworkOrServerError(t *testing.T) {
 		{"str status 503", errors.New("status 503"), true},
 		{"str HTTP 503", errors.New("HTTP 503: down"), true},
 		{"str HTTP 429", errors.New("HTTP 429"), true},
-		{"HTTPStatusError 500", &provider.HTTPStatusError{Code: 500, Body: "err"}, true},
-		{"HTTPStatusError 503 empty", &provider.HTTPStatusError{Code: 503}, true},
-		{"HTTPStatusError 429", &provider.HTTPStatusError{Code: 429, Body: "rate"}, true},
-		{"HTTPStatusError 404", &provider.HTTPStatusError{Code: 404, Body: "nf"}, false},
+		{"HTTPStatusError 500", api.UpstreamHTTPError{Code: 500, Body: "err"}, true},
+		{"HTTPStatusError 503 empty", api.UpstreamHTTPError{Code: 503}, true},
+		{"HTTPStatusError 429", api.UpstreamHTTPError{Code: 429, Body: "rate"}, true},
+		{"HTTPStatusError 404", api.UpstreamHTTPError{Code: 404, Body: "nf"}, false},
 		{"schema failure", errors.New("validation failed against response_schema"), false},
 		{"json parse error", errors.New("cannot unmarshal"), false},
 	}

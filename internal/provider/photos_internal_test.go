@@ -930,15 +930,6 @@ func assertPhotosProviderDiskCacheAndConcurrentEdges(t *testing.T) {
 	roDir := filepath.Join(writeDir, "readonly")
 	_ = os.Mkdir(roDir, 0o500)
 
-	// Additional provider coverage
-	err404 := &HTTPStatusError{Code: 404}
-	if s := err404.Error(); s != "HTTP 404" {
-		t.Errorf("got %q, want 'HTTP 404'", s)
-	}
-	if code := err404.StatusCode(); code != 404 {
-		t.Errorf("got code %d, want 404", code)
-	}
-
 	ws := WeatherSnapshot{Current: WeatherCurrent{PrecipProbMax: 55}}
 	if prob := ws.TodayPrecipProbMax(); prob != 55 {
 		t.Errorf("got %d, want 55", prob)

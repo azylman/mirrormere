@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/covflush"
 )
 
@@ -77,7 +78,7 @@ func writeActionError(w http.ResponseWriter, err error) {
 	} else if errors.Is(err, ErrNotConnected) || errors.Is(err, ErrNoActiveMediaSession) {
 		code = http.StatusBadGateway
 	}
-	writeJSONError(w, code, err.Error())
+	api.WriteError(w, code, err.Error())
 }
 
 func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
@@ -91,20 +92,20 @@ func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		h.Set("Allow", "POST, OPTIONS")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	var req ActionWebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request payload: malformed JSON")
+		api.WriteError(w, http.StatusBadRequest, "invalid request payload: malformed JSON")
 		return
 	}
 	if strings.TrimSpace(req.ID) == "" || strings.TrimSpace(req.Action) == "" {
-		writeJSONError(w, http.StatusBadRequest, "id and action are required")
+		api.WriteError(w, http.StatusBadRequest, "id and action are required")
 		return
 	}
 	if req.ID != overlayID {
-		writeJSONError(w, http.StatusNotFound, "stream not active")
+		api.WriteError(w, http.StatusNotFound, "stream not active")
 		return
 	}
 	var err error
@@ -114,7 +115,7 @@ func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
 	case "seek":
 		var targetTime float64
 		if targetTime, err = extractTargetTime(req.Value); err != nil || targetTime < 0 {
-			writeJSONError(w, http.StatusBadRequest, "invalid seek target time: must be a non-negative number")
+			api.WriteError(w, http.StatusBadRequest, "invalid seek target time: must be a non-negative number")
 			return
 		}
 		err = s.client.Seek(r.Context(), targetTime)
@@ -125,7 +126,7 @@ func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		writeActionError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{statusKey: "ok"})
+	api.WriteJSON(w, http.StatusOK, map[string]string{statusKey: "ok"})
 }
 
 func (s *ActionServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -141,19 +142,7 @@ func (s *ActionServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.client.GetStatus()
-	writeJSON(w, http.StatusOK, map[string]any{statusKey: "ok", "chromecast_connected": st.Connected, "app_id": st.AppID, "player_state": st.PlayerState})
-}
-
-func writeJSON(w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-func writeJSONError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{statusKey: "error", "error": msg})
+	api.WriteJSON(w, http.StatusOK, map[string]any{statusKey: "ok", "chromecast_connected": st.Connected, "app_id": st.AppID, "player_state": st.PlayerState})
 }
 
 func extractTargetTime(val any) (float64, error) {
