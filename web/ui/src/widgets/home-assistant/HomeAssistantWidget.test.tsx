@@ -498,6 +498,7 @@ describe('HomeAssistantWidget', () => {
     expect(getDomainIcon('sensor')).toBe('📊');
     expect(getDomainIcon('camera')).toBe('📹');
     expect(getDomainIcon('vacuum')).toBe('⚙️');
+    expect(getDomain('LIGHT.BEDROOM')).toBe('light');
   });
 
   it('handles dispatchWidgetAction payload options and error rejections', async () => {
@@ -541,6 +542,11 @@ describe('HomeAssistantWidget', () => {
       jsonFailMock,
     );
     expect(res).toEqual({});
+    // 5. Default fetchImpl falls back to the global fetch
+    const globalFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', globalFetch);
+    await dispatchWidgetAction('w-def', { domain: 'light', service: 'toggle' });
+    expect(globalFetch).toHaveBeenCalledWith('/api/widgets/w-def/action', expect.objectContaining({ method: 'POST' }));
   });
 
   it('covers domain optimistic updates and non-Error action rejections with dismiss', async () => {
@@ -638,7 +644,7 @@ describe('HomeAssistantWidget', () => {
     expect(fallbackContainer.querySelector('.ha-card-tile')).not.toBeNull();
   });
 
-  it('covers CardRenderer grid custom columns, nested card wrapper, and unknown cards', () => {
+  it('renders grid columns, nested wrappers, section edges and unknown card labels', () => {
     setHaWidget('ha-custom-cards', {
             cards: [
               {
@@ -667,9 +673,36 @@ describe('HomeAssistantWidget', () => {
     expect(grid.style.gridTemplateColumns).toMatch(/repeat\(3,\s*minmax\(0(px)?, 1fr\)\)/);
     expect(container.querySelector('.ha-card-wrapper')).not.toBeNull();
     expect(container.querySelector('.ha-card-unknown')?.textContent).toBe('Unsupported');
+    setHaWidget('ha-renderer-edges', {
+      view: {
+        sections: [
+          { title: 'Empty Section' },
+          {
+            cards: [
+              { type: 'grid', cards: [{ type: 'tile', entity: 'switch.grid_def' }] },
+              { type: 'entities', title: 'Empty Entities' },
+              { type: 'entities', entities: ['', { entity: '' }] },
+              { type: 'vertical-stack', cards: [{ type: 'tile', entity: 'switch.v_def' }] },
+              { name: 'Just Name' }, { type: 'plain-type' }, {},
+              { type: 'custom-foo', title: 'Foo Title' }, { type: 'custom-bar', name: 'Bar Name' },
+            ],
+          },
+        ],
+      },
+      entities: {
+        'switch.grid_def': { entity_id: 'switch.grid_def', state: 'off', attributes: {} },
+        'switch.v_def': { entity_id: 'switch.v_def', state: 'off', attributes: {} },
+      },
+    });
+    const { container: edgeCont } = render(<HomeAssistantWidget id="ha-renderer-edges" type="home-assistant" />);
+    expect(edgeCont.querySelector('.ha-card-grid')).not.toBeNull();
+    expect(edgeCont.querySelector('.ha-card-wrapper')).not.toBeNull();
+    expect(edgeCont.querySelectorAll('.ha-divider').length).toBeGreaterThan(0);
+    const unknownLabels = Array.from(edgeCont.querySelectorAll('.ha-card-unknown')).map((el) => el.textContent);
+    expect(unknownLabels).toEqual(['Just Name', 'plain-type', 'Card', 'Foo Title', 'Bar Name']);
   });
 
-  it('covers ButtonCard tap actions, inFlight disabling, and default domain behaviors', async () => {
+  it('dispatches ButtonCard tap actions with per-domain default services', async () => {
     const fetchCalls: { url: string; options: RequestInit }[] = [];
     const fetchMock = vi.fn().mockImplementation((url: string, options: RequestInit) => {
       fetchCalls.push({ url, options });
@@ -785,9 +818,66 @@ describe('HomeAssistantWidget', () => {
       entity_id: 'light.custom_call',
       service_data: { entity_id: 'light.custom_call', transition: 2 },
     });
+    // Service prefixes, media services, toggle/more-info actions and entity-less buttons.
+    setHaWidget('ha-button-variants', {
+      cards: [
+        {
+          type: 'button', entity: 'light.opt_btn',
+          tap_action: { action: 'call-service', service: '.toggle', service_data: { entity_id: 'light.opt_btn' } },
+        },
+        { type: 'button', entity: 'media_player.play_target', tap_action: { action: 'call-service', service: 'media_player.media_play' } },
+        { type: 'button', entity: 'media_player.pause_target', tap_action: { action: 'call-service', service: 'media_player.media_pause' } },
+        {
+          type: 'button',
+          entity: 'light.desk',
+          tap_action: { action: 'call_service', service: 'toggle', service_data: { entity_id: 'light.desk' } },
+        },
+        { type: 'button', entity: 'light.desk', tap_action: { action: 'more-info' } },
+        { type: 'button', entity: 'light.desk', tap_action: { action: 'toggle' } },
+        { type: 'button', name: 'Restart Server', tap_action: { action: 'call-service', service: 'homeassistant.restart' } },
+      ],
+      entities: {
+        'light.opt_btn': { entity_id: 'light.opt_btn', state: 'off', attributes: {} },
+        'media_player.play_target': { entity_id: 'media_player.play_target', state: 'paused', attributes: {} },
+        'media_player.pause_target': { entity_id: 'media_player.pause_target', state: 'playing', attributes: {} },
+        'light.desk': { entity_id: 'light.desk', state: 'off', attributes: {} },
+      },
+    });
+    const { container: variantCont } = render(<HomeAssistantWidget id="ha-button-variants" type="home-assistant" />);
+    const variantButtons = variantCont.querySelectorAll('.ha-card-button');
+    const callsBefore = fetchCalls.length;
+    for (const b of Array.from(variantButtons)) {
+      await act(async () => {
+        fireEvent.click(b);
+      });
+    }
+    expect(fetchCalls.slice(callsBefore).map((c) => JSON.parse(c.options.body as string))).toEqual([
+      { domain: 'light', service: 'toggle', entity_id: 'light.opt_btn', service_data: { entity_id: 'light.opt_btn' } },
+      {
+        domain: 'media_player', service: 'media_play', entity_id: 'media_player.play_target', service_data: { entity_id: 'media_player.play_target' },
+      },
+      {
+        domain: 'media_player', service: 'media_pause', entity_id: 'media_player.pause_target',
+        service_data: { entity_id: 'media_player.pause_target' },
+      },
+      { domain: 'light', service: 'toggle', entity_id: 'light.desk', service_data: { entity_id: 'light.desk' } },
+      { domain: 'light', service: 'toggle', entity_id: 'light.desk', service_data: { entity_id: 'light.desk' } },
+      { domain: 'homeassistant', service: 'restart', service_data: {} },
+    ]);
+    expect(variantCont.querySelector('[data-entity-id="media_player.play_target"]')?.getAttribute('data-state')).toBe('playing');
+    expect(variantCont.querySelector('[data-entity-id="media_player.pause_target"]')?.getAttribute('data-state')).toBe('paused');
+
+    // An entity-less action failure still surfaces the alert banner.
+    fetchMock.mockRejectedValueOnce(new Error('Server unavailable'));
+    await act(async () => {
+      fireEvent.click(itemAt(variantButtons, 6));
+    });
+    await waitFor(() => {
+      expect(variantCont.querySelector('.ha-alert-banner')?.textContent).toContain('Server unavailable');
+    });
   });
 
-  it('covers ThermostatCard dial buttons, modes, and defaults', async () => {
+  it('drives ThermostatCard dial buttons and modes, defaulting missing attributes', async () => {
     const fetchCalls: { url: string; options: RequestInit }[] = [];
     const fetchMock = vi.fn().mockImplementation((url: string, options: RequestInit) => {
       fetchCalls.push({ url, options });
@@ -853,9 +943,25 @@ describe('HomeAssistantWidget', () => {
       entity_id: 'climate.hallway',
       service_data: { entity_id: 'climate.hallway', hvac_mode: 'cool' },
     });
+    // Missing and null (Go nil map) attributes fall back to a 70° target.
+    setHaWidget('ha-tstat-def', {
+      cards: [{ type: 'thermostat', entity: 'climate.bare' }, { type: 'thermostat', entity: 'climate.nullattrs' }],
+      entities: {
+        'climate.bare': { entity_id: 'climate.bare', state: 'off', attributes: {} },
+        'climate.nullattrs': { entity_id: 'climate.nullattrs', state: 'off', attributes: null },
+      },
+    });
+    const { container: defCont } = render(<HomeAssistantWidget id="ha-tstat-def" type="home-assistant" />);
+    expect(Array.from(defCont.querySelectorAll('.ha-target-num')).map((el) => el.textContent)).toEqual(['70°', '70°']);
+    expect(defCont.querySelector('[data-entity-id="climate.nullattrs"] .ha-thermostat-title')?.textContent).toBe('nullattrs');
+    const barePlus = defCont.querySelector('[data-entity-id="climate.bare"] [aria-label="Increase Temperature"]') as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(barePlus);
+    });
+    expect(JSON.parse(itemAt(fetchCalls, 3).options.body as string).service_data).toEqual({ entity_id: 'climate.bare', temperature: 71 });
   });
 
-  it('covers PictureEntityCard interactions and camera refresh', async () => {
+  it('refreshes PictureEntityCard cameras, toggles other entities and falls back without an image', async () => {
     const fetchCalls: { url: string; options: RequestInit }[] = [];
     const fetchMock = vi.fn().mockImplementation((url: string, options: RequestInit) => {
       fetchCalls.push({ url, options });
@@ -907,9 +1013,34 @@ describe('HomeAssistantWidget', () => {
 
     // 3. Camera with no image renders fallback container
     expect(itemAt(picCards, 2).querySelector('.ha-picture-fallback')).not.toBeNull();
+    setHaWidget('ha-pic-branches', {
+      cards: [
+        { type: 'picture-entity', entity: 'switch.cam_power', camera_image: 'camera.yard' },
+        { type: 'picture-entity', entity: 'light.yard_light' },
+        { type: 'picture-entity', entity: 'sensor.no_pic' },
+        { type: 'picture-entity', entity: 'camera.nullattrs', camera_image: 'camera.nullattrs' },
+      ],
+      entities: {
+        'switch.cam_power': { entity_id: 'switch.cam_power', state: 'on', attributes: {} },
+        'camera.yard': { entity_id: 'camera.yard', state: 'idle', attributes: { entity_picture: '/yard.jpg' } },
+        'light.yard_light': { entity_id: 'light.yard_light', state: 'off', attributes: {} },
+        'sensor.no_pic': { entity_id: 'sensor.no_pic', state: '10', attributes: {} },
+        'camera.nullattrs': { entity_id: 'camera.nullattrs', state: 'idle', attributes: null },
+      },
+    });
+    const { container: branchCont } = render(<HomeAssistantWidget id="ha-pic-branches" type="home-assistant" />);
+    const branchCards = branchCont.querySelectorAll('.ha-card-picture');
+    expect(branchCards.length).toBe(4);
+    await act(async () => {
+      fireEvent.click(itemAt(branchCards, 0));
+      fireEvent.click(itemAt(branchCards, 1));
+    });
+    expect(fetchCalls.slice(1).map((c) => JSON.parse(c.options.body as string).entity_id)).toEqual(['light.yard_light']);
+    expect((itemAt(branchCards, 0).querySelector('img') as HTMLImageElement).src).toContain('/yard.jpg?ts=');
+    expect(itemAt(branchCards, 2).querySelector('.ha-picture-fallback')).not.toBeNull();
   });
 
-  it('covers DomainTouchControls quick brightness, speeds, cover stop/close, lock toggle, climate temp-down, media buttons, binary sensors, and unknown domains', async () => {
+  it('dispatches DomainTouchControls actions for every domain row and labels binary sensors', async () => {
     const fetchCalls: { url: string; options: RequestInit }[] = [];
     const fetchMock = vi.fn().mockImplementation((url: string, options: RequestInit) => {
       fetchCalls.push({ url, options });
@@ -933,6 +1064,9 @@ describe('HomeAssistantWidget', () => {
                   'binary_sensor.office_occupancy',
                   'binary_sensor.user_presence',
                   'vacuum.roborock',
+                  'binary_sensor.smoke',
+                  'climate.no_target',
+                  'media_player.paused_speaker',
                 ],
               },
             ],
@@ -948,6 +1082,9 @@ describe('HomeAssistantWidget', () => {
               'binary_sensor.office_occupancy': { entity_id: 'binary_sensor.office_occupancy', state: 'off', attributes: { friendly_name: 'Office Occupancy', device_class: 'occupancy' } },
               'binary_sensor.user_presence': { entity_id: 'binary_sensor.user_presence', state: 'on', attributes: { friendly_name: 'Presence', device_class: 'presence' } },
               'vacuum.roborock': { entity_id: 'vacuum.roborock', state: 'docked', attributes: { friendly_name: 'Vacuum' } },
+              'binary_sensor.smoke': { entity_id: 'binary_sensor.smoke', state: 'off', attributes: { device_class: 'smoke' } },
+              'climate.no_target': { entity_id: 'climate.no_target', state: 'auto', attributes: {} },
+              'media_player.paused_speaker': { entity_id: 'media_player.paused_speaker', state: 'paused', attributes: {} },
             },
           });
 
@@ -1065,121 +1202,18 @@ describe('HomeAssistantWidget', () => {
 
     // 8. Vacuum generic state
     expect(container.querySelector('[data-entity-id="vacuum.roborock"] .ha-generic-state')?.textContent).toBe('docked');
-  });
+    expect(container.querySelector('[data-entity-id="binary_sensor.smoke"]')?.textContent).toContain('Off');
+    expect(container.querySelector('[data-entity-id="climate.no_target"] .ha-temp-inline')?.textContent).toBe('70°');
 
-  it('covers formatStateLabel permutations across multiple domains and state configs', () => {
-    setHaWidget('ha-labels', {
-            cards: [
-              { type: 'tile', entity: 'light.on_no_brightness' },
-              { type: 'tile', entity: 'climate.no_cur_temp' },
-              { type: 'tile', entity: 'media_player.title_only' },
-              { type: 'tile', entity: 'media_player.no_title' },
-              { type: 'tile', entity: 'sensor.no_unit' },
-            ],
-            entities: {
-              'light.on_no_brightness': { entity_id: 'light.on_no_brightness', state: 'on', attributes: {} },
-              'climate.no_cur_temp': { entity_id: 'climate.no_cur_temp', state: 'auto', attributes: {} },
-              'media_player.title_only': { entity_id: 'media_player.title_only', state: 'playing', attributes: { media_title: 'Single Title' } },
-              'media_player.no_title': { entity_id: 'media_player.no_title', state: 'idle', attributes: {} },
-              'sensor.no_unit': { entity_id: 'sensor.no_unit', state: 'online', attributes: {} },
-            },
-          });
-
-    const { container } = render(<HomeAssistantWidget id="ha-labels" type="home-assistant" />);
-    expect(container.querySelector('[data-entity-id="light.on_no_brightness"] .ha-tile-state')?.textContent).toBe('On');
-    expect(container.querySelector('[data-entity-id="climate.no_cur_temp"] .ha-tile-state')?.textContent).toBe('auto');
-    expect(container.querySelector('[data-entity-id="media_player.title_only"] .ha-tile-state')?.textContent).toBe(
-      'Single Title',
-    );
-    expect(container.querySelector('[data-entity-id="media_player.no_title"] .ha-tile-state')?.textContent).toBe('idle');
-    expect(container.querySelector('[data-entity-id="sensor.no_unit"] .ha-tile-state')?.textContent).toBe('online');
-  });
-
-  it('covers remaining optimistic action branches and ButtonCard inFlight/svcEnt branches', async () => {
-    let resolveCall: (() => void) | null = null;
-    const fetchCalls: { url: string; options: RequestInit }[] = [];
-    const fetchMock = vi.fn().mockImplementation((url: string, options: RequestInit) => {
-      fetchCalls.push({ url, options });
-      return new Promise((resolve) => {
-        resolveCall = () => { resolve(new Response(JSON.stringify({ status: 'ok' }))); };
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    setHaWidget('ha-deep-branches', {
-            cards: [
-              { type: 'tile', entity: 'fan.opt_fan' },
-              { type: 'tile', entity: 'light.opt_light' },
-              { type: 'tile', entity: 'media_player.opt_player' },
-              {
-                type: 'button',
-                entity: 'light.opt_btn',
-                tap_action: {
-                  action: 'call-service',
-                  service: '.toggle',
-                  service_data: { entity_id: 'light.opt_btn' },
-                },
-              },
-              {
-                name: 'Unnamed Type Card',
-              },
-              {
-                // completely empty card -> renders 'Card'
-              },
-            ],
-            entities: {
-              'fan.opt_fan': { entity_id: 'fan.opt_fan', state: 'off', attributes: {} },
-              'light.opt_light': { entity_id: 'light.opt_light', state: 'on', attributes: {} },
-              'media_player.opt_player': { entity_id: 'media_player.opt_player', state: 'paused', attributes: {} },
-              'light.opt_btn': { entity_id: 'light.opt_btn', state: 'off', attributes: {} },
-            },
-          });
-
-    const { container } = render(<HomeAssistantWidget id="ha-deep-branches" type="home-assistant" />);
-
-    // Check unknown card fallbacks
-    const unknownCards = container.querySelectorAll('.ha-card-unknown');
-    expect(unknownCards.length).toBe(2);
-    expect(itemAt(unknownCards, 0).textContent).toBe('Unnamed Type Card');
-    expect(itemAt(unknownCards, 1).textContent).toBe('Card');
-
-    // 1. ButtonCard tap with svcEnt and empty domain prefix (falls back to domain)
-    const btn = container.querySelector('.ha-card-button') as HTMLButtonElement;
+    // 9. Optimistic state: paused player plays, lit lamp toggles off.
     await act(async () => {
-      fireEvent.click(btn);
+      fireEvent.click(container.querySelector('[data-entity-id="media_player.paused_speaker"] [data-action="play-pause"]') as HTMLButtonElement);
     });
-    expect(fetchCalls.length).toBe(1);
-    expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
-      domain: 'light',
-      service: 'toggle',
-      entity_id: 'light.opt_btn',
-      service_data: { entity_id: 'light.opt_btn' },
-    });
-
-    // Resolve the in-flight request
+    expect(container.querySelector('[data-entity-id="media_player.paused_speaker"]')?.getAttribute('data-state')).toBe('playing');
     await act(async () => {
-      resolveCall?.();
+      fireEvent.click(lampRow?.querySelector('[data-action="toggle"]') as HTMLButtonElement);
     });
-
-    // 2. Play pause when paused -> optimistic playing
-    const playPauseBtn = container.querySelector('[data-entity-id="media_player.opt_player"] [data-action="play-pause"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(playPauseBtn);
-    });
-    await act(async () => {
-      resolveCall?.();
-    });
-    expect(container.querySelector('[data-entity-id="media_player.opt_player"]')?.getAttribute('data-state')).toBe('playing');
-
-    // 3. Toggle light when on -> optimistic turn_off
-    const lightToggle = container.querySelector('[data-entity-id="light.opt_light"] [data-action="toggle"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(lightToggle);
-    });
-    await act(async () => {
-      resolveCall?.();
-    });
-    expect(container.querySelector('[data-entity-id="light.opt_light"]')?.getAttribute('data-state')).toBe('off');
+    expect(container.querySelector('[data-entity-id="light.active_lamp"]')?.getAttribute('data-state')).toBe('off');
   });
 
   it('guards non-entity items in CardRenderer and handles getEntityName with empty id', () => {
@@ -1248,394 +1282,132 @@ describe('HomeAssistantWidget', () => {
     expect(imgAfter.src).toContain('?token=abc123xyz&ts=');
   });
 
-  it('covers remaining branches across cards, binary sensors, media player, and snapshot updates', async () => {
-    // 1. getDomain edge cases
-    expect(getDomain('LIGHT.BEDROOM')).toBe('light');
-
-    // 2. data snapshot change resets overrides
-    setHaWidget('ha-branches', {
-            cards: [{ type: 'tile', entity: 'switch.living' }],
-            entities: {
-              'switch.living': { entity_id: 'switch.living', state: 'off', attributes: {} },
-            },
-          });
-
-    const { container, rerender } = render(<HomeAssistantWidget id="ha-branches" type="home-assistant" />);
-    const swBtn = container.querySelector('[data-action="toggle"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(swBtn);
+  it('drops optimistic overrides when a new snapshot arrives', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
+    const snapshot = (state: string) => ({
+      cards: [{ type: 'tile', entity: 'switch.living' }],
+      entities: { 'switch.living': { entity_id: 'switch.living', state, attributes: {} } },
     });
-
-    setHaWidget('ha-branches', {
-            cards: [{ type: 'tile', entity: 'switch.living' }],
-            entities: {
-              'switch.living': { entity_id: 'switch.living', state: 'on', attributes: {} },
-            },
-          });
-    rerender(<HomeAssistantWidget id="ha-branches" type="home-assistant" />);
-
-    // 3. Binary sensor device classes (door, occupancy, presence, other)
-    setHaWidget('ha-binary-classes', {
-            cards: [
-              {
-                type: 'entities',
-                entities: [
-                  'binary_sensor.door_open',
-                  'binary_sensor.door_closed',
-                  'binary_sensor.occ_active',
-                  'binary_sensor.occ_clear',
-                  'binary_sensor.pres_home',
-                  'binary_sensor.pres_away',
-                  'binary_sensor.other',
-                ],
-              },
-            ],
-            entities: {
-              'binary_sensor.door_open': { entity_id: 'binary_sensor.door_open', state: 'on', attributes: { device_class: 'door' } },
-              'binary_sensor.door_closed': { entity_id: 'binary_sensor.door_closed', state: 'off', attributes: { device_class: 'door' } },
-              'binary_sensor.occ_active': { entity_id: 'binary_sensor.occ_active', state: 'on', attributes: { device_class: 'occupancy' } },
-              'binary_sensor.occ_clear': { entity_id: 'binary_sensor.occ_clear', state: 'off', attributes: { device_class: 'occupancy' } },
-              'binary_sensor.pres_home': { entity_id: 'binary_sensor.pres_home', state: 'on', attributes: { device_class: 'presence' } },
-              'binary_sensor.pres_away': { entity_id: 'binary_sensor.pres_away', state: 'off', attributes: { device_class: 'presence' } },
-              'binary_sensor.other': { entity_id: 'binary_sensor.other', state: 'off', attributes: { device_class: 'smoke' } },
-            },
-          });
-
-    const { container: binContainer } = render(<HomeAssistantWidget id="ha-binary-classes" type="home-assistant" />);
-    expect(binContainer.querySelector('[data-entity-id="binary_sensor.door_open"]')?.textContent).toContain('Open');
-    expect(binContainer.querySelector('[data-entity-id="binary_sensor.door_closed"]')?.textContent).toContain('Closed');
-    expect(binContainer.querySelector('[data-entity-id="binary_sensor.occ_active"]')?.textContent).toContain('Occupied');
-    expect(binContainer.querySelector('[data-entity-id="binary_sensor.occ_clear"]')?.textContent).toContain('Clear');
-    expect(binContainer.querySelector('[data-entity-id="binary_sensor.pres_home"]')?.textContent).toContain('Home');
-    expect(binContainer.querySelector('[data-entity-id="binary_sensor.pres_away"]')?.textContent).toContain('Away');
-    expect(binContainer.querySelector('[data-entity-id="binary_sensor.other"]')?.textContent).toContain('Off');
-
-    // 4. Media player buttons: prev, next, vol-down, vol-up
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    setHaWidget('ha-media-btns', {
-            cards: [{ type: 'tile', entity: 'media_player.living' }],
-            entities: {
-              'media_player.living': { entity_id: 'media_player.living', state: 'playing', attributes: {} },
-            },
-          });
-
-    const { container: mediaContainer } = render(<HomeAssistantWidget id="ha-media-btns" type="home-assistant" />);
-    const prevBtn = mediaContainer.querySelector('[data-action="prev"]') as HTMLButtonElement;
-    const nextBtn = mediaContainer.querySelector('[data-action="next"]') as HTMLButtonElement;
-    const volDownBtn = mediaContainer.querySelector('[data-action="vol-down"]') as HTMLButtonElement;
-    const volUpBtn = mediaContainer.querySelector('[data-action="vol-up"]') as HTMLButtonElement;
-
+    setHaWidget('ha-snapshot-reset', snapshot('off'));
+    const { container, rerender } = render(<HomeAssistantWidget id="ha-snapshot-reset" type="home-assistant" />);
     await act(async () => {
-      fireEvent.click(prevBtn);
-      fireEvent.click(nextBtn);
-      fireEvent.click(volDownBtn);
-      fireEvent.click(volUpBtn);
+      fireEvent.click(container.querySelector('[data-action="toggle"]') as HTMLButtonElement);
     });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-
-    // 5. ButtonCard with lock domain when unlocked -> calls lock
-    setHaWidget('ha-lock-btn', {
-            cards: [{ type: 'button', entity: 'lock.garage_lock' }],
-            entities: {
-              'lock.garage_lock': { entity_id: 'lock.garage_lock', state: 'unlocked', attributes: {} },
-            },
-          });
-
-    const { container: lockContainer } = render(<HomeAssistantWidget id="ha-lock-btn" type="home-assistant" />);
-    const lockBtn = lockContainer.querySelector('.ha-card-button') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(lockBtn);
-    });
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/action'),
-      expect.objectContaining({
-        body: JSON.stringify({
-          domain: 'lock',
-          service: 'lock',
-          entity_id: 'lock.garage_lock',
-          service_data: { entity_id: 'lock.garage_lock' },
-        }),
-      }),
-    );
-
-    // 6. dispatchWidgetAction without entity_id
-    await dispatchWidgetAction('ha-global', { domain: 'homeassistant', service: 'restart' }, fetchMock);
-
-    // 7. dispatchWidgetAction with default fetch
-    await dispatchWidgetAction('ha-def-fetch', { domain: 'light', service: 'toggle' });
-
-    // 8. Test media_play and media_pause optimistic updates via button tap
-    setHaWidget('ha-opt-media-btns', {
-            cards: [
-              {
-                type: 'button',
-                entity: 'media_player.play_target',
-                tap_action: { action: 'call-service', service: 'media_player.media_play' },
-              },
-              {
-                type: 'button',
-                entity: 'media_player.pause_target',
-                tap_action: { action: 'call-service', service: 'media_player.media_pause' },
-              },
-            ],
-            entities: {
-              'media_player.play_target': { entity_id: 'media_player.play_target', state: 'paused', attributes: {} },
-              'media_player.pause_target': { entity_id: 'media_player.pause_target', state: 'playing', attributes: {} },
-            },
-          });
-
-    const { container: optMediaCont } = render(<HomeAssistantWidget id="ha-opt-media-btns" type="home-assistant" />);
-    const btns = optMediaCont.querySelectorAll('.ha-card-button');
-    await act(async () => {
-      fireEvent.click(itemAt(btns, 0));
-      fireEvent.click(itemAt(btns, 1));
-    });
-
-    // 9. Cover buttons: stop and close
-    setHaWidget('ha-cover-btns', {
-            cards: [{ type: 'tile', entity: 'cover.shades' }],
-            entities: {
-              'cover.shades': { entity_id: 'cover.shades', state: 'open', attributes: {} },
-            },
-          });
-
-    const { container: coverCont } = render(<HomeAssistantWidget id="ha-cover-btns" type="home-assistant" />);
-    const stopBtn = coverCont.querySelector('[data-action="stop"]') as HTMLButtonElement;
-    const closeBtn = coverCont.querySelector('[data-action="close"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(stopBtn);
-      fireEvent.click(closeBtn);
-    });
-
-    // 10. Unknown cards
-    setHaWidget('ha-unknowns', {
-            cards: [
-              { type: 'custom-foo', title: 'Foo Title' },
-              { type: 'custom-bar', name: 'Bar Name' },
-              { type: 'custom-baz' },
-            ],
-          });
-
-    const { container: unkCont } = render(<HomeAssistantWidget id="ha-unknowns" type="home-assistant" />);
-    const unks = unkCont.querySelectorAll('.ha-card-unknown');
-    expect(unks.length).toBe(3);
-    expect(itemAt(unks, 0).textContent).toBe('Foo Title');
-    expect(itemAt(unks, 1).textContent).toBe('Bar Name');
-    expect(itemAt(unks, 2).textContent).toBe('custom-baz');
+    expect(container.querySelector('[data-entity-id="switch.living"]')?.getAttribute('data-state')).toBe('on');
+    setHaWidget('ha-snapshot-reset', snapshot('off'));
+    rerender(<HomeAssistantWidget id="ha-snapshot-reset" type="home-assistant" />);
+    expect(container.querySelector('[data-entity-id="switch.living"]')?.getAttribute('data-state')).toBe('off');
   });
 
-  it('covers applyOptimisticUpdate, formatStateLabel, and getBinaryLabel comprehensive unit paths', () => {
-    const base = { entity_id: 'light.desk', state: 'off', attributes: {} };
-    expect(applyOptimisticUpdate(base, 'light', 'turn_on')).toEqual({ ...base, state: 'on' });
-    expect(applyOptimisticUpdate(base, 'light', 'turn_on', { brightness: 128 })).toEqual({
-      ...base,
-      state: 'on',
-      attributes: { brightness: 128 },
-    });
-    expect(applyOptimisticUpdate(base, 'fan', 'turn_on', { percentage: 60 })).toEqual({
-      ...base,
-      state: 'on',
-      attributes: { percentage: 60 },
-    });
-    expect(applyOptimisticUpdate({ ...base, state: 'on' }, 'light', 'turn_off')).toEqual({ ...base, state: 'off' });
-    expect(applyOptimisticUpdate(base, 'switch', 'toggle')).toEqual({ ...base, state: 'on' });
-    expect(applyOptimisticUpdate({ ...base, state: 'on' }, 'switch', 'toggle')).toEqual({ ...base, state: 'off' });
-    expect(applyOptimisticUpdate(base, 'lock', 'lock')).toEqual({ ...base, state: 'locked' });
-    expect(applyOptimisticUpdate(base, 'lock', 'unlock')).toEqual({ ...base, state: 'unlocked' });
-    expect(applyOptimisticUpdate(base, 'cover', 'open_cover')).toEqual({ ...base, state: 'open' });
-    expect(applyOptimisticUpdate(base, 'cover', 'close_cover')).toEqual({ ...base, state: 'closed' });
-    expect(applyOptimisticUpdate(base, 'climate', 'set_temperature', { temperature: 72 })).toEqual({
-      ...base,
-      attributes: { temperature: 72 },
-    });
-    expect(applyOptimisticUpdate(base, 'climate', 'set_hvac_mode', { hvac_mode: 'heat' })).toEqual({
-      ...base,
-      state: 'heat',
-    });
-    expect(applyOptimisticUpdate(base, 'media_player', 'media_play')).toEqual({ ...base, state: 'playing' });
-    expect(applyOptimisticUpdate(base, 'media_player', 'media_pause')).toEqual({ ...base, state: 'paused' });
-    expect(applyOptimisticUpdate({ ...base, state: 'playing' }, 'media_player', 'media_play_pause')).toEqual({
-      ...base,
-      state: 'paused',
-    });
-    expect(applyOptimisticUpdate({ ...base, state: 'paused' }, 'media_player', 'media_play_pause')).toEqual({
-      ...base,
-      state: 'playing',
-    });
-    expect(applyOptimisticUpdate(base, 'sensor', 'update')).toEqual(base);
+  const applyOptimisticUpdateTests = [
+    { name: 'light turn_on', state: 'off', domain: 'light', service: 'turn_on', data: undefined, wantState: 'on', wantAttrs: {} },
+    {
+      name: 'light turn_on with brightness',
+      state: 'off', domain: 'light', service: 'turn_on', data: { brightness: 128 }, wantState: 'on', wantAttrs: { brightness: 128 },
+    },
+    {
+      name: 'fan turn_on with percentage',
+      state: 'off', domain: 'fan', service: 'turn_on', data: { percentage: 60 }, wantState: 'on', wantAttrs: { percentage: 60 },
+    },
+    { name: 'light turn_off', state: 'on', domain: 'light', service: 'turn_off', data: undefined, wantState: 'off', wantAttrs: {} },
+    { name: 'switch toggle off to on', state: 'off', domain: 'switch', service: 'toggle', data: undefined, wantState: 'on', wantAttrs: {} },
+    { name: 'switch toggle on to off', state: 'on', domain: 'switch', service: 'toggle', data: undefined, wantState: 'off', wantAttrs: {} },
+    {
+      name: 'fan set_percentage above zero turns on',
+      state: 'off', domain: 'fan', service: 'set_percentage', data: { percentage: 66 }, wantState: 'on', wantAttrs: { percentage: 66 },
+    },
+    {
+      name: 'fan set_percentage zero turns off',
+      state: 'on', domain: 'fan', service: 'set_percentage', data: { percentage: 0 }, wantState: 'off', wantAttrs: { percentage: 0 },
+    },
+    { name: 'lock lock', state: 'off', domain: 'lock', service: 'lock', data: undefined, wantState: 'locked', wantAttrs: {} },
+    { name: 'lock unlock', state: 'off', domain: 'lock', service: 'unlock', data: undefined, wantState: 'unlocked', wantAttrs: {} },
+    { name: 'cover open_cover', state: 'off', domain: 'cover', service: 'open_cover', data: undefined, wantState: 'open', wantAttrs: {} },
+    { name: 'cover close_cover', state: 'open', domain: 'cover', service: 'close_cover', data: undefined, wantState: 'closed', wantAttrs: {} },
+    {
+      name: 'cover stop_cover keeps state', state: 'open', domain: 'cover', service: 'stop_cover', data: undefined, wantState: 'open', wantAttrs: {},
+    },
+    {
+      name: 'climate set_temperature',
+      state: 'off', domain: 'climate', service: 'set_temperature', data: { temperature: 72 }, wantState: 'off', wantAttrs: { temperature: 72 },
+    },
+    {
+      name: 'climate set_hvac_mode',
+      state: 'off', domain: 'climate', service: 'set_hvac_mode', data: { hvac_mode: 'heat' }, wantState: 'heat', wantAttrs: {},
+    },
+    { name: 'media_play', state: 'off', domain: 'media_player', service: 'media_play', data: undefined, wantState: 'playing', wantAttrs: {} },
+    { name: 'media_pause', state: 'off', domain: 'media_player', service: 'media_pause', data: undefined, wantState: 'paused', wantAttrs: {} },
+    {
+      name: 'media_play_pause while playing',
+      state: 'playing', domain: 'media_player', service: 'media_play_pause', data: undefined, wantState: 'paused', wantAttrs: {},
+    },
+    {
+      name: 'media_play_pause while paused',
+      state: 'paused', domain: 'media_player', service: 'media_play_pause', data: undefined, wantState: 'playing', wantAttrs: {},
+    },
+    {
+      name: 'media volume_up keeps state',
+      state: 'playing', domain: 'media_player', service: 'volume_up', data: undefined, wantState: 'playing', wantAttrs: {},
+    },
+    { name: 'unknown domain is unchanged', state: 'off', domain: 'sensor', service: 'update', data: undefined, wantState: 'off', wantAttrs: {} },
+  ];
 
-    expect(formatStateLabel('light', 'on', { brightness: 255 })).toBe('On · 100%');
-    expect(formatStateLabel('light', 'on')).toBe('On');
-    expect(formatStateLabel('light', 'off')).toBe('Off');
-    expect(formatStateLabel('climate', 'heat', { current_temperature: 71 })).toBe('heat · 71°');
-    expect(formatStateLabel('climate', 'heat')).toBe('heat');
-    expect(formatStateLabel('media_player', 'playing', { media_title: 'Song', media_artist: 'Band' })).toBe('Song - Band');
-    expect(formatStateLabel('media_player', 'playing', { media_title: 'Solo' })).toBe('Solo');
-    expect(formatStateLabel('media_player', 'idle')).toBe('idle');
-    expect(formatStateLabel('sensor', '42', { unit_of_measurement: '%' })).toBe('42 %');
-    expect(formatStateLabel('sensor', '42')).toBe('42');
-    expect(formatStateLabel('lock', 'locked')).toBe('locked');
-
-    expect(getBinaryLabel(true, 'door')).toBe('Open');
-    expect(getBinaryLabel(false, 'door')).toBe('Closed');
-    expect(getBinaryLabel(true, 'window')).toBe('Open');
-    expect(getBinaryLabel(false, 'window')).toBe('Closed');
-    expect(getBinaryLabel(true, 'occupancy')).toBe('Occupied');
-    expect(getBinaryLabel(false, 'occupancy')).toBe('Clear');
-    expect(getBinaryLabel(true, 'presence')).toBe('Home');
-    expect(getBinaryLabel(false, 'presence')).toBe('Away');
-    expect(getBinaryLabel(true, 'motion')).toBe('Motion');
-    expect(getBinaryLabel(false, 'motion')).toBe('Clear');
-    expect(getBinaryLabel(true, 'unknown')).toBe('On');
-    expect(getBinaryLabel(false, 'unknown')).toBe('Off');
-    expect(getBinaryLabel(true)).toBe('On');
-    expect(getBinaryLabel(false)).toBe('Off');
-  });
-
-  it('covers sendAction without entity_id and CardRenderer / PictureEntityCard edge branches', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' })));
-    vi.stubGlobal('fetch', fetchMock);
-
-    // 1. sendAction without entity_id (success + error)
-    setHaWidget('ha-no-ent', {
-      cards: [
-        {
-          type: 'button',
-          name: 'Restart Server',
-          tap_action: { action: 'call-service', service: 'homeassistant.restart' },
-        },
-      ],
-      entities: {},
+  for (const tc of applyOptimisticUpdateTests) {
+    it(`applyOptimisticUpdate: ${tc.name}`, () => {
+      const curr = { entity_id: `${tc.domain}.alpha`, state: tc.state, attributes: {} };
+      expect(applyOptimisticUpdate(curr, tc.domain, tc.service, tc.data)).toEqual({ ...curr, state: tc.wantState, attributes: tc.wantAttrs });
     });
+  }
 
-    const { container: noEntCont } = render(<HomeAssistantWidget id="ha-no-ent" type="home-assistant" />);
-    const restartBtn = noEntCont.querySelector('.ha-card-button') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(restartBtn);
+  const formatStateLabelTests = [
+    { name: 'light on with brightness', domain: 'light', state: 'on', attrs: { brightness: 255 }, want: 'On · 100%' },
+    { name: 'light on without attrs', domain: 'light', state: 'on', attrs: undefined, want: 'On' },
+    { name: 'light on without brightness', domain: 'light', state: 'on', attrs: {}, want: 'On' },
+    { name: 'light off', domain: 'light', state: 'off', attrs: undefined, want: 'Off' },
+    { name: 'climate with current temperature', domain: 'climate', state: 'heat', attrs: { current_temperature: 71 }, want: 'heat · 71°' },
+    { name: 'climate without attrs', domain: 'climate', state: 'heat', attrs: undefined, want: 'heat' },
+    { name: 'climate without current temperature', domain: 'climate', state: 'auto', attrs: {}, want: 'auto' },
+    {
+      name: 'media title and artist',
+      domain: 'media_player', state: 'playing', attrs: { media_title: 'Song', media_artist: 'Band' }, want: 'Song - Band',
+    },
+    { name: 'media title only', domain: 'media_player', state: 'playing', attrs: { media_title: 'Solo' }, want: 'Solo' },
+    { name: 'media without attrs', domain: 'media_player', state: 'idle', attrs: undefined, want: 'idle' },
+    { name: 'media without title', domain: 'media_player', state: 'idle', attrs: {}, want: 'idle' },
+    { name: 'sensor with unit', domain: 'sensor', state: '42', attrs: { unit_of_measurement: '%' }, want: '42 %' },
+    { name: 'sensor without attrs', domain: 'sensor', state: '42', attrs: undefined, want: '42' },
+    { name: 'sensor without unit', domain: 'sensor', state: 'online', attrs: {}, want: 'online' },
+    { name: 'other domain returns state', domain: 'lock', state: 'locked', attrs: undefined, want: 'locked' },
+  ];
+
+  for (const tc of formatStateLabelTests) {
+    it(`formatStateLabel: ${tc.name}`, () => {
+      expect(formatStateLabel(tc.domain, tc.state, tc.attrs)).toBe(tc.want);
     });
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/widgets/ha-no-ent/action',
-      expect.objectContaining({ body: JSON.stringify({ domain: 'homeassistant', service: 'restart', service_data: {} }) }),
-    );
+  }
 
-    fetchMock.mockRejectedValueOnce(new Error('Server unavailable'));
-    await act(async () => {
-      fireEvent.click(restartBtn);
+  const getBinaryLabelTests = [
+    { isOn: true, dc: 'door', want: 'Open' },
+    { isOn: false, dc: 'door', want: 'Closed' },
+    { isOn: true, dc: 'window', want: 'Open' },
+    { isOn: false, dc: 'window', want: 'Closed' },
+    { isOn: true, dc: 'occupancy', want: 'Occupied' },
+    { isOn: false, dc: 'occupancy', want: 'Clear' },
+    { isOn: true, dc: 'presence', want: 'Home' },
+    { isOn: false, dc: 'presence', want: 'Away' },
+    { isOn: true, dc: 'motion', want: 'Motion' },
+    { isOn: false, dc: 'motion', want: 'Clear' },
+    { isOn: true, dc: 'unknown', want: 'On' },
+    { isOn: false, dc: 'unknown', want: 'Off' },
+    { isOn: true, dc: undefined, want: 'On' },
+    { isOn: false, dc: undefined, want: 'Off' },
+  ];
+
+  for (const tc of getBinaryLabelTests) {
+    it(`getBinaryLabel(${tc.isOn}, ${tc.dc}) is ${tc.want}`, () => {
+      expect(getBinaryLabel(tc.isOn, tc.dc)).toBe(tc.want);
     });
-    await waitFor(() => {
-      expect(noEntCont.querySelector('.ha-alert-banner')?.textContent).toContain('Server unavailable');
-    });
-
-    // 2. CardRenderer edge cases: empty section, grid without columns, entities without entities, nested wrapper without title, unknown card variations
-    setHaWidget('ha-renderer-edges', {
-      view: {
-        sections: [
-          { title: 'Empty Section' },
-          {
-            cards: [
-              { type: 'grid', cards: [{ type: 'tile', entity: 'switch.grid_def' }] },
-              { type: 'entities', title: 'Empty Entities' },
-              { type: 'entities', entities: ['', { entity: '' }] },
-              { type: 'vertical-stack', cards: [{ type: 'tile', entity: 'switch.v_def' }] },
-              { name: 'Just Name' }, { type: 'plain-type' }, {},
-            ],
-          },
-        ],
-      },
-      entities: {
-        'switch.grid_def': { entity_id: 'switch.grid_def', state: 'off', attributes: {} },
-        'switch.v_def': { entity_id: 'switch.v_def', state: 'off', attributes: {} },
-      },
-    });
-
-    const { container: rendCont } = render(<HomeAssistantWidget id="ha-renderer-edges" type="home-assistant" />);
-    expect(rendCont.querySelector('.ha-card-grid')).not.toBeNull();
-    expect(rendCont.querySelector('.ha-card-wrapper')).not.toBeNull();
-    expect(rendCont.querySelectorAll('.ha-divider').length).toBeGreaterThan(0);
-    const unknowns = rendCont.querySelectorAll('.ha-card-unknown');
-    expect(itemAt(unknowns, 0).textContent).toBe('Just Name');
-    expect(itemAt(unknowns, 1).textContent).toBe('plain-type');
-    expect(itemAt(unknowns, 2).textContent).toBe('Card');
-
-    // 3. PictureEntityCard tap branches and fallback image
-    setHaWidget('ha-pic-branches', {
-      cards: [
-        { type: 'picture-entity', entity: 'switch.cam_power', camera_image: 'camera.yard' },
-        { type: 'picture-entity', entity: 'light.yard_light' },
-        { type: 'picture-entity', entity: 'sensor.no_pic' },
-      ],
-      entities: {
-        'switch.cam_power': { entity_id: 'switch.cam_power', state: 'on', attributes: {} },
-        'camera.yard': { entity_id: 'camera.yard', state: 'idle', attributes: { entity_picture: '/yard.jpg' } },
-        'light.yard_light': { entity_id: 'light.yard_light', state: 'off', attributes: {} },
-        'sensor.no_pic': { entity_id: 'sensor.no_pic', state: '10', attributes: {} },
-      },
-    });
-
-    const { container: picBCont } = render(<HomeAssistantWidget id="ha-pic-branches" type="home-assistant" />);
-    const picCards = picBCont.querySelectorAll('.ha-card-picture');
-    expect(picCards.length).toBe(3);
-    await act(async () => {
-      fireEvent.click(itemAt(picCards, 0));
-      fireEvent.click(itemAt(picCards, 1));
-    });
-    expect(itemAt(picCards, 2).querySelector('.ha-picture-fallback')).not.toBeNull();
-
-    // 4. ButtonCard tap action variations
-    setHaWidget('ha-btn-branches', {
-      cards: [
-        { type: 'button', entity: 'lock.front' },
-        { type: 'button', entity: 'light.desk', tap_action: { action: 'call_service', service: 'toggle', service_data: { entity_id: 'light.desk' } } },
-        { type: 'button', entity: 'light.desk', tap_action: { action: 'more-info' } },
-        { type: 'button', entity: 'light.desk', tap_action: { action: 'toggle' } },
-      ],
-      entities: {
-        'lock.front': { entity_id: 'lock.front', state: 'unlocked', attributes: {} },
-        'light.desk': { entity_id: 'light.desk', state: 'off', attributes: {} },
-      },
-    });
-
-    const { container: btnBCont } = render(<HomeAssistantWidget id="ha-btn-branches" type="home-assistant" />);
-    const bCards = btnBCont.querySelectorAll('.ha-card-button');
-    const callsBeforeButtons = fetchMock.mock.calls.length;
-    await act(async () => {
-      fireEvent.click(itemAt(bCards, 0));
-      fireEvent.click(itemAt(bCards, 1));
-      fireEvent.click(itemAt(bCards, 2));
-      fireEvent.click(itemAt(bCards, 3));
-    });
-    expect(fetchMock.mock.calls.length - callsBeforeButtons).toBe(3);
-
-    // 5. ThermostatCard defaults without attributes
-    setHaWidget('ha-tstat-def', {
-      cards: [{ type: 'thermostat', entity: 'climate.bare' }],
-      entities: { 'climate.bare': { entity_id: 'climate.bare', state: 'off', attributes: {} } },
-    });
-
-    const { container: tstatCont } = render(<HomeAssistantWidget id="ha-tstat-def" type="home-assistant" />);
-    expect(tstatCont.querySelector('.ha-target-num')?.textContent).toBe('70°');
-    const plusBtn = tstatCont.querySelector('.ha-target-temp-dial button:last-child') as HTMLButtonElement;
-    await act(async () => { fireEvent.click(plusBtn); });
-
-    // 6. Null attribute maps (Go nil map) fall back to defaults instead of throwing
-    setHaWidget('ha-null-attrs', {
-      cards: [
-        { type: 'thermostat', entity: 'climate.nullattrs' },
-        { type: 'picture-entity', entity: 'camera.nullattrs', camera_image: 'camera.nullattrs' },
-      ],
-      entities: {
-        'climate.nullattrs': { entity_id: 'climate.nullattrs', state: 'off', attributes: null },
-        'camera.nullattrs': { entity_id: 'camera.nullattrs', state: 'idle', attributes: null },
-      },
-    });
-
-    const { container: nullCont } = render(<HomeAssistantWidget id="ha-null-attrs" type="home-assistant" />);
-    expect(nullCont.querySelector('.ha-thermostat-title')?.textContent).toBe('nullattrs');
-    expect(nullCont.querySelector('.ha-target-num')?.textContent).toBe('70°');
-    expect(nullCont.querySelector('[data-entity-id="camera.nullattrs"]')).not.toBeNull();
-  });
+  }
 
   it('covers inFlight state rendering and disabled interactions', async () => {
     let resolveAction!: (v: unknown) => void;
@@ -1676,7 +1448,7 @@ describe('HomeAssistantWidget', () => {
     }
   });
 
-  it('covers missing entity fallbacks across all card types and control rows', () => {
+  it('renders unavailable fallbacks for missing entities across all card types', () => {
     setHaWidget('ha-missing-all', {
       cards: [
         { type: 'entities', entities: ['light.missing_row'] },
@@ -1693,14 +1465,5 @@ describe('HomeAssistantWidget', () => {
     expect(container.querySelectorAll('.ha-card-button').length).toBe(3);
     expect(container.querySelector('.ha-card-thermostat')).not.toBeNull();
     expect(container.querySelector('.ha-card-picture')).not.toBeNull();
-
-    const fBase = { entity_id: 'fan.f', state: 'off', attributes: {} };
-    expect(applyOptimisticUpdate(fBase, 'fan', 'set_percentage', { percentage: 66 })).toEqual({ ...fBase, state: 'on', attributes: { percentage: 66 } });
-    expect(applyOptimisticUpdate({ ...fBase, state: 'on' }, 'fan', 'set_percentage', { percentage: 0 })).toEqual({ ...fBase, state: 'off', attributes: { percentage: 0 } });
-    const cOpen = { entity_id: 'cover.c', state: 'open', attributes: {} };
-    expect(applyOptimisticUpdate(cOpen, 'cover', 'stop_cover')).toEqual(cOpen);
-    expect(applyOptimisticUpdate(cOpen, 'cover', 'close_cover')).toEqual({ ...cOpen, state: 'closed' });
-    const mPlay = { entity_id: 'media_player.m', state: 'playing', attributes: {} };
-    expect(applyOptimisticUpdate(mPlay, 'media_player', 'volume_up')).toEqual(mPlay);
   });
 });

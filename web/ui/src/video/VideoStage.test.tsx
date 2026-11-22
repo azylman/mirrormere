@@ -864,87 +864,6 @@ describe('VideoStage Declarative Suite', () => {
       expect(hud.activeStream).toBeNull();
     });
 
-    it('exercises VideoPlayerManager class methods and managerBridge getters/actions', () => {
-      render(<VideoStage />);
-      const mgr = window.videoManager!;
-      expect(mgr).toBeDefined();
-
-      // managerBridge properties & methods
-      expect(mgr.currentMode).toBe('widgets');
-      expect(mgr.isSwapped).toBe(false);
-      expect(mgr.serverPrimary).toBeNull();
-      expect(mgr.serverPip).toBeNull();
-      expect(mgr.hud).toBeDefined();
-
-      mgr.setHUD(null);
-      mgr.syncAudioFocus();
-
-      act(() => {
-        mgr.handleVideoState({
-          mode: 'video',
-          primary: { id: 'p', stream_url: 'http://p', type: 'mjpeg' },
-          pip: { id: 'pip', stream_url: 'http://pip', type: 'mjpeg' },
-        });
-      });
-      expect(useDisplayStore.getState().video.primary?.id).toBe('p');
-      expect(window.videoManager?.serverPrimary?.id).toBe('p');
-      expect(window.videoManager?.serverPip?.id).toBe('pip');
-
-      act(() => {
-        mgr.handleVideoState(undefined);
-      });
-      expect(useDisplayStore.getState().video.primary?.id).toBe('p');
-
-      act(() => {
-        mgr.handleVideoState(null);
-      });
-      expect(useDisplayStore.getState().video.mode).toBe('widgets');
-
-      act(() => {
-        window.videoManager?.exitVideoMode();
-      });
-      expect(useDisplayStore.getState().video.mode).toBe('widgets');
-
-      act(() => {
-        window.videoManager?.destroy();
-      });
-
-      // Direct VideoPlayerManager class instance
-      delete window.videoManager;
-      const vpm = new VideoPlayerManager();
-      expect(vpm.serverPrimary).toBeNull();
-      expect(vpm.serverPip).toBeNull();
-      vpm.setHUD(null);
-      vpm.syncAudioFocus();
-      vpm.swapStreams();
-      expect(vpm.isSwapped).toBe(true);
-
-      vpm.handleVideoState({
-        mode: 'video',
-        primary: { id: 'p2', stream_url: 'http://p2', type: 'mjpeg' },
-        pip: null,
-      });
-      expect(vpm.currentMode).toBe('video');
-
-      vpm.exitVideoMode();
-      expect(vpm.currentMode).toBe('widgets');
-      vpm.destroy();
-
-      // Delegation test when window.videoManager is another instance
-      const externalManager = {
-        isSwapped: false,
-        swapStreams: vi.fn(function (this: { isSwapped: boolean }) {
-          this.isSwapped = true;
-        }),
-      };
-      window.videoManager = externalManager as unknown as VideoPlayerManager;
-      const delegatingVpm = new VideoPlayerManager();
-      delegatingVpm.swapStreams();
-      expect(externalManager.swapStreams).toHaveBeenCalled();
-      expect(delegatingVpm.isSwapped).toBe(true);
-      delete window.videoManager;
-    });
-
     it('handles per-slot failure cascades for primary and PiP streams', () => {
       // 1. PiP slot fails while swapped: unswaps and sets pip to null
       useDisplayStore.setState({
@@ -1022,52 +941,139 @@ describe('VideoStage Declarative Suite', () => {
       expect(useDisplayStore.getState().video.primary?.id).toBe('p-normal');
     });
 
-    it('covers flushCompositorPaint fallback when requestAnimationFrame is undefined', () => {
-      const origRAF = window.requestAnimationFrame;
-      // @ts-expect-error test fallback branch
-      delete window.requestAnimationFrame;
-      flushCompositorPaint();
-      act(() => {
-        vi.advanceTimersByTime(32);
-      });
-      window.requestAnimationFrame = origRAF;
-    });
-
-    it('handles VideoPlayerManager edge branches: undefined data, inferred mode, and swapped destroy', () => {
-      const { container, unmount } = render(<VideoStage />);
-      const vpm = new VideoPlayerManager();
-
-      // 1. undefined data
-      vpm.handleVideoState(undefined);
-
-      // 2. data without mode but with primary and pip -> infers mode = 'video' and shows the stage
-      act(() => {
-        vpm.handleVideoState({
-          primary: { id: 'prim', stream_url: 'http://prim', type: 'mjpeg' },
-          pip: { id: 'pip2', stream_url: 'http://pip2', type: 'mjpeg' },
-        });
-      });
-      expect(vpm.currentMode).toBe('video');
-      expect(useDisplayStore.getState().video.mode).toBe('video');
-      expect(container.querySelector('.video-stage')?.classList.contains('active')).toBe(true);
-      // Unmount the stage so the swap below exercises this instance, not the window.videoManager bridge.
-      unmount();
-      delete window.videoManager;
-
-      // 3. swapStreams when primary and pip both exist
-      vpm.swapStreams();
-      expect(vpm.isSwapped).toBe(true);
-
-      // 4. destroy when isSwapped is true -> resets swap state
-      vpm.destroy();
-      expect(vpm.isSwapped).toBe(false);
-    });
-
     it('resolves remoteUrl fallback from window.MIRRORMERE_REMOTE_URL', () => {
       (window as unknown as { MIRRORMERE_REMOTE_URL?: string }).MIRRORMERE_REMOTE_URL = 'http://window-remote';
       const { unmount } = render(<VideoStage />);
       unmount();
       delete (window as unknown as { MIRRORMERE_REMOTE_URL?: string }).MIRRORMERE_REMOTE_URL;
     });
+  });
+
+  describe('VideoPlayerManager', () => {
+      it('exposes manager methods and managerBridge getters/actions on window.videoManager', () => {
+        render(<VideoStage />);
+        const mgr = window.videoManager!;
+        expect(mgr).toBeDefined();
+
+        // managerBridge properties & methods
+        expect(mgr.currentMode).toBe('widgets');
+        expect(mgr.isSwapped).toBe(false);
+        expect(mgr.serverPrimary).toBeNull();
+        expect(mgr.serverPip).toBeNull();
+        expect(mgr.hud).toBeDefined();
+
+        mgr.setHUD(null);
+        mgr.syncAudioFocus();
+
+        act(() => {
+          mgr.handleVideoState({
+            mode: 'video',
+            primary: { id: 'p', stream_url: 'http://p', type: 'mjpeg' },
+            pip: { id: 'pip', stream_url: 'http://pip', type: 'mjpeg' },
+          });
+        });
+        expect(useDisplayStore.getState().video.primary?.id).toBe('p');
+        expect(window.videoManager?.serverPrimary?.id).toBe('p');
+        expect(window.videoManager?.serverPip?.id).toBe('pip');
+
+        act(() => {
+          mgr.handleVideoState(undefined);
+        });
+        expect(useDisplayStore.getState().video.primary?.id).toBe('p');
+
+        act(() => {
+          mgr.handleVideoState(null);
+        });
+        expect(useDisplayStore.getState().video.mode).toBe('widgets');
+
+        act(() => {
+          window.videoManager?.exitVideoMode();
+        });
+        expect(useDisplayStore.getState().video.mode).toBe('widgets');
+
+        act(() => {
+          window.videoManager?.destroy();
+        });
+
+        // Direct VideoPlayerManager class instance
+        delete window.videoManager;
+        const vpm = new VideoPlayerManager();
+        expect(vpm.serverPrimary).toBeNull();
+        expect(vpm.serverPip).toBeNull();
+        vpm.setHUD(null);
+        vpm.syncAudioFocus();
+        vpm.swapStreams();
+        expect(vpm.isSwapped).toBe(true);
+
+        vpm.handleVideoState({
+          mode: 'video',
+          primary: { id: 'p2', stream_url: 'http://p2', type: 'mjpeg' },
+          pip: null,
+        });
+        expect(vpm.currentMode).toBe('video');
+
+        vpm.exitVideoMode();
+        expect(vpm.currentMode).toBe('widgets');
+        vpm.destroy();
+
+        // Delegation test when window.videoManager is another instance
+        const externalManager = {
+          isSwapped: false,
+          swapStreams: vi.fn(function (this: { isSwapped: boolean }) {
+            this.isSwapped = true;
+          }),
+        };
+        window.videoManager = externalManager as unknown as VideoPlayerManager;
+        const delegatingVpm = new VideoPlayerManager();
+        delegatingVpm.swapStreams();
+        expect(externalManager.swapStreams).toHaveBeenCalled();
+        expect(delegatingVpm.isSwapped).toBe(true);
+        delete window.videoManager;
+      });
+
+      it('ignores undefined state, infers video mode from streams, and resets swap state on destroy', () => {
+        const { container, unmount } = render(<VideoStage />);
+        const vpm = new VideoPlayerManager();
+
+        // 1. undefined data
+        vpm.handleVideoState(undefined);
+
+        // 2. data without mode but with primary and pip -> infers mode = 'video' and shows the stage
+        act(() => {
+          vpm.handleVideoState({
+            primary: { id: 'prim', stream_url: 'http://prim', type: 'mjpeg' },
+            pip: { id: 'pip2', stream_url: 'http://pip2', type: 'mjpeg' },
+          });
+        });
+        expect(vpm.currentMode).toBe('video');
+        expect(useDisplayStore.getState().video.mode).toBe('video');
+        expect(container.querySelector('.video-stage')?.classList.contains('active')).toBe(true);
+        // Unmount the stage so the swap below exercises this instance, not the window.videoManager bridge.
+        unmount();
+        delete window.videoManager;
+
+        // 3. swapStreams when primary and pip both exist
+        vpm.swapStreams();
+        expect(vpm.isSwapped).toBe(true);
+
+        // 4. destroy when isSwapped is true -> resets swap state
+        vpm.destroy();
+        expect(vpm.isSwapped).toBe(false);
+      });
+
+      it('falls back to setTimeout frames for flushCompositorPaint without requestAnimationFrame', () => {
+        const origRAF = window.requestAnimationFrame;
+        // @ts-expect-error remove rAF to take the setTimeout fallback
+        delete window.requestAnimationFrame;
+        try {
+          flushCompositorPaint();
+          act(() => {
+            vi.advanceTimersByTime(32);
+          });
+          expect(document.getElementById('mm-compositor-heartbeat')?.dataset.flush).toBe('2');
+        } finally {
+          window.requestAnimationFrame = origRAF;
+        }
+      });
   });
 });

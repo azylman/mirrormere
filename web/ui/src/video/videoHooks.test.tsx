@@ -732,30 +732,37 @@ describe('useWebRTCStream', () => {
     }).not.toThrow();
   });
 
-  it('covers tryUnref, applyZeroLatencyPlayoutDelay, and safePlay edge cases', () => {
-    // tryUnref with null / object without unref / object with unref
-    tryUnref(null);
-    tryUnref({});
+  const nullSafeHelperTests: { name: string; fn: (input: never) => void; input: unknown }[] = [
+    { name: 'tryUnref(null)', fn: tryUnref, input: null },
+    { name: 'tryUnref without unref', fn: tryUnref, input: {} },
+    { name: 'applyZeroLatencyPlayoutDelay(null)', fn: applyZeroLatencyPlayoutDelay, input: null },
+    { name: 'applyZeroLatencyPlayoutDelay without playoutDelayHint', fn: applyZeroLatencyPlayoutDelay, input: {} },
+    { name: 'safePlay(null)', fn: safePlay, input: null },
+    { name: 'safePlay without play()', fn: safePlay, input: {} },
+    { name: 'safePlay when play() returns a non-promise', fn: safePlay, input: { play: () => undefined } },
+  ];
+
+  for (const tc of nullSafeHelperTests) {
+    it(`tolerates missing capabilities: ${tc.name}`, () => {
+      expect(() => {
+        (tc.fn as (input: unknown) => void)(tc.input);
+      }).not.toThrow();
+    });
+  }
+
+  it('tryUnref calls unref when the handle has one', () => {
     const unrefSpy = vi.fn();
     tryUnref({ unref: unrefSpy });
     expect(unrefSpy).toHaveBeenCalledOnce();
-
-    // applyZeroLatencyPlayoutDelay with null / object without playoutDelayHint / with playoutDelayHint
-    applyZeroLatencyPlayoutDelay(null);
-    const receiverWithoutHint = {} as RTCRtpReceiver;
-    applyZeroLatencyPlayoutDelay(receiverWithoutHint);
-    const receiverWithHint = { playoutDelayHint: 5 } as unknown as RTCRtpReceiver;
-    applyZeroLatencyPlayoutDelay(receiverWithHint);
-    expect((receiverWithHint as { playoutDelayHint?: number }).playoutDelayHint).toBe(0);
-
-    // safePlay with null / non-function / non-promise return
-    safePlay(null);
-    safePlay({} as HTMLVideoElement);
-    const fakeVid = { play: () => undefined } as unknown as HTMLVideoElement;
-    safePlay(fakeVid);
   });
 
-  it('covers disconnect/failed/checking ICE transitions', async () => {
+  it('applyZeroLatencyPlayoutDelay zeroes an existing playoutDelayHint', () => {
+    const receiver = { playoutDelayHint: 5 } as unknown as RTCRtpReceiver;
+    applyZeroLatencyPlayoutDelay(receiver);
+    expect((receiver as { playoutDelayHint?: number }).playoutDelayHint).toBe(0);
+  });
+
+  it('reconnects once when ICE moves from checking to disconnected to failed', async () => {
     const video = document.createElement('video');
     const videoRef = { current: video };
     const fetchMock = vi.fn().mockResolvedValue({
@@ -804,7 +811,7 @@ describe('useWebRTCStream', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('covers audio ontrack, null video element, constructor errors, and timer cleanup on unmount', async () => {
+  it('ignores audio and ref-less tracks, closes mid-disconnect on unmount, and warns when the constructor throws', async () => {
     const video = document.createElement('video');
     const videoRef = { current: video as HTMLVideoElement | null };
     const fetchMock = vi.fn().mockResolvedValue({

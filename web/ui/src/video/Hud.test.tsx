@@ -583,6 +583,47 @@ describe('Hud component and declarative decomposition', () => {
         }),
       );
     });
+
+    it('toggles pause icon and play icon states according to player_state', () => {
+      const { container } = render(<Hud />);
+      const pausedStream: VideoSource = {
+        id: 's_pause',
+        stream_url: 'http://test/stream',
+        type: 'webrtc',
+        controllable: true,
+        player_state: 'paused',
+      };
+
+      act(() => {
+        useDisplayStore.setState({
+          video: { mode: 'video', primary: pausedStream, pip: null },
+        });
+      });
+
+      const playBtn = container.querySelector('#video-hud-play-btn') as HTMLButtonElement;
+      expect(playBtn).not.toBeNull();
+      expect(playBtn.getAttribute('aria-label')).toBe('Play');
+      expect(playBtn.getAttribute('title')).toBe('Play');
+      const playIcon = container.querySelector('#video-hud-play-icon') as HTMLElement;
+      expect(playIcon.getAttribute('data-icon')).toBe('play');
+      expect(playIcon.querySelector('polygon')).not.toBeNull();
+
+      // Switch to playing state
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { ...pausedStream, player_state: 'playing' },
+            pip: null,
+          },
+        });
+      });
+
+      expect(playBtn.getAttribute('aria-label')).toBe('Pause');
+      expect(playBtn.getAttribute('title')).toBe('Pause');
+      expect(playIcon.getAttribute('data-icon')).toBe('pause');
+      expect(playIcon.querySelectorAll('rect').length).toBe(2);
+    });
   });
 
   describe('Audio controls & volume slider', () => {
@@ -805,21 +846,28 @@ describe('Hud component and declarative decomposition', () => {
     });
   });
 
-  describe('VideoHUDController and transport buttons coverage', () => {
-    it('supports object controllerRef and updates ref.current', () => {
-      const ref = { current: null as VideoHUDController | null };
-      const { unmount } = render(
-        <div id="video-stage">
-          <Hud controllerRef={ref} />
-        </div>,
-      );
+  describe('VideoHUDController controllerRef wiring, stream state and action routing', () => {
+    const objectControllerRef = { current: null as VideoHUDController | null };
+    const callbackSeen = { current: null as VideoHUDController | null };
+    const controllerRefTests = [
+      { name: 'object ref', controllerRef: objectControllerRef, seen: objectControllerRef },
+      { name: 'callback ref', controllerRef: (c: VideoHUDController | null) => { callbackSeen.current = c; }, seen: callbackSeen },
+    ];
 
-      expect(ref.current).toBeInstanceOf(VideoHUDController);
-      unmount();
-      expect(ref.current).toBeNull();
-    });
+    for (const tc of controllerRefTests) {
+      it(`publishes the controller through a ${tc.name} on mount and clears it on unmount`, () => {
+        const { unmount } = render(
+          <div id="video-stage">
+            <Hud controllerRef={tc.controllerRef} />
+          </div>,
+        );
+        expect(tc.seen.current).toBeInstanceOf(VideoHUDController);
+        unmount();
+        expect(tc.seen.current).toBeNull();
+      });
+    }
 
-    it('exercises VideoHUDController getters, setters, and state methods', () => {
+    it('resolves activeStream from the swapped manager, an explicit stream, or the last video state', () => {
       const ctrl = new VideoHUDController();
       expect(ctrl.titleEl).toBeNull();
 
@@ -860,7 +908,7 @@ describe('Hud component and declarative decomposition', () => {
       document.body.removeChild(title);
     });
 
-    it('triggers syncStream, handleVideoState, handleAudioState, center play button, captions, previous, and next actions', async () => {
+    it('applies controller video/audio state and routes play, captions, previous and next to their endpoints', async () => {
       const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
       let ctrl: VideoHUDController | null = null;
 
@@ -962,47 +1010,6 @@ describe('Hud component and declarative decomposition', () => {
           body: JSON.stringify({ key: 'next' }),
         }),
       );
-    });
-
-    it('toggles pause icon and play icon states according to player_state', () => {
-      const { container } = render(<Hud />);
-      const pausedStream: VideoSource = {
-        id: 's_pause',
-        stream_url: 'http://test/stream',
-        type: 'webrtc',
-        controllable: true,
-        player_state: 'paused',
-      };
-
-      act(() => {
-        useDisplayStore.setState({
-          video: { mode: 'video', primary: pausedStream, pip: null },
-        });
-      });
-
-      const playBtn = container.querySelector('#video-hud-play-btn') as HTMLButtonElement;
-      expect(playBtn).not.toBeNull();
-      expect(playBtn.getAttribute('aria-label')).toBe('Play');
-      expect(playBtn.getAttribute('title')).toBe('Play');
-      const playIcon = container.querySelector('#video-hud-play-icon') as HTMLElement;
-      expect(playIcon.getAttribute('data-icon')).toBe('play');
-      expect(playIcon.querySelector('polygon')).not.toBeNull();
-
-      // Switch to playing state
-      act(() => {
-        useDisplayStore.setState({
-          video: {
-            mode: 'video',
-            primary: { ...pausedStream, player_state: 'playing' },
-            pip: null,
-          },
-        });
-      });
-
-      expect(playBtn.getAttribute('aria-label')).toBe('Pause');
-      expect(playBtn.getAttribute('title')).toBe('Pause');
-      expect(playIcon.getAttribute('data-icon')).toBe('pause');
-      expect(playIcon.querySelectorAll('rect').length).toBe(2);
     });
 
     it('handles action routing fallbacks and dismiss guards without active streams', async () => {
@@ -1129,19 +1136,6 @@ describe('Hud component and declarative decomposition', () => {
         'http://remote-host/key',
         expect.objectContaining({ body: JSON.stringify({ key: 'next' }) }),
       );
-    });
-
-    it('supports callback function for controllerRef with mount and unmount', () => {
-      let callbackCtrl: VideoHUDController | null = null;
-      const refFn = (c: VideoHUDController | null) => {
-        callbackCtrl = c;
-      };
-
-      const { unmount } = render(<Hud controllerRef={refFn} />);
-      expect(callbackCtrl).not.toBeNull();
-
-      unmount();
-      expect(callbackCtrl).toBeNull();
     });
 
     it('handles syncStream hide vs show transitions and null state updates', () => {
