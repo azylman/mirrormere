@@ -10,7 +10,6 @@ import {
   type VideoHUDHandle,
 } from './useHudController';
 
-export { HUD_ICONS } from './HudIcons';
 export {
   VideoHUDController,
   type HudProps,

@@ -1,5 +1,5 @@
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
 import { WIDGET_COMPONENTS, widgetComponentFor } from '../registry';
 import {
@@ -13,8 +13,6 @@ import {
   getEntityName,
 } from './HomeAssistantWidget';
 import { itemAt } from '../../test-utils/lookup';
-
-const initialStore = useDisplayStore.getState();
 
 function setHaWidget(id: string, data: Record<string, unknown>, state = 'healthy') {
   useDisplayStore.setState({
@@ -30,15 +28,6 @@ function setHaWidget(id: string, data: Record<string, unknown>, state = 'healthy
 }
 
 describe('HomeAssistantWidget', () => {
-  beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
-    vi.restoreAllMocks();
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-  });
 
   it('registers in WIDGET_COMPONENTS and widgetComponentFor resolves home-assistant', () => {
     expect(WIDGET_COMPONENTS['home-assistant']).toBe(HomeAssistantWidget);

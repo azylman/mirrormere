@@ -1,11 +1,9 @@
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PaneContext } from '../../carousel/PaneContext';
 import { useDisplayStore } from '../../store';
 import { PlexRecentWidget, type PlexItem, type SeerrResultItem } from './PlexRecentWidget';
 import { itemAt } from '../../test-utils/lookup';
-
-const initialStore = useDisplayStore.getState();
 
 const mockRecentItems: PlexItem[] = [
   {
@@ -95,7 +93,6 @@ describe('PlexRecentWidget', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
     useDisplayStore.setState({
       visibility: { visible: true },
       widgets: {
@@ -135,12 +132,6 @@ describe('PlexRecentWidget', () => {
     });
 
     vi.stubGlobal('fetch', fetchMock);
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
   });
 
   it('renders category tabs and filters items across movie, tv, audiobook, and upcoming categories', async () => {

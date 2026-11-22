@@ -36,7 +36,6 @@ describe('carousel store', () => {
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
     useDisplayStore.setState(initial, true);
   });
 

@@ -26,9 +26,6 @@ class FakeMediaStream {
 }
 
 describe('useHlsStream', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
 
   it('does nothing when disabled or streamUrl is missing', () => {
     const video = document.createElement('video');
@@ -194,16 +191,11 @@ describe('useWebRTCStream', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.restoreAllMocks();
     activePC = null;
-    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
-    HTMLMediaElement.prototype.load = vi.fn();
-    HTMLMediaElement.prototype.pause = vi.fn();
     globalThis.MediaStream = FakeMediaStream as unknown as typeof MediaStream;
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     activePC = null;
   });
 
@@ -829,7 +821,6 @@ describe('useWebRTCStream', () => {
     safePlay(fakeVid);
   });
 
-
   it('covers disconnect/failed/checking ICE transitions', async () => {
     const video = document.createElement('video');
     const videoRef = { current: video };
@@ -953,9 +944,6 @@ describe('useWebRTCStream', () => {
 });
 
 describe('useTouchForwarding', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
 
   // Each row differs from a dispatching pointerdown (enabled, primary button, configured
   // remoteUrl, nonzero media rect) in exactly one guard, so removing that guard sends a request.
@@ -1119,11 +1107,6 @@ describe('useTouchForwarding', () => {
 describe('useVolumeSlider', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.restoreAllMocks();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
   });
 
   it('throttles slider inputs and commits on release', async () => {
@@ -1228,11 +1211,6 @@ describe('useVolumeSlider', () => {
 describe('useStreamProgress and formatDuration', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.restoreAllMocks();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
   });
 
   it('formats duration correctly across ranges and invalid inputs', () => {
@@ -1332,11 +1310,6 @@ describe('useStreamProgress and formatDuration', () => {
 describe('useHudAutoFade', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.restoreAllMocks();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
   });
 
   it('manages auto-fade visibility lifecycle and toggleHUD', () => {
@@ -1410,9 +1383,6 @@ describe('useHudAutoFade', () => {
 });
 
 describe('video/api helpers', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
 
   it('exercises formatStreamTitle across combinations of series, annotation, and episode name', async () => {
     const { formatStreamTitle } = await import('./api');

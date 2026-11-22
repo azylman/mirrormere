@@ -1,5 +1,5 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
 import { batchFitDayColumnEvents, CalendarGridWidget, type CalendarGridViewModel } from './CalendarGridWidget';
 import { itemAt } from '../../test-utils/lookup';
@@ -110,17 +110,9 @@ function setGridState(override?: {
 }
 
 describe('CalendarGridWidget', () => {
-  const initialStore = useDisplayStore.getState();
 
   beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
     vi.stubGlobal('fetch', vi.fn());
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-    cleanup();
   });
 
   it('renders week view by default with days, header, members legend, and events', () => {

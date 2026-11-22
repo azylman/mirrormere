@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VideoSource } from '../sse/types';
 import { useDisplayStore } from '../store';
@@ -100,26 +100,17 @@ class MockRTCPeerConnection {
 }
 
 describe('VideoStage Declarative Suite', () => {
-  const initialStore = useDisplayStore.getState();
 
   beforeEach(() => {
-    cleanup();
     document.body.innerHTML = '';
-    useDisplayStore.setState(initialStore, true);
     delete window.videoManager;
     delete window.videoHUD;
     delete (window as unknown as { carousel?: unknown }).carousel;
-    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
-    HTMLMediaElement.prototype.load = vi.fn();
-    HTMLMediaElement.prototype.pause = vi.fn();
     vi.useFakeTimers();
   });
 
   afterEach(() => {
-    vi.useRealTimers();
-    cleanup();
     document.body.innerHTML = '';
-    useDisplayStore.setState(initialStore, true);
     delete window.videoManager;
     delete window.videoHUD;
     delete (window as unknown as { carousel?: unknown }).carousel;

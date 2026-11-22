@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AudioController } from '../audio/useAudio';
 import { HeaderVoice } from '../shell/Header';
@@ -17,10 +17,8 @@ function renderVoiceSystem() {
 }
 
 describe('VoiceHud and declarative voice system', () => {
-  const initialStore = useDisplayStore.getState();
 
   beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
     delete window.audioManager;
     delete window.voiceHUD;
     delete window.MirrormereVoice;
@@ -28,9 +26,6 @@ describe('VoiceHud and declarative voice system', () => {
   });
 
   afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-    useDisplayStore.setState(initialStore, true);
     delete window.audioManager;
     delete window.voiceHUD;
     delete window.MirrormereVoice;

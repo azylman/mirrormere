@@ -1,19 +1,10 @@
-import { cleanup, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { render } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 import { useDisplayStore } from '../../store';
 import { WidgetHost } from '../WidgetHost';
 import { SpacerWidget } from './SpacerWidget';
 
-const initialStore = useDisplayStore.getState();
-
 describe('SpacerWidget', () => {
-  beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
-  });
-
-  afterEach(() => {
-    cleanup();
-  });
 
   it('renders .widget-spacer with data-widget-type and aria-hidden without data-widget-id', () => {
     const { container, rerender } = render(<SpacerWidget id="s1" type="spacer" />);

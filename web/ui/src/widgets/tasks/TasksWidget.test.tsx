@@ -1,22 +1,12 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { Profiler } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
 import { TASK_UNDO_GRACE_MS, TasksWidget } from './TasksWidget';
-
-const initialStore = useDisplayStore.getState();
 
 describe('TasksWidget', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    useDisplayStore.setState(initialStore, true);
-    vi.restoreAllMocks();
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-    vi.useRealTimers();
   });
 
   it('renders loading state when data is unhydrated ({}) and omits header when unnamed', () => {

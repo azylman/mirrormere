@@ -122,8 +122,6 @@ describe('CarouselController', () => {
     harness?.viewport.remove();
     harness = null;
     document.getElementById('mirrormere-app')?.remove();
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
   });
 
   it('commits a left drag past 25% after the settle, and sends the select only then', () => {

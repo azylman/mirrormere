@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { PaneContext } from '../../carousel/PaneContext';
 import { NextUp } from '../../shell/NextUp';
@@ -15,7 +15,6 @@ import {
   setSharedYtMusicState,
 } from './ytMusicTypes';
 import { itemAt } from '../../test-utils/lookup';
-const initialStore = useDisplayStore.getState();
 const mockIdleState: MusicState = {
   active_speaker: 'media_player.living_room_speaker',
   active_account: 'primary',
@@ -64,7 +63,6 @@ describe('YtMusicWidget', () => {
   let fetchMock: Mock<(url: string | URL | Request, init?: RequestInit) => Promise<unknown>>;
   beforeEach(() => {
     resetSharedYtMusicState();
-    useDisplayStore.setState(initialStore, true);
     useDisplayStore.setState({
       visibility: { visible: true },
       widgets: {
@@ -165,10 +163,6 @@ describe('YtMusicWidget', () => {
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => {});
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
     vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
-  });
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
   });
 
   it('hydrates music state on mount and renders account picker, speakers, mini player, and discovery', async () => {
@@ -1193,12 +1187,9 @@ describe('YtMusicWidget', () => {
   describe('Header Live Island integration', () => {
     beforeEach(() => {
       resetSharedYtMusicState();
-      useDisplayStore.setState(initialStore, true);
     });
     afterEach(() => {
-      cleanup();
       resetSharedYtMusicState();
-      vi.restoreAllMocks();
     });
 
     it('validates isYtMusicLiveIslandActive for playing, paused with track, and idle/stopped states', () => {

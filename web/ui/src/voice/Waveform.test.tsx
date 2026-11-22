@@ -1,16 +1,10 @@
 import { Profiler } from 'react';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { endAnimation } from '../perf/animating';
 import { useDisplayStore } from '../store';
 import {
-  DRAW_MIN_MS,
-  LEVEL_GAIN,
-  LEVEL_SPAN,
   LEVEL_STALE_MS,
-  MOUTH_POINTS,
-  MOUTH_STEP,
-  MOUTH_X0,
   Waveform,
   WaveformMouth,
   clamp,
@@ -51,13 +45,11 @@ class MockEventSource {
 }
 
 describe('Waveform and WaveformMouth', () => {
-  const initialStore = useDisplayStore.getState();
   let rafCallback: FrameRequestCallback | null = null;
   let rafId = 0;
   let currentTime = 1000;
 
   beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
     for (let i = 0; i < 5; i++) endAnimation();
     delete window.voiceWaveform;
     MockEventSource.instances = [];
@@ -80,9 +72,6 @@ describe('Waveform and WaveformMouth', () => {
   });
 
   afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-    useDisplayStore.setState(initialStore, true);
     for (let i = 0; i < 5; i++) endAnimation();
     delete window.voiceWaveform;
     if (document.body.dataset.voiceWaveformUrl) {
@@ -106,16 +95,6 @@ describe('Waveform and WaveformMouth', () => {
   const QUIET = new Array(33).fill(0);
 
   describe('pure helpers & constants', () => {
-    it('exports expected constants', () => {
-      expect(MOUTH_POINTS).toBe(33);
-      expect(MOUTH_X0).toBe(20);
-      expect(MOUTH_STEP).toBe(1.875);
-      expect(LEVEL_GAIN).toBe(2.2);
-      expect(LEVEL_SPAN).toBe(22);
-      expect(LEVEL_STALE_MS).toBe(400);
-      expect(DRAW_MIN_MS).toBe(25);
-    });
-
     it('clamp clamps values within range', () => {
       expect(clamp(5, 0, 10)).toBe(5);
       expect(clamp(-5, 0, 10)).toBe(0);
@@ -185,7 +164,6 @@ describe('Waveform and WaveformMouth', () => {
       expect(typeof defaultEventSourceFactory()).toBe('function');
       expect(typeof defaultReducedMotion()).toBe('boolean');
     });
-
 
     it('drawFrame eases toward flat line when not speaking or levels are stale', () => {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

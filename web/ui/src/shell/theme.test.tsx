@@ -168,7 +168,6 @@ describe('ThemeToggle component', () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     window.localStorage.removeItem(STORAGE_KEY_THEME_OVERRIDE);
     if (appEl.parentNode) appEl.parentNode.removeChild(appEl);
     delete document.documentElement.dataset.theme;

@@ -278,7 +278,6 @@ describe('HeaderVideoButton component', () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     delete document.body.dataset.headerVideo;
     delete document.body.dataset.streamId;
     delete document.body.dataset.streamUrl;

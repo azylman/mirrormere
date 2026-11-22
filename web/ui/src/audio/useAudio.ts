@@ -5,17 +5,17 @@ import { useDisplayStore } from '../store';
 /**
  * Maximum digital gain ceiling applied to all media elements (80%).
  */
-export const MAX_GAIN = 0.80;
+const MAX_GAIN = 0.80;
 
 /**
  * Ducking attenuation multiplier applied when voice interactions are active (20%).
  */
-export const DUCK_MULTIPLIER = 0.20;
+const DUCK_MULTIPLIER = 0.20;
 
 /**
  * Voice states that trigger media audio ducking.
  */
-export const DUCK_VOICE_STATES: ReadonlySet<string> = new Set([
+const DUCK_VOICE_STATES: ReadonlySet<string> = new Set([
   'listening',
   'transcribing',
   'thinking',

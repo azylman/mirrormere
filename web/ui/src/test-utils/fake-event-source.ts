@@ -1,4 +1,4 @@
-import type { EventSourceLike } from './client';
+import type { EventSourceLike } from '../sse/client';
 
 /** Test double for EventSource: records instances and lets tests drive open, error and messages. */
 export class FakeEventSource implements EventSourceLike {

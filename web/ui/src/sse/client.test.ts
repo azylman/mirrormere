@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventStreamClient } from './client';
-import { FakeEventSource } from './fake-event-source';
+import { FakeEventSource } from '../test-utils/fake-event-source';
 import { itemAt } from '../test-utils/lookup';
 
 function makeClient(options: ConstructorParameters<typeof EventStreamClient>[1] = {}) {
@@ -15,11 +15,6 @@ describe('EventStreamClient', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     FakeEventSource.reset();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
   });
 
   describe('backoff', () => {

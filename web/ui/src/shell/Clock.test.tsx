@@ -130,7 +130,6 @@ describe('Clock component', () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     if (appEl.parentNode) {
       appEl.parentNode.removeChild(appEl);
     }

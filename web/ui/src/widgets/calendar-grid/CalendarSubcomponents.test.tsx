@@ -1,5 +1,5 @@
-import { act, cleanup, fireEvent, render, renderHook } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, renderHook } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
 import { CalendarGridWidget, type CalendarGridViewModel } from './CalendarGridWidget';
 import { CalendarEventModal } from './CalendarEventModal';
@@ -28,9 +28,6 @@ const members: FamilyMember[] = [
 ];
 
 describe('CalendarEventModal', () => {
-  afterEach(() => {
-    cleanup();
-  });
 
   it('returns null when event is null', () => {
     const { container } = render(
@@ -168,9 +165,6 @@ describe('CalendarEventModal', () => {
 });
 
 describe('CalendarHeader', () => {
-  afterEach(() => {
-    cleanup();
-  });
 
   it('switches views and updates aria-selected attributes', () => {
     const onViewSwitch = vi.fn();
@@ -315,9 +309,6 @@ describe('CalendarHeader', () => {
 });
 
 describe('CalendarMonthView & CalendarWeekView', () => {
-  afterEach(() => {
-    cleanup();
-  });
 
   describe('batchFitDayColumnEvents', () => {
     it('returns early when column element is empty', () => {
@@ -838,11 +829,6 @@ describe('CalendarMonthView & CalendarWeekView', () => {
 describe('useCalendarRangeData & useInactivityReset', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
   });
 
   describe('useCalendarRangeData', () => {

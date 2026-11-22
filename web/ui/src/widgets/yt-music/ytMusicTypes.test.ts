@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_ACCOUNTS,
-  DEFAULT_ART,
-  DEFAULT_STATE,
   DEFAULT_SUGGESTIONS,
   LOCAL_SPEAKER,
   resolveAccounts,
@@ -179,11 +177,4 @@ describe('ytMusicTypes helpers', () => {
     });
   });
 
-  describe('constants', () => {
-    it('defines DEFAULT_ART and DEFAULT_STATE', () => {
-      expect(DEFAULT_ART).toContain('ytube_music_player');
-      expect(DEFAULT_STATE.active_speaker).toBe('media_player.home_group');
-      expect(DEFAULT_STATE.active_account).toBe('primary');
-    });
-  });
 });

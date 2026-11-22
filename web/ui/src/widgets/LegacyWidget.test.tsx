@@ -1,4 +1,4 @@
-import { act, cleanup, render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PaneContext } from '../carousel/PaneContext';
 import { useDisplayStore, type WidgetEntry } from '../store';
@@ -54,9 +54,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
   document.head.querySelectorAll('link[rel="stylesheet"]').forEach((link) => { link.remove(); });
   window.history.replaceState({}, '', '/');
   delete (globalThis as Record<string, unknown>).MirrormereLegacyTest;
