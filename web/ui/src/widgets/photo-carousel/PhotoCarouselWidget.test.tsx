@@ -18,29 +18,16 @@ import {
   getVideoStreamURL,
 } from './PhotoCarouselWidget';
 import { useDisplayStore } from '../../store';
-import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
+import type { PhotoItem } from './photoCarouselHelpers';
+import { renderWidget, seedWidget, widgetMeta } from '../../test-utils/widget';
 import { endAnimation } from '../../perf/animating';
 import { itemAt } from '../../test-utils/lookup';
+import { stubResizeObserver } from '../../test-utils/resizeObserver';
 
-function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
-  return { type: 'photo-carousel', config, origin: [0, 0], dimensions: [2, 2], assets_base: '' };
-}
-
-function setWidgetPhotos(
-  photos: { id?: string; url?: string; URL?: string; width?: number; height?: number; aspect_ratio?: number; timestamp?: string; location?: string; album_name?: string; media_type?: string }[],
-  cycleSeconds?: number, config: Record<string, unknown> = {},
-) {
-  useDisplayStore.setState({
-    widgets: {
-      ['w-photo-1']: {
-        meta: makeWidgetMeta(config),
-        data: { photos, ...(cycleSeconds !== undefined ? { cycle_interval_seconds: cycleSeconds } : {}) },
-        state: 'ready',
-        timestamp: '2026-10-31T12:00:00Z',
-      },
-    },
-  });
+/** Seeds the w-photo-1 carousel with `photos` and an optional cycle interval. */
+function setWidgetPhotos(photos: PhotoItem[], cycleSeconds?: number, config: Record<string, unknown> = {}) {
+  seedWidget('w-photo-1', widgetMeta('photo-carousel', config), { photos, ...(cycleSeconds !== undefined ? { cycle_interval_seconds: cycleSeconds } : {}) });
 }
 
 describe('PhotoCarouselWidget helpers', () => {
@@ -285,9 +272,7 @@ describe('PhotoCarouselWidget component', () => {
   it('renders loading state when widget data has not loaded or has not hydrated photos array', () => {
     useDisplayStore.setState({ widgets: { [widgetId]: { meta: undefined, data: undefined, state: 'loading', timestamp: '' } } });
 
-    const { container, rerender } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-    );
+    const { container, rerender } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     let loading = container.querySelector('.photo-loading');
     expect(loading).not.toBeNull();
@@ -295,7 +280,7 @@ describe('PhotoCarouselWidget component', () => {
 
     // Also renders loading state when state is healthy but photos array is not yet present
     useDisplayStore.setState({
-      widgets: { [widgetId]: { meta: makeWidgetMeta({}), data: {}, state: 'healthy', timestamp: '2026-10-31T12:00:00Z' } },
+      widgets: { [widgetId]: { meta: widgetMeta('photo-carousel', {}), data: {}, state: 'healthy', timestamp: '2026-10-31T12:00:00Z' } },
     });
 
     rerender(
@@ -309,12 +294,10 @@ describe('PhotoCarouselWidget component', () => {
 
   it('renders empty state when photos array is empty', () => {
     useDisplayStore.setState({
-      widgets: { [widgetId]: { meta: makeWidgetMeta({}), data: { photos: [] }, state: 'ready', timestamp: '2026-10-31T12:00:00Z' } },
+      widgets: { [widgetId]: { meta: widgetMeta('photo-carousel', {}), data: { photos: [] }, state: 'ready', timestamp: '2026-10-31T12:00:00Z' } },
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-    );
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     const empty = container.querySelector('.photo-empty');
     expect(empty).not.toBeNull();
@@ -328,9 +311,7 @@ describe('PhotoCarouselWidget component', () => {
       10,
     );
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-    );
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     const root = container.querySelector('.widget-photo-carousel');
     expect(root).not.toBeNull();
@@ -372,9 +353,7 @@ describe('PhotoCarouselWidget component', () => {
         10,
       );
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
       expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
@@ -438,9 +417,7 @@ describe('PhotoCarouselWidget component', () => {
     try {
       setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }], 15);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const root = container.querySelector('.widget-photo-carousel')!;
       act(() => { fireEvent.click(root); });
@@ -474,9 +451,7 @@ describe('PhotoCarouselWidget component', () => {
     try {
       setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }, { url: 'https://example.com/p3.jpg' }], 15);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const root = container.querySelector('.widget-photo-carousel')!;
       act(() => { fireEvent.click(root); });
@@ -530,97 +505,58 @@ describe('PhotoCarouselWidget component', () => {
   });
 
   it('sizes photo URLs via ResizeObserver without synchronous getBoundingClientRect', () => {
-    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
-    const originalResizeObserver = window.ResizeObserver;
-
-    class MockResizeObserver {
-      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) {
-        resizeCallback = cb;
-      }
-      observe = vi.fn();
-      disconnect = vi.fn();
-      unobserve = vi.fn();
-    }
-    // @ts-expect-error mock window.ResizeObserver
-    window.ResizeObserver = MockResizeObserver;
+    const ro = stubResizeObserver();
 
     const getBoundingClientRectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect');
 
-    try {
-      setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }], 10);
+    setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }], 10);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
-      // Invariant: no synchronous getBoundingClientRect on mount!
-      expect(getBoundingClientRectSpy).not.toHaveBeenCalled();
+    // Invariant: no synchronous getBoundingClientRect on mount!
+    expect(getBoundingClientRectSpy).not.toHaveBeenCalled();
 
-      // Initial render uses fallback screen/window size before ResizeObserver delivers box
-      const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
-      expect(currentFg.getAttribute('src')).toMatch(/^https:\/\/example\.com\/p1\.jpg=w\d+-h\d+$/);
+    // Initial render uses fallback screen/window size before ResizeObserver delivers box
+    const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
+    expect(currentFg.getAttribute('src')).toMatch(/^https:\/\/example\.com\/p1\.jpg=w\d+-h\d+$/);
 
-      // ResizeObserver delivers measured container size
-      expect(resizeCallback).not.toBeNull();
-      act(() => {
-        resizeCallback!([{ contentRect: { width: 1400, height: 900 } }]);
- });
+    // ResizeObserver delivers measured container size
+    act(() => {
+      ro.resize(1400, 900);
+    });
 
-      expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1400-h900');
-    } finally {
-      window.ResizeObserver = originalResizeObserver;
-      getBoundingClientRectSpy.mockRestore();
-    }
+    expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1400-h900');
   });
 
   it('tracks container size via ResizeObserver when transitioning from loading state to ready photos', () => {
-    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
-    const originalResizeObserver = window.ResizeObserver;
+    const ro = stubResizeObserver();
 
-    class MockResizeObserver {
-      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) {
-        resizeCallback = cb;
-      }
-      observe = vi.fn();
-      disconnect = vi.fn();
-      unobserve = vi.fn();
-    }
-    // @ts-expect-error mock window.ResizeObserver
-    window.ResizeObserver = MockResizeObserver;
-
-    try {
-      useDisplayStore.setState({
-        widgets: {
-          [widgetId]: {
-            meta: undefined,
-            data: undefined,
-            state: 'loading',
-            timestamp: '',
-          },
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: undefined,
+          data: undefined,
+          state: 'loading',
+          timestamp: '',
         },
- });
+      },
+    });
 
-      const { container, rerender } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+    const { container, rerender } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
-      expect(container.querySelector('.photo-loading')).not.toBeNull();
+    expect(container.querySelector('.photo-loading')).not.toBeNull();
 
-      setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }], 10);
-      rerender(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+    setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }], 10);
+    rerender(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
+    );
 
-      expect(resizeCallback).not.toBeNull();
-      act(() => {
-        resizeCallback!([{ contentRect: { width: 1400, height: 900 } }]);
- });
+    act(() => {
+      ro.resize(1400, 900);
+    });
 
-      const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
-      expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1400-h900');
-    } finally {
-      window.ResizeObserver = originalResizeObserver;
-    }
+    const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
+    expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1400-h900');
   });
 
   it('includes dither class on photo-next during active transition and defaults interval to 30s', async () => {
@@ -637,9 +573,7 @@ describe('PhotoCarouselWidget component', () => {
     try {
       setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }], undefined);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       // Should NOT advance at 15 seconds
       act(() => { vi.advanceTimersByTime(15000);
@@ -682,9 +616,7 @@ describe('PhotoCarouselWidget component', () => {
     try {
       setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }], 10);
 
-      render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       expect(document.body.dataset.animating).toBeUndefined();
 
@@ -718,9 +650,7 @@ describe('PhotoCarouselWidget component', () => {
 
     try {
       setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }, { url: 'https://example.com/p3.jpg' }], 15);
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const root = container.querySelector('.widget-photo-carousel')!;
       act(() => { fireEvent.click(root); });
@@ -753,9 +683,7 @@ describe('PhotoCarouselWidget component', () => {
 
     try {
       setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }], 10);
-      const { unmount } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { unmount } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
       act(() => { vi.advanceTimersByTime(10000); });
       expect(resolveDecode).not.toBeNull();
       act(() => { resolveDecode!(); });
@@ -785,9 +713,7 @@ describe('PhotoCarouselWidget component', () => {
     try {
       setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }, { url: 'https://example.com/p3.jpg' }], 10);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
       expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
@@ -842,9 +768,7 @@ describe('PhotoCarouselWidget component', () => {
         { url: 'https://example.com/p3.jpg' },
       ], 10);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
       expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
@@ -896,13 +820,13 @@ describe('PhotoCarouselWidget component', () => {
         useDisplayStore.setState({
           widgets: {
             [widgetId]: {
-              meta: makeWidgetMeta({}),
+              meta: widgetMeta('photo-carousel', {}),
               data: { photos: [{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }, { url: 'https://example.com/p3.jpg' }], cycle_interval_seconds: 10 },
               state: 'ready', timestamp: '2026-10-31T12:00:00Z',
             },
           },
         });
-        render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
+        renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
         act(() => { vi.advanceTimersByTime(10000); });
         expect(resolveDecode).not.toBeNull();
         act(() => { resolveDecode!(); });
@@ -932,13 +856,13 @@ describe('PhotoCarouselWidget component', () => {
         useDisplayStore.setState({
           widgets: {
             [widgetId]: {
-              meta: makeWidgetMeta({}),
+              meta: widgetMeta('photo-carousel', {}),
               data: { photos: [{ id: '1', url: 'https://example.com/p1.jpg' }, { id: '2', url: 'https://example.com/p2.jpg' }, { id: '3', url: 'https://example.com/p3.jpg' }], cycle_interval_seconds: 10 },
               state: 'ready', timestamp: '2026-10-31T12:00:00Z',
             },
           },
         });
-        const { container, rerender } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
+        const { container, rerender } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
         const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
         expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
         act(() => { vi.advanceTimersByTime(10000); });
@@ -951,7 +875,7 @@ describe('PhotoCarouselWidget component', () => {
           useDisplayStore.setState({
             widgets: {
               [widgetId]: {
-                meta: makeWidgetMeta({}),
+                meta: widgetMeta('photo-carousel', {}),
                 data: { photos: [{ id: '3', url: 'https://example.com/p3.jpg' }, { id: '1', url: 'https://example.com/p1.jpg' }, { id: '2', url: 'https://example.com/p2.jpg' }], cycle_interval_seconds: 10 },
                 state: 'ready', timestamp: '2026-10-31T12:01:00Z',
               },
@@ -980,7 +904,7 @@ describe('PhotoCarouselWidget component', () => {
       useDisplayStore.setState({
         widgets: {
           [widgetId]: {
-            meta: makeWidgetMeta({}),
+            meta: widgetMeta('photo-carousel', {}),
             data: {
               photos: [
                 { id: '1', url: 'https://example.com/p1.jpg' },
@@ -995,9 +919,7 @@ describe('PhotoCarouselWidget component', () => {
         },
  });
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
       expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
@@ -1064,7 +986,7 @@ describe('PhotoCarouselWidget component', () => {
       useDisplayStore.setState({
         widgets: {
           [widgetId]: {
-            meta: makeWidgetMeta({}),
+            meta: widgetMeta('photo-carousel', {}),
             data: {
               photos: [
                 { id: '1', url: 'https://example.com/p1.jpg' },
@@ -1078,9 +1000,7 @@ describe('PhotoCarouselWidget component', () => {
         },
  });
 
-      const { container, rerender } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container, rerender } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       // Advance 4 seconds into 10s cycle
       act(() => { vi.advanceTimersByTime(4000);
@@ -1149,7 +1069,7 @@ describe('PhotoCarouselWidget component', () => {
       useDisplayStore.setState({
         widgets: {
           [widgetId]: {
-            meta: makeWidgetMeta({}),
+            meta: widgetMeta('photo-carousel', {}),
             data: {
               photos: [
                 { id: '1', url: 'https://example.com/p1.jpg' },
@@ -1164,9 +1084,7 @@ describe('PhotoCarouselWidget component', () => {
         },
  });
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
       expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
@@ -1216,9 +1134,7 @@ describe('PhotoCarouselWidget component', () => {
         { id: '3', url: 'https://example.com/p3.jpg' },
       ], 15);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const root = container.querySelector('.widget-photo-carousel') as HTMLDivElement;
       vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 300, bottom: 200, width: 300, height: 200, x: 0, y: 0, toJSON: () => {} });
@@ -1290,9 +1206,7 @@ describe('PhotoCarouselWidget component', () => {
         { id: '3', url: 'https://example.com/p3.jpg' },
       ], 15);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const root = container.querySelector('.widget-photo-carousel') as HTMLDivElement;
       vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 300, bottom: 200, width: 300, height: 200, x: 0, y: 0, toJSON: () => {} });
@@ -1334,21 +1248,14 @@ describe('PhotoCarouselWidget component', () => {
   it('pairs two portrait photos side-by-side in a wide container and renders single landscape photo', async () => {
     const decodeResolvers: (() => void)[] = [];
     const originalImage = window.Image;
-    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
-    const originalResizeObserver = window.ResizeObserver;
 
     class MockImage {
       src = '';
       decode() { return new Promise<void>((res) => { decodeResolvers.push(res); }); }
     }
-    class MockResizeObserver {
-      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
-      observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
-    }
     // @ts-expect-error mock window.Image
     window.Image = MockImage;
-    // @ts-expect-error mock window.ResizeObserver
-    window.ResizeObserver = MockResizeObserver;
+    const ro = stubResizeObserver();
 
     try {
       photoDeckStateById.clear();
@@ -1358,11 +1265,9 @@ describe('PhotoCarouselWidget component', () => {
         { id: 'p2', url: 'https://example.com/portrait2.jpg', aspect_ratio: 0.75, timestamp: '2026-10-12T12:00:00Z', location: 'Seattle' },
       ], 10);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
-      act(() => { resizeCallback?.([{ contentRect: { width: 1400, height: 900 } }]); });
+      act(() => { ro.resize(1400, 900); });
 
       const diptych = container.querySelector('.photo-layer.photo-current.photo-foreground-diptych');
       expect(diptych).not.toBeNull();
@@ -1391,28 +1296,20 @@ describe('PhotoCarouselWidget component', () => {
       expect(deck?.seenKeys.has('https://example.com/landscape1.jpg')).toBe(true);
     } finally {
       window.Image = originalImage;
-      window.ResizeObserver = originalResizeObserver;
     }
   });
 
   it('keeps outgoing and committed companion portrait images stable across transitions in albums with 5+ portraits', async () => {
     const decodeResolvers: (() => void)[] = [];
     const originalImage = window.Image;
-    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
-    const originalResizeObserver = window.ResizeObserver;
 
     class MockImage {
       src = '';
       decode() { return new Promise<void>((res) => { decodeResolvers.push(res); }); }
     }
-    class MockResizeObserver {
-      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
-      observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
-    }
     // @ts-expect-error mock window.Image
     window.Image = MockImage;
-    // @ts-expect-error mock window.ResizeObserver
-    window.ResizeObserver = MockResizeObserver;
+    const ro = stubResizeObserver();
 
     try {
       photoDeckStateById.clear();
@@ -1424,11 +1321,9 @@ describe('PhotoCarouselWidget component', () => {
         { id: 'p5', url: 'https://example.com/p5.jpg', aspect_ratio: 0.75 },
       ], 10);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
-      act(() => { resizeCallback?.([{ contentRect: { width: 1400, height: 900 } }]); });
+      act(() => { ro.resize(1400, 900); });
 
       let curImgs = container.querySelectorAll('.photo-layer.photo-current img.photo-diptych-item');
       expect(curImgs.length).toBe(2);
@@ -1456,50 +1351,33 @@ describe('PhotoCarouselWidget component', () => {
       expect(itemAt(curImgs, 1).getAttribute('src')).toBe('https://example.com/p4.jpg=w1400-h900');
     } finally {
       window.Image = originalImage;
-      window.ResizeObserver = originalResizeObserver;
     }
   });
 
   it('renders single portrait photo when container is narrow (< 1.15 aspect ratio) and deduplicates same-day metadata when paired', () => {
-    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
-    const originalResizeObserver = window.ResizeObserver;
+    const ro = stubResizeObserver();
 
-    class MockResizeObserver {
-      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
-      observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
-    }
-    // @ts-expect-error mock window.ResizeObserver
-    window.ResizeObserver = MockResizeObserver;
+    photoDeckStateById.clear();
+    setWidgetPhotos([
+      { id: 'p1', url: 'https://example.com/portrait1.jpg', width: 800, height: 1200, timestamp: '2026-10-10T09:00:00Z', location: 'Chicago' },
+      { id: 'p2', url: 'https://example.com/portrait2.jpg', width: 900, height: 1200, timestamp: '2026-10-10T18:30:00Z', location: 'Chicago' },
+    ], 10);
 
-    try {
-      photoDeckStateById.clear();
-      setWidgetPhotos([
-        { id: 'p1', url: 'https://example.com/portrait1.jpg', width: 800, height: 1200, timestamp: '2026-10-10T09:00:00Z', location: 'Chicago' },
-        { id: 'p2', url: 'https://example.com/portrait2.jpg', width: 900, height: 1200, timestamp: '2026-10-10T18:30:00Z', location: 'Chicago' },
-      ], 10);
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+    expect(container.querySelector('.photo-foreground-diptych')).not.toBeNull();
+    expect(container.querySelector('.photo-metadata-overlay')?.textContent).toBe('Oct 10, 2026\nChicago');
 
-      expect(container.querySelector('.photo-foreground-diptych')).not.toBeNull();
-      expect(container.querySelector('.photo-metadata-overlay')?.textContent).toBe('Oct 10, 2026\nChicago');
-
-      act(() => { resizeCallback?.([{ contentRect: { width: 600, height: 800 } }]); });
-      expect(container.querySelector('.photo-foreground-diptych')).toBeNull();
-      expect(container.querySelector('img.photo-layer.photo-current')?.getAttribute('src')).toBe('https://example.com/portrait1.jpg=w600-h800');
-      const deck = photoDeckStateById.get(widgetId);
-      expect(deck?.companionKey).toBeNull();
-      expect(deck?.seenKeys.has('https://example.com/portrait2.jpg')).toBe(false);
-    } finally {
-      window.ResizeObserver = originalResizeObserver;
-    }
+    act(() => { ro.resize(600, 800); });
+    expect(container.querySelector('.photo-foreground-diptych')).toBeNull();
+    expect(container.querySelector('img.photo-layer.photo-current')?.getAttribute('src')).toBe('https://example.com/portrait1.jpg=w600-h800');
+    const deck = photoDeckStateById.get(widgetId);
+    expect(deck?.companionKey).toBeNull();
+    expect(deck?.seenKeys.has('https://example.com/portrait2.jpg')).toBe(false);
   });
 
   it('handles partial decode in triggerAdvance by falling back to single portrait when companion fails or keeping companion unseen when primary fails', async () => {
     const originalImage = window.Image;
-    let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
-    const originalResizeObserver = window.ResizeObserver;
 
     class MockImage {
       _src = '';
@@ -1512,14 +1390,9 @@ describe('PhotoCarouselWidget component', () => {
         return Promise.resolve();
       }
     }
-    class MockResizeObserver {
-      constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
-      observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
-    }
     // @ts-expect-error mock window.Image
     window.Image = MockImage;
-    // @ts-expect-error mock window.ResizeObserver
-    window.ResizeObserver = MockResizeObserver;
+    const ro = stubResizeObserver();
 
     try {
       photoDeckStateById.clear();
@@ -1533,11 +1406,9 @@ describe('PhotoCarouselWidget component', () => {
         { id: 'p7', url: 'https://example.com/p6_bad.jpg', aspect_ratio: 0.75 },
       ], 10);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
-      act(() => { resizeCallback?.([{ contentRect: { width: 1400, height: 900 } }]); });
+      act(() => { ro.resize(1400, 900); });
 
       // Cycle 1: primary is p3_bad (fails), companion is p4 (succeeds).
       // Because primary failed, p3_bad is marked seen, but p4 must NOT be marked seen.
@@ -1570,7 +1441,6 @@ describe('PhotoCarouselWidget component', () => {
       expect(deck.companionKey).toBeNull();
     } finally {
       window.Image = originalImage;
-      window.ResizeObserver = originalResizeObserver;
     }
   });
   describe('inline video playback', () => {
@@ -1580,7 +1450,7 @@ describe('PhotoCarouselWidget component', () => {
         { id: 'v1', url: 'https://example.com/video1', media_type: 'video' },
         { id: 'p2', url: 'https://example.com/photo2', media_type: 'photo' },
       ], 10);
-      const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
       expect(container.querySelector('img.photo-layer.photo-current')?.getAttribute('src')).toContain('-no');
       const playBtn = container.querySelector('button.photo-video-play-btn');
       expect(playBtn?.getAttribute('aria-label')).toBe('Play video');
@@ -1608,7 +1478,7 @@ describe('PhotoCarouselWidget component', () => {
     it('cycles through stream suffixes on video error', () => {
       photoDeckStateById.clear();
       setWidgetPhotos([{ id: 'v1', url: 'https://example.com/stream_test', media_type: 'video' }], 10);
-      const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
       fireEvent.click(container.querySelector('button.photo-video-play-btn')!);
       let videoEl = container.querySelector('video.photo-video-player') as HTMLVideoElement;
       expect(videoEl.getAttribute('src')).toBe('https://example.com/stream_test=m22');
@@ -1624,43 +1494,32 @@ describe('PhotoCarouselWidget component', () => {
     });
 
     it('supports video playback in diptych slots', () => {
-      let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
-      const originalResizeObserver = window.ResizeObserver;
-      class MockResizeObserver {
-        constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
-        observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
-      }
-      // @ts-expect-error mock window.ResizeObserver
-      window.ResizeObserver = MockResizeObserver;
-      try {
-        photoDeckStateById.clear();
-        setWidgetPhotos([
-          { id: 'v1', url: 'https://example.com/v_portrait1', aspect_ratio: 0.7, media_type: 'video' },
-          { id: 'v2', url: 'https://example.com/v_portrait2', aspect_ratio: 0.7, media_type: 'video' },
-        ], 10);
-        const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
-        act(() => { resizeCallback?.([{ contentRect: { width: 1400, height: 900 } }]); });
-        const diptychSlots = container.querySelectorAll('.photo-diptych-slot');
-        expect(diptychSlots.length).toBe(2);
-        const playBtns = container.querySelectorAll('.photo-diptych-slot .photo-video-play-btn');
-        expect(playBtns.length).toBe(2);
-        fireEvent.click(itemAt(playBtns, 1));
-        const videoInSlot2 = container.querySelector('.photo-diptych-slot video.photo-video-player');
-        expect(videoInSlot2?.getAttribute('src')).toBe('https://example.com/v_portrait2=m22');
-        expect(itemAt(diptychSlots, 0).querySelector('img.photo-diptych-item')).not.toBeNull();
-        expect(itemAt(diptychSlots, 0).querySelector('.photo-video-play-btn')).not.toBeNull();
-        fireEvent.ended(videoInSlot2!);
-        expect(container.querySelector('.photo-diptych-slot video.photo-video-player')).toBeNull();
-        expect(container.querySelectorAll('.photo-diptych-slot .photo-video-play-btn').length).toBe(2);
-      } finally {
-        window.ResizeObserver = originalResizeObserver;
-      }
+      const ro = stubResizeObserver();
+      photoDeckStateById.clear();
+      setWidgetPhotos([
+        { id: 'v1', url: 'https://example.com/v_portrait1', aspect_ratio: 0.7, media_type: 'video' },
+        { id: 'v2', url: 'https://example.com/v_portrait2', aspect_ratio: 0.7, media_type: 'video' },
+      ], 10);
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
+      act(() => { ro.resize(1400, 900); });
+      const diptychSlots = container.querySelectorAll('.photo-diptych-slot');
+      expect(diptychSlots.length).toBe(2);
+      const playBtns = container.querySelectorAll('.photo-diptych-slot .photo-video-play-btn');
+      expect(playBtns.length).toBe(2);
+      fireEvent.click(itemAt(playBtns, 1));
+      const videoInSlot2 = container.querySelector('.photo-diptych-slot video.photo-video-player');
+      expect(videoInSlot2?.getAttribute('src')).toBe('https://example.com/v_portrait2=m22');
+      expect(itemAt(diptychSlots, 0).querySelector('img.photo-diptych-item')).not.toBeNull();
+      expect(itemAt(diptychSlots, 0).querySelector('.photo-video-play-btn')).not.toBeNull();
+      fireEvent.ended(videoInSlot2!);
+      expect(container.querySelector('.photo-diptych-slot video.photo-video-player')).toBeNull();
+      expect(container.querySelectorAll('.photo-diptych-slot .photo-video-play-btn').length).toBe(2);
     });
 
     it('unmounts video player and restores play button when switching panes or entering video mode', () => {
       photoDeckStateById.clear();
       setWidgetPhotos([{ id: 'v1', url: 'https://example.com/v1', media_type: 'video' }], 10);
-      const { container, rerender } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
+      const { container, rerender } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
       fireEvent.click(container.querySelector('button.photo-video-play-btn')!);
       expect(container.querySelector('video.photo-video-player')).not.toBeNull();
       rerender(<PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
@@ -1676,31 +1535,20 @@ describe('PhotoCarouselWidget component', () => {
     });
 
     it('clears secondary video playback when container narrows', () => {
-      let resizeCallback: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null = null;
-      const originalResizeObserver = window.ResizeObserver;
-      class MockResizeObserver {
-        constructor(cb: (entries: { contentRect: { width: number; height: number } }[]) => void) { resizeCallback = cb; }
-        observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
-      }
-      // @ts-expect-error mock window.ResizeObserver
-      window.ResizeObserver = MockResizeObserver;
-      try {
-        photoDeckStateById.clear();
-        setWidgetPhotos([
-          { id: 'v1', url: 'https://example.com/v1', aspect_ratio: 0.7, media_type: 'video' },
-          { id: 'v2', url: 'https://example.com/v2', aspect_ratio: 0.7, media_type: 'video' },
-        ], 10);
-        const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
-        act(() => { resizeCallback?.([{ contentRect: { width: 1400, height: 900 } }]); });
-        const playBtns = container.querySelectorAll('.photo-diptych-slot .photo-video-play-btn');
-        fireEvent.click(itemAt(playBtns, 1));
-        expect(container.querySelector('.photo-diptych-slot video.photo-video-player')).not.toBeNull();
-        act(() => { resizeCallback?.([{ contentRect: { width: 500, height: 800 } }]); });
-        expect(container.querySelector('video.photo-video-player')).toBeNull();
-        expect(container.querySelector('button.photo-video-play-btn')).not.toBeNull();
-      } finally {
-        window.ResizeObserver = originalResizeObserver;
-      }
+      const ro = stubResizeObserver();
+      photoDeckStateById.clear();
+      setWidgetPhotos([
+        { id: 'v1', url: 'https://example.com/v1', aspect_ratio: 0.7, media_type: 'video' },
+        { id: 'v2', url: 'https://example.com/v2', aspect_ratio: 0.7, media_type: 'video' },
+      ], 10);
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
+      act(() => { ro.resize(1400, 900); });
+      const playBtns = container.querySelectorAll('.photo-diptych-slot .photo-video-play-btn');
+      fireEvent.click(itemAt(playBtns, 1));
+      expect(container.querySelector('.photo-diptych-slot video.photo-video-player')).not.toBeNull();
+      act(() => { ro.resize(500, 800); });
+      expect(container.querySelector('video.photo-video-player')).toBeNull();
+      expect(container.querySelector('button.photo-video-play-btn')).not.toBeNull();
     });
 
     it('never auto-plays or leaks video playback across slides when stepping to or between video slides', async () => {
@@ -1721,11 +1569,7 @@ describe('PhotoCarouselWidget component', () => {
           { id: 'vC', url: 'https://example.com/videoC', media_type: 'video' },
         ], 30);
 
-        const { container } = render(
-          <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-            <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-          </PaneContext.Provider>,
-        );
+        const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
         const root = container.querySelector('.widget-photo-carousel') as HTMLDivElement;
 
@@ -1779,7 +1623,7 @@ describe('PhotoCarouselWidget component', () => {
     it('renders -k frozen frame and play button for GIFs by default, plays animated GIF inline on click while pausing rotation, and restores -k on click', () => {
       photoDeckStateById.clear();
       setWidgetPhotos([{ id: 'g1', url: 'https://example.com/anim1', media_type: 'gif' }, { id: 'p2', url: 'https://example.com/photo2', media_type: 'photo' }], 10);
-      const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
       const fgImg = container.querySelector('img.photo-layer.photo-current') as HTMLImageElement;
       expect(fgImg.getAttribute('src')).toBe('https://example.com/anim1=w1024-h768-k');
       expect(container.querySelector('img.photo-backdrop-current')?.getAttribute('src')).toBe('https://example.com/anim1=w96-h54-c-k');
