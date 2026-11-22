@@ -4,11 +4,9 @@ import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
-import {
-  YtMusicNextIcon, YtMusicPauseIcon, YtMusicPlayIcon,
-  YtMusicPrevIcon, YtMusicSpeakerIcon, YtMusicStopIcon,
-} from './YtMusicIcons';
+import { YtMusicPlayIcon, YtMusicSpeakerIcon } from './YtMusicIcons';
 import { YtMusicNowPlaying } from './YtMusicNowPlaying';
+import { YtMusicTransport } from './YtMusicTransport';
 import {
   DEFAULT_ART, DEFAULT_STATE, postMusicApi, resolveAccounts,
   resolveSpeakersWithLocal, resolveSuggestions, setSharedYtMusicState,
@@ -101,7 +99,6 @@ function YtMusicMiniPlayer({
   onNext: () => void; onStop: () => void; onVolumeChange: (e: ChangeEvent<HTMLInputElement>) => void; onOpenNowPlaying: () => void;
 }) {
   'use no memo';
-  const isPlaying = np.state === 'playing';
   return (
     <div className="player-deck">
       <img className="art-thumb" id="np-art" src={np.thumb || DEFAULT_ART} alt={np.title || 'Now Playing'} />
@@ -109,23 +106,7 @@ function YtMusicMiniPlayer({
         <div className="np-title" id="np-title">{startingPlayback ? 'Starting playback...' : np.title || 'YouTube Music'}</div>
         <div className="np-artist" id="np-artist">{np.artist || (np.title ? 'Ready' : 'Pick a playlist or search a song')}</div>
       </div>
-      <div className="transport">
-        <button type="button" className={`ctrl-btn${np.shuffle ? ' active' : ''}`} id="btn-shuffle" title="Shuffle" aria-label="Shuffle" aria-pressed={Boolean(np.shuffle)} onClick={onShuffle}>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points="16 3 21 3 21 8" /><line x1="4" y1="20" x2="21" y2="3" /><polyline points="21 16 21 21 16 21" /><line x1="15" y1="15" x2="21" y2="21" /><line x1="4" y1="4" x2="9" y2="9" />
-          </svg>
-        </button>
-        <button type="button" className="ctrl-btn" id="btn-prev" title="Previous" aria-label="Previous" onClick={onPrev}><YtMusicPrevIcon /></button>
-        <button type="button" className="ctrl-btn play-main" id="btn-play" title={isPlaying ? 'Pause' : 'Play'} aria-label={isPlaying ? 'Pause' : 'Play'} onClick={onPlayPause}>
-          {isPlaying ? <YtMusicPauseIcon /> : <YtMusicPlayIcon />}
-        </button>
-        <button type="button" className="ctrl-btn" id="btn-next" title="Next" aria-label="Next" onClick={onNext}><YtMusicNextIcon /></button>
-        <button type="button" className="ctrl-btn" id="btn-stop" title="Stop" aria-label="Stop" onClick={onStop}><YtMusicStopIcon /></button>
-      </div>
-      <div className="vol-wrap" data-prevent-screen-swipe="">
-        <span style={{ fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center' }} aria-hidden="true"><YtMusicSpeakerIcon /></span>
-        <input type="range" className="vol-slider" id="vol-slider" data-prevent-screen-swipe="" aria-label="Volume" min={0} max={100} value={typeof np.volume === 'number' ? np.volume : 35} style={{ touchAction: 'pan-x' }} onChange={onVolumeChange} />
-      </div>
+      <YtMusicTransport np={np} onShuffle={onShuffle} onPrev={onPrev} onPlayPause={onPlayPause} onNext={onNext} onStop={onStop} onVolumeChange={onVolumeChange} />
     </div>
   );
 }

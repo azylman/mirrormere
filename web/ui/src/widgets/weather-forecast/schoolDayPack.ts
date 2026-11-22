@@ -1,3 +1,5 @@
+import { normalizeMonthDay } from '../formatDate';
+
 export interface DailyWeatherManifest {
   target_date?: string | undefined;
   theme_title?: string | undefined;
@@ -205,20 +207,6 @@ export interface BirthdayMatch {
   name: string;
   bannerLabel: string;
   outfitLabel: string;
-}
-
-function normalizeMonthDay(raw: unknown): string | undefined {
-  if (typeof raw !== 'string') return undefined;
-  const trimmed = raw.trim();
-  const [, , fullMonth, fullDay] = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed) ?? [];
-  if (fullMonth && fullDay) {
-    return `${fullMonth.padStart(2, '0')}-${fullDay.padStart(2, '0')}`;
-  }
-  const [, month, day] = /^(\d{1,2})[-/](\d{1,2})$/.exec(trimmed) ?? [];
-  if (month && day) {
-    return `${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-  }
-  return undefined;
 }
 
 function sanitizeBirthdayKey(raw: string): string {
