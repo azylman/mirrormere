@@ -10,23 +10,11 @@ import (
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/display"
 	"github.com/azylman/mirrormere/internal/domain"
+	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/render"
 	"github.com/azylman/mirrormere/internal/server"
 	"github.com/azylman/mirrormere/internal/widget"
 )
-
-type staticSnapshotProvider struct {
-	snapshot *config.Snapshot
-}
-
-func (p *staticSnapshotProvider) CurrentSnapshot() *config.Snapshot { return p.snapshot }
-func (*staticSnapshotProvider) GetWidgetState(string) (any, string, string, bool) {
-	return map[string]any{}, "healthy", "", true
-}
-
-func (*staticSnapshotProvider) CurrentStatus() config.Status {
-	return config.Status{ConfigStatus: config.ConfigStatusOK}
-}
 
 func TestWalkingSkeleton_EndToEnd(t *testing.T) {
 	t.Parallel()
@@ -49,10 +37,9 @@ func TestWalkingSkeleton_EndToEnd(t *testing.T) {
 			},
 		},
 	}
-	provider := &staticSnapshotProvider{snapshot: &config.Snapshot{
-		Config:   cfg,
-		Packages: map[string]*domain.Package{"spacer": spacerPkg},
-	}}
+	provider := events.NewInMemoryStateProvider(nil)
+	provider.SetSnapshot(&config.Snapshot{Config: cfg, Packages: map[string]*domain.Package{"spacer": spacerPkg}})
+	provider.SetWidgetState("spacer-1", map[string]any{}, "healthy")
 
 	renderEngine := render.NewEngine(loader, provider)
 	renderH := render.NewHandler(renderEngine, loader, render.WithCSSPath(filepath.Join("..", "..", render.DefaultCSSPath)))
