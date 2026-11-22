@@ -10,94 +10,7 @@ import {
 } from './VideoStage';
 import { postTouchEvent } from './api';
 import { itemAt } from '../test-utils/lookup';
-
-class MockRTCPeerConnection {
-  public connectionState: RTCPeerConnectionState = 'new';
-  public iceConnectionState: RTCIceConnectionState = 'new';
-  public iceGatheringState: RTCIceGatheringState = 'complete';
-  public localDescription: RTCSessionDescriptionInit | null = null;
-  public remoteDescription: RTCSessionDescriptionInit | null = null;
-  public transceivers: {
-    kind: string;
-    direction: string;
-    receiver: { playoutDelayHint: number | null; track: { kind: string } };
-  }[] = [];
-  public ontrack: ((ev: RTCTrackEvent) => void) | null = null;
-  public onconnectionstatechange: ((ev: Event) => void) | null = null;
-  public oniceconnectionstatechange: ((ev: Event) => void) | null = null;
-  public closed = false;
-
-  private listeners = new Map<string, ((e: Event) => void)[]>();
-
-  addEventListener(type: string, listener: (e: Event) => void): void {
-    if (!this.listeners.has(type)) this.listeners.set(type, []);
-    this.listeners.get(type)!.push(listener);
-  }
-
-  removeEventListener(type: string, listener: (e: Event) => void): void {
-    const arr = this.listeners.get(type);
-    if (arr) {
-      this.listeners.set(
-        type,
-        arr.filter((l) => l !== listener),
-      );
-    }
-  }
-
-  dispatchEvent(event: Event): boolean {
-    const arr = this.listeners.get(event.type) || [];
-    for (const l of arr) l(event);
-    return true;
-  }
-
-  setConnectionState(state: RTCPeerConnectionState): void {
-    this.connectionState = state;
-    this.onconnectionstatechange?.(new Event('connectionstatechange'));
-    this.dispatchEvent(new Event('connectionstatechange'));
-  }
-
-  setIceConnectionState(state: RTCIceConnectionState): void {
-    this.iceConnectionState = state;
-    this.oniceconnectionstatechange?.(new Event('iceconnectionstatechange'));
-    this.dispatchEvent(new Event('iceconnectionstatechange'));
-  }
-
-  addTransceiver(
-    kind: string,
-    init?: { direction?: string },
-  ): {
-    kind: string;
-    direction: string;
-    receiver: { playoutDelayHint: number | null; track: { kind: string } };
-  } {
-    const receiver = { playoutDelayHint: null, track: { kind } };
-    const t = { kind, direction: init?.direction ?? 'sendrecv', receiver };
-    this.transceivers.push(t);
-    return t;
-  }
-
-  getReceivers(): { playoutDelayHint: number | null; track: { kind: string } }[] {
-    return this.transceivers.map((t) => t.receiver);
-  }
-
-  async createOffer(): Promise<RTCSessionDescriptionInit> {
-    return { type: 'offer', sdp: 'v=0\r\no=- 12345 2 IN IP4 127.0.0.1\r\ns=Mirrormere' };
-  }
-
-  async setLocalDescription(desc: RTCSessionDescriptionInit): Promise<void> {
-    this.localDescription = desc;
-  }
-
-  async setRemoteDescription(desc: RTCSessionDescriptionInit): Promise<void> {
-    this.remoteDescription = desc;
-  }
-
-  close(): void {
-    this.closed = true;
-    this.connectionState = 'closed';
-    this.iceConnectionState = 'closed';
-  }
-}
+import { FakeRTCPeerConnection } from '../test-utils/fakeRTCPeerConnection';
 
 describe('VideoStage Declarative Suite', () => {
 
@@ -368,7 +281,7 @@ describe('VideoStage Declarative Suite', () => {
 
     it('mounts WebRTC stream, negotiates SDP offer/answer, and applies zero latency playout delay', async () => {
       const originalPC = window.RTCPeerConnection;
-      window.RTCPeerConnection = MockRTCPeerConnection as unknown as typeof RTCPeerConnection;
+      window.RTCPeerConnection = FakeRTCPeerConnection as unknown as typeof RTCPeerConnection;
 
       let sdpPostSent = false;
       const mockFetch = vi.fn().mockImplementation(async (_url: string, opts) => {
@@ -475,9 +388,9 @@ describe('VideoStage Declarative Suite', () => {
   describe('Watchdog, Reconnect & Fallback Isolation', () => {
     it('auto-reconnects on WebRTC failure and flushes hardware decode buffer', async () => {
       const originalPC = window.RTCPeerConnection;
-      let activePC = null as MockRTCPeerConnection | null;
+      let activePC = null as FakeRTCPeerConnection | null;
 
-      class TestPC extends MockRTCPeerConnection {}
+      class TestPC extends FakeRTCPeerConnection {}
 
       window.RTCPeerConnection = function () {
         const pc = new TestPC();
@@ -555,7 +468,7 @@ describe('VideoStage Declarative Suite', () => {
     it('falls back to widgets mode when primary reconnect attempts are exhausted', async () => {
       const originalPC = window.RTCPeerConnection;
 
-      class AlwaysFailPC extends MockRTCPeerConnection {
+      class AlwaysFailPC extends FakeRTCPeerConnection {
         override async createOffer(): Promise<RTCSessionDescriptionInit> {
           throw new Error('Offer creation failed');
         }

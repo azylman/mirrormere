@@ -4,19 +4,11 @@ import { render, fireEvent, createEvent, act } from '@testing-library/react';
 import { LiveViewWidget, parseLiveViewConfig, computeStaggerDelayMs, activeAutoLiveStreams } from './LiveViewWidget';
 import { resolveCamerasStatusUrl } from './liveViewHelpers';
 import { useDisplayStore } from '../../store';
-import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
 import { itemAt } from '../../test-utils/lookup';
+import { FakeRTCPeerConnection } from '../../test-utils/fakeRTCPeerConnection';
+import { renderWidget, seedWidget, widgetMeta } from '../../test-utils/widget';
 
-function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
-  return {
-    type: 'live-view',
-    config,
-    origin: [0, 0],
-    dimensions: [3, 2],
-    assets_base: '',
-  };
-}
 
 describe('LiveViewWidget helpers', () => {
   describe('parseLiveViewConfig', () => {
@@ -162,11 +154,7 @@ describe('LiveViewWidget helpers', () => {
 
 describe('LiveViewWidget component', () => {
   const widgetId = 'w-live-1';
-  const seedWidget = (config: Record<string, unknown> = {}) => {
-    useDisplayStore.setState({
-      widgets: { [widgetId]: { meta: makeWidgetMeta(config), data: {}, state: 'ready', timestamp: '2026-10-31T12:00:00Z' } },
-    });
-  };
+  const seedLiveView = (config: Record<string, unknown> = {}) => { seedWidget(widgetId, widgetMeta('live-view', config, [3, 2]), {}); };
 
   if (typeof window.PointerEvent === 'undefined') {
     // @ts-expect-error polyfill PointerEvent for JSDOM
@@ -192,52 +180,11 @@ describe('LiveViewWidget component', () => {
     };
   }
 
-  class MockRTCPeerConnection {
-    transceivers: { kind: string; init?: unknown }[] = [];
-    iceGatheringState = 'complete';
-    localDescription: { sdp: string } | null = { sdp: 'v=0\r\no=mock\r\n' };
-    closed = false;
-    ontrack: ((evt: { streams?: MediaStream[]; track?: MediaStreamTrack }) => void) | null = null;
-    listeners: Record<string, (() => void)[]> = {};
-
-    addTransceiver(kind: string, init?: unknown) {
-      this.transceivers.push({ kind, init });
-    }
-    createOffer() {
-      return Promise.resolve({ type: 'offer' as const, sdp: 'v=0\r\no=mock\r\n' });
-    }
-    setLocalDescription() {
-      return Promise.resolve();
-    }
-    setRemoteDescription() {
-      return Promise.resolve();
-    }
-    close() {
-      this.closed = true;
-    }
-    addEventListener(evt: string, fn: () => void) {
-      if (!this.listeners[evt]) this.listeners[evt] = [];
-      this.listeners[evt].push(fn);
-    }
-    removeEventListener(evt: string, fn: () => void) {
-      if (!this.listeners[evt]) return;
-      this.listeners[evt] = this.listeners[evt].filter((l) => l !== fn);
-    }
-    dispatchEvent(event: { type: string } | string) {
-      const type = typeof event === 'string' ? event : event.type;
-      const fns = this.listeners[type];
-      if (fns) {
-        for (const fn of [...fns]) fn();
-      }
-      return true;
-    }
-  }
-
   let originalPeerConnection: typeof RTCPeerConnection;
   let originalFetch: typeof globalThis.fetch;
   let originalPlay: typeof HTMLMediaElement.prototype.play;
   let originalPause: typeof HTMLMediaElement.prototype.pause;
-  let lastPeerConnection: MockRTCPeerConnection | null = null;
+  let lastPeerConnection: FakeRTCPeerConnection | null = null;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -249,7 +196,7 @@ describe('LiveViewWidget component', () => {
 
     lastPeerConnection = null;
     // @ts-expect-error mock RTCPeerConnection
-    window.RTCPeerConnection = class extends MockRTCPeerConnection {
+    window.RTCPeerConnection = class extends FakeRTCPeerConnection {
       constructor() {
         super();
         // eslint-disable-next-line @typescript-eslint/no-this-alias
@@ -282,18 +229,14 @@ describe('LiveViewWidget component', () => {
   });
 
   it('renders live view DOM structure without duplicate data-widget-id', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       title: 'Backyard',
       fit: 'cover',
       poster_url: 'https://cam.example.com/poster.jpg',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view');
     expect(root).not.toBeNull();
@@ -325,17 +268,13 @@ describe('LiveViewWidget component', () => {
   });
 
   it('starts WebRTC negotiation and connects ontrack stream to video element', async () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       stream_type: 'webrtc',
       title: 'Driveway',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(lastPeerConnection).not.toBeNull();
@@ -369,17 +308,13 @@ describe('LiveViewWidget component', () => {
   });
 
   it('plays MJPEG stream on img element and hides video', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/mjpeg',
       stream_type: 'mjpeg',
       title: 'Porch',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
     const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
@@ -391,17 +326,13 @@ describe('LiveViewWidget component', () => {
   });
 
   it('plays HLS stream on video element and hides img', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/index.m3u8',
       stream_type: 'hls',
       title: 'HLS Stream',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
@@ -415,16 +346,12 @@ describe('LiveViewWidget component', () => {
   });
 
   it('tears down decoders when isCurrentPane becomes false, and resumes when current pane again', async () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       stream_type: 'webrtc',
     });
 
-    const { rerender } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { rerender } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(lastPeerConnection).not.toBeNull();
@@ -454,16 +381,12 @@ describe('LiveViewWidget component', () => {
   });
 
   it('tears down decoders when document becomes hidden', async () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       stream_type: 'webrtc',
     });
 
-    render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(lastPeerConnection).not.toBeNull();
@@ -493,16 +416,12 @@ describe('LiveViewWidget component', () => {
     window.IntersectionObserver = MockIO;
 
     try {
-      seedWidget({
+      seedLiveView({
         stream_url: 'https://cam.example.com/webrtc',
         stream_type: 'webrtc',
       });
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-          <LiveViewWidget id={widgetId} type="live-view" />
-        </PaneContext.Provider>,
-      );
+      const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
       await vi.waitFor(() => {
         expect(lastPeerConnection).not.toBeNull();
@@ -527,16 +446,12 @@ describe('LiveViewWidget component', () => {
   });
 
   it('tears down decoders and clears loading when videoMode becomes "video", and resumes on "widgets"', async () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       stream_type: 'webrtc',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(lastPeerConnection).not.toBeNull();
@@ -576,7 +491,7 @@ describe('LiveViewWidget component', () => {
   });
 
   it('handles tap-to-wake: fires wake action and video trigger with payload', async () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/stream',
       stream_type: 'webrtc',
       stream_id: 'front-door',
@@ -586,11 +501,7 @@ describe('LiveViewWidget component', () => {
       timeout_seconds: 45,
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
 
@@ -640,18 +551,14 @@ describe('LiveViewWidget component', () => {
   });
 
   it('omits timeout_seconds when not provided or zero, and respects expand_stream_url', async () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/ambient',
       expand_stream_url: 'https://cam.example.com/hq',
       expand_stream_type: 'hls',
       timeout_seconds: 0,
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
 
@@ -677,15 +584,11 @@ describe('LiveViewWidget component', () => {
   });
 
   it('rejects drag gestures (hypot >= 15) and suppresses synthetic clicks within 400ms', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/stream',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
 
@@ -705,16 +608,12 @@ describe('LiveViewWidget component', () => {
   });
 
   it('ignores tap when expand_on_click is false', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/stream',
       expand_on_click: false,
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
     expect(root.getAttribute('data-expand')).toBe('false');
@@ -732,15 +631,11 @@ describe('LiveViewWidget component', () => {
   it('handles trigger fetch rejection gracefully by clearing loading state', async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/stream',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
 
@@ -752,26 +647,22 @@ describe('LiveViewWidget component', () => {
   });
 
   it('waits for ICE gathering completion before sending offer', async () => {
-    let peerInstance: MockRTCPeerConnection | null = null;
+    let peerInstance: FakeRTCPeerConnection | null = null;
     // @ts-expect-error mock RTCPeerConnection
     window.RTCPeerConnection = function () {
-      const pc = new MockRTCPeerConnection();
+      const pc = new FakeRTCPeerConnection();
       pc.iceGatheringState = 'gathering';
       peerInstance = pc;
       lastPeerConnection = pc;
       return pc;
     };
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       stream_type: 'webrtc',
     });
 
-    render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(peerInstance?.listeners.icegatheringstatechange?.length).toBe(1);
@@ -797,26 +688,22 @@ describe('LiveViewWidget component', () => {
   });
 
   it('proceeds after 500ms ICE gathering timeout if complete event does not fire', async () => {
-    let peerInstance: MockRTCPeerConnection | null = null;
+    let peerInstance: FakeRTCPeerConnection | null = null;
     // @ts-expect-error mock RTCPeerConnection
     window.RTCPeerConnection = function () {
-      const pc = new MockRTCPeerConnection();
+      const pc = new FakeRTCPeerConnection();
       pc.iceGatheringState = 'gathering';
       peerInstance = pc;
       lastPeerConnection = pc;
       return pc;
     };
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       stream_type: 'webrtc',
     });
 
-    render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(peerInstance).not.toBeNull();
@@ -841,26 +728,22 @@ describe('LiveViewWidget component', () => {
   });
 
   it('aborts ICE gathering wait when component is unmounted', async () => {
-    let peerInstance: MockRTCPeerConnection | null = null;
+    let peerInstance: FakeRTCPeerConnection | null = null;
     // @ts-expect-error mock RTCPeerConnection
     window.RTCPeerConnection = function () {
-      const pc = new MockRTCPeerConnection();
+      const pc = new FakeRTCPeerConnection();
       pc.iceGatheringState = 'gathering';
       peerInstance = pc;
       lastPeerConnection = pc;
       return pc;
     };
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       stream_type: 'webrtc',
     });
 
-    const { unmount } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(peerInstance).not.toBeNull();
@@ -882,16 +765,12 @@ describe('LiveViewWidget component', () => {
     window.MediaStream = MockStream;
 
     try {
-      seedWidget({
+      seedLiveView({
         stream_url: 'https://cam.example.com/webrtc',
         stream_type: 'webrtc',
       });
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-          <LiveViewWidget id={widgetId} type="live-view" />
-        </PaneContext.Provider>,
-      );
+      const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
       await vi.waitFor(() => {
         expect(lastPeerConnection).not.toBeNull();
@@ -920,15 +799,11 @@ describe('LiveViewWidget component', () => {
     });
 
     try {
-      seedWidget({
+      seedLiveView({
         stream_url: 'https://cam.example.com/stream',
       });
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-          <LiveViewWidget id={widgetId} type="live-view" />
-        </PaneContext.Provider>,
-      );
+      const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
       const root = container.querySelector('.widget-live-view')!;
 
@@ -997,17 +872,13 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/stream',
       controllable: true,
       control_url: 'https://cam.example.com/wake',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
     await act(async () => {
@@ -1022,15 +893,11 @@ describe('LiveViewWidget component', () => {
   });
 
   it('handles events with invalid coordinates gracefully', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/stream',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
     const downEvt = createEvent.pointerDown(root);
@@ -1053,16 +920,12 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc-err',
       stream_type: 'webrtc',
     });
 
-    render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(warnSpy).toHaveBeenCalledWith(
@@ -1086,16 +949,12 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc-hang',
       stream_type: 'webrtc',
     });
 
-    const { unmount } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(lastPeerConnection).not.toBeNull();
@@ -1112,16 +971,12 @@ describe('LiveViewWidget component', () => {
       resolveRemote = resolve;
     });
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       stream_type: 'webrtc',
     });
 
-    const { unmount } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(lastPeerConnection).not.toBeNull();
@@ -1153,15 +1008,11 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/stream',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
     await act(async () => {
@@ -1177,15 +1028,11 @@ describe('LiveViewWidget component', () => {
   });
 
   it('clears safetyTimerRef on unmount when loading is active', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/stream',
     });
 
-    const { container, unmount } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container, unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
     act(() => {
@@ -1201,15 +1048,11 @@ describe('LiveViewWidget component', () => {
   });
 
   it('resets existing safetyTimer on subsequent click after debounce window', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/stream',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
     // First click arms safety timer
@@ -1247,16 +1090,12 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       stream_type: 'webrtc',
     });
 
-    const { unmount } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     await vi.waitFor(() => {
       expect(lastPeerConnection).not.toBeNull();
@@ -1283,16 +1122,12 @@ describe('LiveViewWidget component', () => {
     delete window.RTCPeerConnection;
 
     try {
-      seedWidget({
+      seedLiveView({
         stream_url: 'https://cam.example.com/webrtc',
         stream_type: 'webrtc',
       });
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-          <LiveViewWidget id={widgetId} type="live-view" />
-        </PaneContext.Provider>,
-      );
+      const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
       expect(container.querySelector('.widget-live-view')).not.toBeNull();
     } finally {
@@ -1309,10 +1144,10 @@ describe('LiveViewWidget component', () => {
       },
       widgets: {
         [widgetId]: {
-          meta: makeWidgetMeta({
+          meta: widgetMeta('live-view', {
             stream_url: 'https://cam.example.com/webrtc',
             stream_type: 'webrtc',
-          }),
+          }, [3, 2]),
           data: {},
           state: 'ready',
           timestamp: '2026-10-31T12:00:00Z',
@@ -1320,11 +1155,7 @@ describe('LiveViewWidget component', () => {
       },
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     // Peer connection should not be initialized when videoMode === 'video'
     expect(container.querySelector('.widget-live-view')).not.toBeNull();
@@ -1341,7 +1172,7 @@ describe('LiveViewWidget component', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    seedWidget({
+    seedLiveView({
       stream_url: 'https://cam.example.com/stream',
       stream_id: 'cam-custom',
       priority: 'temporary',
@@ -1352,11 +1183,7 @@ describe('LiveViewWidget component', () => {
       expand_stream_type: 'hls',
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const root = container.querySelector('.widget-live-view')!;
     await act(async () => {
@@ -1389,7 +1216,7 @@ describe('LiveViewWidget component', () => {
   });
 
   it('staggers on-screen mjpeg snapshot refresh and preserves img.src when swiping off-pane into 5-minute background refresh', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: '/hearth-api/cameras/doorbell/stream',
       stream_type: 'mjpeg',
       title: 'Doorbell',
@@ -1398,11 +1225,7 @@ describe('LiveViewWidget component', () => {
       stagger_index: 2,
     });
 
-    const { container, rerender } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container, rerender } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('/hearth-api/cameras/doorbell/stream');
@@ -1450,7 +1273,7 @@ describe('LiveViewWidget component', () => {
   });
 
   it('hydrates initial mjpeg streamUrl when mounted directly off-pane and appends &t= when query params exist', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: '/hearth-api/cameras/nursery_cam/stream?quality=high',
       stream_type: 'mjpeg',
       title: 'Nursery Cam',
@@ -1473,7 +1296,7 @@ describe('LiveViewWidget component', () => {
   });
 
   it('disables periodic on-screen and background refresh timers when refresh_interval_seconds and background_refresh_interval_seconds are 0', () => {
-    seedWidget({
+    seedLiveView({
       stream_url: '/hearth-api/cameras/doorbell/stream',
       stream_type: 'mjpeg',
       title: 'Doorbell',
@@ -1482,11 +1305,7 @@ describe('LiveViewWidget component', () => {
       stagger_index: 1,
     });
 
-    const { container, rerender } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container, rerender } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('/hearth-api/cameras/doorbell/stream');
@@ -1513,7 +1332,7 @@ describe('LiveViewWidget component', () => {
   it('pauses on-screen mjpeg refresh after 5-minute idle timeout without changing screen unless idle_timeout_seconds is set, and resets timer on pointerdown', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true, status: 200 } as Response);
     useDisplayStore.setState((s) => ({ ...s, screen: { ...s.screen, currentScreen: 1 } }));
-    seedWidget({
+    seedLiveView({
       stream_url: '/hearth-api/cameras/nursery_cam/stream',
       stream_type: 'mjpeg',
       title: 'Nursery Cam',
@@ -1548,7 +1367,7 @@ describe('LiveViewWidget component', () => {
 
     // Opt-in screen-0 navigation fires only when idle_timeout_seconds is explicitly configured
     unmount();
-    seedWidget({ stream_url: '/hearth-api/cameras/nursery_cam/stream', stream_type: 'mjpeg', idle_timeout_seconds: 120, stagger_index: 0 });
+    seedLiveView({ stream_url: '/hearth-api/cameras/nursery_cam/stream', stream_type: 'mjpeg', idle_timeout_seconds: 120, stagger_index: 0 });
     render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 1 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
     act(() => { vi.advanceTimersByTime(119_000); });
     expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
@@ -1570,7 +1389,7 @@ describe('LiveViewWidget component', () => {
       text: async () => JSON.stringify(url === '/hearth-api/cameras' ? cameraPayload : { sdp: 'v=0\r\no=mock-answer\r\n' }),
     }));
 
-    seedWidget({
+    seedLiveView({
       stream_id: 'front',
       stream_url: '/hearth-api/cameras/front/stream',
       stream_type: 'mjpeg',
@@ -1582,11 +1401,7 @@ describe('LiveViewWidget component', () => {
       background_refresh_interval_seconds: 0,
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view');
 
     const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
@@ -1633,8 +1448,8 @@ describe('LiveViewWidget component', () => {
   });
 
   it('clears continuous MJPEG img.src (including unknown URLs like /api/camera_proxy_stream/camera.front) when off-pane, hidden, or idle while preserving finite snapshot polling', () => {
-    seedWidget({ stream_url: '/api/camera_proxy_stream/camera.front', stream_type: 'mjpeg', title: 'Continuous Cam' });
-    const { container, rerender } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+    seedLiveView({ stream_url: '/api/camera_proxy_stream/camera.front', stream_type: 'mjpeg', title: 'Continuous Cam' });
+    const { container, rerender } = renderWidget(LiveViewWidget, widgetId, 'live-view');
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('/api/camera_proxy_stream/camera.front');
 
@@ -1657,7 +1472,7 @@ describe('LiveViewWidget component', () => {
 
     // Finite snapshot endpoints preserve img.src when off-pane, document hidden, or idle
     for (const url of ['/hearth-api/cameras/porch/stream', '/api/camera_proxy/camera.front']) {
-      seedWidget({ stream_url: url, stream_type: 'mjpeg', title: 'Snapshot Cam', stagger_index: 0 });
+      seedLiveView({ stream_url: url, stream_type: 'mjpeg', title: 'Snapshot Cam', stagger_index: 0 });
       renderPane(true);
       expect(img.getAttribute('src')).toBe(url);
       renderPane(false);
@@ -1674,16 +1489,16 @@ describe('LiveViewWidget component', () => {
 
   it('does not rewrite continuous MJPEG stream URLs with ?t= refresh timers while preserving snapshot refresh', () => {
     for (const url of ['/api/camera_proxy_stream/camera.front', 'https://cam.example.com/mjpeg']) {
-      seedWidget({ stream_url: url, stream_type: 'mjpeg', title: 'Continuous MJPEG', stagger_index: 0 });
-      const { container, unmount } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+      seedLiveView({ stream_url: url, stream_type: 'mjpeg', title: 'Continuous MJPEG', stagger_index: 0 });
+      const { container, unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
       const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
       expect(img.getAttribute('src')).toBe(url);
       act(() => { vi.advanceTimersByTime(30_000); });
       expect(img.getAttribute('src')).toBe(url);
       unmount();
     }
-    seedWidget({ stream_url: '/hearth-api/cameras/porch/stream', stream_type: 'mjpeg', title: 'Snapshot MJPEG', stagger_index: 0 });
-    const { container, unmount } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+    seedLiveView({ stream_url: '/hearth-api/cameras/porch/stream', stream_type: 'mjpeg', title: 'Snapshot MJPEG', stagger_index: 0 });
+    const { container, unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
     act(() => { vi.advanceTimersByTime(16_000); });
     expect(img.getAttribute('src')).toMatch(/^\/hearth-api\/cameras\/porch\/stream\?t=\d+$/);
@@ -1711,11 +1526,11 @@ describe('LiveViewWidget component', () => {
     }));
 
     const mkCamEntry = (sid: string) => ({
-      meta: makeWidgetMeta({
+      meta: widgetMeta('live-view', {
         stream_id: sid, stream_url: `/hearth-api/cameras/${sid}/stream`, stream_type: 'mjpeg',
         expand_stream_url: 'http://localhost:1984/api/webrtc?src=front', auto_live_on_motion_seconds: 60,
         max_auto_live_streams: 2, refresh_interval_seconds: 0, background_refresh_interval_seconds: 0,
-      }),
+      }, [3, 2]),
       data: {}, state: 'ready' as const, timestamp: '2026-10-31T12:00:00Z',
     });
 
@@ -1773,8 +1588,8 @@ describe('LiveViewWidget component', () => {
       activeAutoLiveStreams.clear();
       const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{"cameras":[]}' });
       globalThis.fetch = fetchMock;
-      seedWidget({ stream_id: 'front', stream_url: streamUrl, stream_type: 'mjpeg', auto_live_on_motion_seconds: 60 });
-      const { unmount } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+      seedLiveView({ stream_id: 'front', stream_url: streamUrl, stream_type: 'mjpeg', auto_live_on_motion_seconds: 60 });
+      const { unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
       await vi.waitFor(() => { expect(fetchMock).toHaveBeenCalledWith(expected, expect.objectContaining({ signal: expect.any(AbortSignal) })); });
       unmount();
     }

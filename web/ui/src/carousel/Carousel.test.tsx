@@ -11,26 +11,7 @@ import { PaneContext } from './PaneContext';
 import { scheduleIdleStep } from './Screen';
 import { WIDGET_COMPONENTS } from '../widgets/registry';
 import { itemAt } from '../test-utils/lookup';
-
-/**
- * jsdom has no requestIdleCallback, so scheduleIdleStep uses its 16 ms timer there. Tests that
- * wait for neighbour mounts fake only the timer functions and step the clock, with no real sleeps.
- */
-function fakeIdleClock(): void {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-}
-
-/**
- * Steps the fake clock until the idle steps are done. act() applies state only when its scope
- * ends, so each pass gives every neighbour pane one step and lets it schedule the next.
- */
-async function runIdleSteps(): Promise<void> {
-  for (let pass = 0; pass < 20; pass++) {
-    await act(async () => {
-      vi.advanceTimersByTime(16);
-    });
-  }
-}
+import { fakeIdleClock, runIdleSteps, stubScreensApi } from '../test-utils/idleClock';
 
 const initial = useDisplayStore.getState();
 
@@ -66,41 +47,6 @@ function settlePredicate(): boolean {
   if (!match) throw new Error('SETTLE_PREDICATE_EXPRESSION not found in capture.js');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval -- evaluates the real predicate source from capture.js
   return new Function(`return (${match[1]});`)() as boolean;
-}
-
-type SelectHandler = () => Promise<Response>;
-
-function stubApi(screenBody: ScreensResponse = screens, select: SelectHandler = async () => new Response('{}', { status: 200 })) {
-  const fetchMock = vi.fn(async (url: string) => {
-    if (url === 'api/screens') {
-      return new Response(JSON.stringify(screenBody), { status: 200 });
-    }
-    if (url === 'api/screen/select') {
-      return select();
-    }
-    if (url.endsWith('/render')) {
-      return new Response('<div class="widget-card"><span class="legacy-label">legacy</span></div>', { status: 200 });
-    }
-    const id = decodeURIComponent(url.replace('api/widgets/', ''));
-    const type = screenBody.screens.flatMap((screen) => screen.widgets).find((w) => w.widget_id === id)?.type ?? 'clock';
-    return new Response(
-      JSON.stringify({
-        widget_id: id,
-        type,
-        origin: [0, 0],
-        dimensions: [1, 1],
-        config: {},
-        state: 'healthy',
-        data: {},
-        timestamp: '2026-10-31T12:00:00Z',
-        online: true,
-        assets_base: '',
-      }),
-      { status: 200 },
-    );
-  });
-  vi.stubGlobal('fetch', fetchMock);
-  return fetchMock;
 }
 
 function gridCanvas(): HTMLElement | null {
@@ -161,7 +107,7 @@ describe('Carousel', () => {
 
   it('loads the layout on mount and mounts every widget of the three panes', async () => {
     fakeIdleClock();
-    const fetchMock = stubApi();
+    const fetchMock = stubScreensApi(screens);
     render(<Carousel />);
     await act(async () => {});
     await runIdleSteps();
@@ -177,7 +123,7 @@ describe('Carousel', () => {
 
   it('puts #grid-canvas and the hydration attributes on the current pane only', async () => {
     fakeIdleClock();
-    stubApi();
+    stubScreensApi(screens);
     render(<Carousel />);
     await act(async () => {});
     await runIdleSteps();
@@ -198,7 +144,7 @@ describe('Carousel', () => {
 
   it('passes the e-ink settle predicate with neighbour widgets mounted', async () => {
     fakeIdleClock();
-    stubApi();
+    stubScreensApi(screens);
     render(<Carousel />);
     await act(async () => {});
     await runIdleSteps();
@@ -208,7 +154,7 @@ describe('Carousel', () => {
   });
 
   it('does not pass the settle predicate before the layout has loaded', () => {
-    stubApi();
+    stubScreensApi(screens);
     render(<Carousel />);
     // No flush: the layout fetch has not resolved.
     expect(gridCanvas()?.dataset.screenHydrated).toBeUndefined();
@@ -216,7 +162,7 @@ describe('Carousel', () => {
   });
 
   it('keeps the shown screen and renders nothing new when the echo names the screen already shown', async () => {
-    stubApi();
+    stubScreensApi(screens);
     const onRender = vi.fn();
     render(
       <Profiler id="carousel" onRender={onRender}>
@@ -246,7 +192,7 @@ describe('Carousel', () => {
 
   it('follows a store change that lands between the first render and the controller mount', async () => {
     vi.useFakeTimers();
-    stubApi();
+    stubScreensApi(screens);
     useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 0 } });
     // Layout effects run after Carousel renders and before its passive effects build the
     // controller: the same gap a reconnect hydration batch can land in.
@@ -280,7 +226,7 @@ describe('Carousel', () => {
   it('slides to a server-rotated neighbour and re-centres with the new current pane', async () => {
     vi.useFakeTimers();
     const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
-    stubApi();
+    stubScreensApi(screens);
     render(<Carousel />);
     await act(async () => {});
 
@@ -307,7 +253,7 @@ describe('Carousel', () => {
   });
 
   it('renders widget types with no registered component through the legacy fragment', async () => {
-    stubApi();
+    stubScreensApi(screens);
     render(<Carousel />);
     await act(async () => {});
     const card = document.querySelector<HTMLElement>('[data-widget-id="b-2"]');
@@ -339,10 +285,10 @@ describe('Carousel', () => {
     it('sets currentScreen before the select request is made', async () => {
       vi.useFakeTimers();
       let seenAtRequest: number | undefined;
-      stubApi(screens, async () => {
+      stubScreensApi(screens, { select: async () => {
         seenAtRequest = useDisplayStore.getState().screen.currentScreen;
         return new Response('{}', { status: 200 });
-      });
+      } });
       render(<Carousel />);
       await act(async () => {});
 
@@ -355,7 +301,7 @@ describe('Carousel', () => {
 
     it('keeps the new screen when the select request succeeds', async () => {
       vi.useFakeTimers();
-      stubApi();
+      stubScreensApi(screens);
       render(<Carousel />);
       await act(async () => {});
 
@@ -369,9 +315,9 @@ describe('Carousel', () => {
     it('restores the previous screen and slides back when the request rejects', async () => {
       vi.useFakeTimers();
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-      stubApi(screens, async () => {
+      stubScreensApi(screens, { select: async () => {
         throw new TypeError('network down');
-      });
+      } });
       render(<Carousel />);
       await act(async () => {});
 
@@ -390,7 +336,7 @@ describe('Carousel', () => {
       vi.useFakeTimers();
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       let rejectSelect: (err: Error) => void = () => {};
-      stubApi(screens, () => new Promise<Response>((_, reject) => (rejectSelect = reject)));
+      stubScreensApi(screens, { select: () => new Promise<Response>((_, reject) => (rejectSelect = reject)) });
       render(<Carousel />);
       await act(async () => {});
 
@@ -423,7 +369,7 @@ describe('Carousel', () => {
     it('restores the previous screen and slides back when the request returns 500', async () => {
       vi.useFakeTimers();
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-      stubApi(screens, async () => new Response('', { status: 500 }));
+      stubScreensApi(screens, { select: async () => new Response('', { status: 500 }) });
       render(<Carousel />);
       await act(async () => {});
 
@@ -461,7 +407,7 @@ describe('Carousel', () => {
 
     it('selects the next screen on a 60 px left swipe and captures the pointer on press', async () => {
       vi.useFakeTimers();
-      stubApi();
+      stubScreensApi(screens);
       render(<Carousel />);
       await act(async () => {});
       const capture = vi.fn();
@@ -480,7 +426,7 @@ describe('Carousel', () => {
 
     it('does not capture a press that starts on a dot, so the dot keeps its click', async () => {
       vi.useFakeTimers();
-      stubApi();
+      stubScreensApi(screens);
       render(<Carousel />);
       await act(async () => {});
       const capture = vi.fn();
@@ -494,7 +440,7 @@ describe('Carousel', () => {
 
     it('drops the gesture on pointercancel, so a lone pointerup does nothing', async () => {
       vi.useFakeTimers();
-      stubApi();
+      stubScreensApi(screens);
       render(<Carousel />);
       await act(async () => {});
 
@@ -517,7 +463,7 @@ describe('Carousel', () => {
   describe('handling hearth-swipe postMessage events', () => {
     it('advances to the next screen on hearth-swipe next message', async () => {
       vi.useFakeTimers();
-      stubApi();
+      stubScreensApi(screens);
       render(<Carousel />);
       await act(async () => {});
 
@@ -538,7 +484,7 @@ describe('Carousel', () => {
 
     it('advances to the previous screen on hearth-swipe prev message', async () => {
       vi.useFakeTimers();
-      stubApi();
+      stubScreensApi(screens);
       render(<Carousel />);
       await act(async () => {});
 
@@ -559,7 +505,7 @@ describe('Carousel', () => {
 
     it('ignores unknown message types or missing direction', async () => {
       vi.useFakeTimers();
-      stubApi();
+      stubScreensApi(screens);
       render(<Carousel />);
       await act(async () => {});
 
@@ -594,7 +540,7 @@ describe('Carousel', () => {
         interval_seconds: 30,
         screens: [{ index: 0, widgets: [{ widget_id: 'a-0', type: 'clock', origin: [0, 0], dimensions: [1, 1] }] }],
       };
-      stubApi(oneScreen);
+      stubScreensApi(oneScreen);
       useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 1 } });
       render(<Carousel />);
       await act(async () => {});
@@ -622,13 +568,13 @@ describe('Carousel', () => {
     });
     const fourScreens: ScreensResponse = { current_screen: 3, interval_seconds: 30, screens: [0, 1, 2, 3].map(screenOf) };
     const twoScreens: ScreensResponse = { current_screen: 3, interval_seconds: 30, screens: [0, 1].map(screenOf) };
-    stubApi(fourScreens);
+    stubScreensApi(fourScreens);
     useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 3, totalScreens: 4 } });
     render(<Carousel />);
     await act(async () => {});
     expect(gridCanvas()?.querySelector('[data-widget-id="s3"]')).not.toBeNull();
 
-    stubApi(twoScreens);
+    stubScreensApi(twoScreens);
     await act(async () => {
       await useDisplayStore.getState().loadScreens();
     });
@@ -638,7 +584,7 @@ describe('Carousel', () => {
   });
 
   it('refetches the layout when the layout version changes', async () => {
-    const fetchMock = stubApi();
+    const fetchMock = stubScreensApi(screens);
     render(<Carousel />);
     await act(async () => {});
     const screenCalls = () => fetchMock.mock.calls.filter(([url]) => url === 'api/screens').length;
@@ -652,7 +598,7 @@ describe('Carousel', () => {
   });
 
   it('hides carousel viewport when entering video mode and restores it when returning to widgets mode', async () => {
-    stubApi();
+    stubScreensApi(screens);
     const { container } = render(<Carousel />);
     await act(async () => {});
 
@@ -739,7 +685,7 @@ describe('Carousel', () => {
 
     it('renders exactly one #grid-canvas in the DOM', async () => {
       fakeIdleClock();
-      stubApi(fourScreens);
+      stubScreensApi(fourScreens);
       useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
       render(<Carousel />);
       await act(async () => {});
@@ -754,7 +700,7 @@ describe('Carousel', () => {
 
     it('renders parked panes with aria-hidden="true", visibility: hidden, and pointer-events: none', async () => {
       fakeIdleClock();
-      stubApi(fourScreens);
+      stubScreensApi(fourScreens);
       useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
       render(<Carousel />);
       await act(async () => {});
@@ -812,7 +758,7 @@ describe('Carousel', () => {
       };
 
       try {
-        stubApi(screensWithProbe);
+        stubScreensApi(screensWithProbe);
         useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
         render(<Carousel />);
         await act(async () => {});
@@ -830,7 +776,7 @@ describe('Carousel', () => {
 
     it('hydrates all neighbor pane widgets before any parked pane widget when stepping a fake clock', async () => {
       fakeIdleClock();
-      stubApi(fourScreens);
+      stubScreensApi(fourScreens);
       useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
       render(<Carousel />);
       await act(async () => {});
@@ -883,7 +829,7 @@ describe('Carousel', () => {
 
     it('preserves the exact same .grid-pane DOM element reference when a parked pane becomes a neighbor on swipe', async () => {
       fakeIdleClock();
-      stubApi(fourScreens);
+      stubScreensApi(fourScreens);
       useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
       render(<Carousel />);
       await act(async () => {});
@@ -920,7 +866,7 @@ describe('Carousel', () => {
 
     it('preserves the exact same DOM node references in the exact same child order across swipes with zero DOM reordering', async () => {
       fakeIdleClock();
-      stubApi(fourScreens);
+      stubScreensApi(fourScreens);
       useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
       render(<Carousel />);
       await act(async () => {});
@@ -956,7 +902,7 @@ describe('Carousel', () => {
   describe('ScreenIndicator pin toggle and rotation hold', () => {
     it('renders pin button and toggles pinned state on click, deferring server rotation until unpinned', async () => {
       fakeIdleClock();
-      stubApi();
+      stubScreensApi(screens);
       render(<Carousel />);
       await act(async () => {});
 
@@ -1027,7 +973,7 @@ describe('Carousel', () => {
           interval_seconds: 30,
           screens: [itemAt(layout, 0), itemAt(layout, 1)],
         };
-        stubApi(twoScreens);
+        stubScreensApi(twoScreens);
         useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 2 } });
         render(<Carousel />);
         await act(async () => {});

@@ -17,32 +17,7 @@ import {
   isLevelFrame,
   smoothValues,
 } from './Waveform';
-
-class MockEventSource {
-  static instances: MockEventSource[] = [];
-  url: string;
-  listeners: Record<string, ((e: { data?: unknown }) => void)[]> = {};
-  closed = false;
-
-  constructor(url: string) {
-    this.url = url;
-    MockEventSource.instances.push(this);
-  }
-
-  addEventListener(type: string, cb: (e: { data?: unknown }) => void) {
-    if (!this.listeners[type]) this.listeners[type] = [];
-    this.listeners[type].push(cb);
-  }
-
-  emit(type: string, data: unknown) {
-    const payload = { data: typeof data === 'string' ? data : JSON.stringify(data) };
-    this.listeners[type]?.forEach((cb) => { cb(payload); });
-  }
-
-  close() {
-    this.closed = true;
-  }
-}
+import { FakeEventSource } from '../test-utils/fake-event-source';
 
 describe('Waveform and WaveformMouth', () => {
   let rafCallback: FrameRequestCallback | null = null;
@@ -52,8 +27,8 @@ describe('Waveform and WaveformMouth', () => {
   beforeEach(() => {
     for (let i = 0; i < 5; i++) endAnimation();
     delete window.voiceWaveform;
-    MockEventSource.instances = [];
-    (window as unknown as { EventSource: unknown }).EventSource = MockEventSource;
+    FakeEventSource.reset();
+    vi.stubGlobal('EventSource', FakeEventSource);
 
     currentTime = 1000;
     rafCallback = null;
@@ -186,7 +161,7 @@ describe('Waveform and WaveformMouth', () => {
       const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
       const mouth = new WaveformMouth({ levelsUrl: '', svgElement: svg, polylineElement: polyline });
       expect(mouth.element).toBe(svg);
-      expect(MockEventSource.instances.length).toBe(0);
+      expect(FakeEventSource.instances.length).toBe(0);
       mouth.destroy();
     });
 
@@ -200,11 +175,11 @@ describe('Waveform and WaveformMouth', () => {
       });
       expect(mouth.element).toBe(svg);
       expect(mouth.polyline).toBe(polyline);
-      expect(MockEventSource.instances.length).toBe(1);
+      expect(FakeEventSource.instances.length).toBe(1);
 
       mouth.destroy();
       expect(mouth.element).toBeNull();
-      expect(MockEventSource.instances[0]!.closed).toBe(true);
+      expect(FakeEventSource.instances[0]!.closed).toBe(true);
     });
 
     it('reuses existing svgElement and polylineElement without removing them on destroy', () => {
@@ -233,7 +208,7 @@ describe('Waveform and WaveformMouth', () => {
     it('returns null and does not connect when levelsUrl is unset', () => {
       const { container } = render(<Waveform />);
       expect(container.firstChild).toBeNull();
-      expect(MockEventSource.instances.length).toBe(0);
+      expect(FakeEventSource.instances.length).toBe(0);
       expect(window.voiceWaveform).toBeUndefined();
     });
 
@@ -243,8 +218,8 @@ describe('Waveform and WaveformMouth', () => {
 
       const { container } = render(<Waveform />);
       expect(container.querySelector('svg.mm-voice-waveform')).not.toBeNull();
-      expect(MockEventSource.instances.length).toBe(1);
-      expect(MockEventSource.instances[0]!.url).toBe('http://127.0.0.1:8765/dataset-levels');
+      expect(FakeEventSource.instances.length).toBe(1);
+      expect(FakeEventSource.instances[0]!.url).toBe('http://127.0.0.1:8765/dataset-levels');
       expect(window.voiceWaveform?.gain).toBe(3.5);
     });
 
@@ -256,7 +231,7 @@ describe('Waveform and WaveformMouth', () => {
       expect(polyline).not.toBeNull();
       expect(window.voiceWaveform).toBeDefined();
 
-      const source = MockEventSource.instances[0]!;
+      const source = FakeEventSource.instances[0]!;
 
       // Initially idle: rAF loop is not running
       expect(rafCallback).toBeNull();
@@ -279,7 +254,7 @@ describe('Waveform and WaveformMouth', () => {
 
       // Emit a fresh frame
       act(() => {
-        source.emit('frame', LOUD);
+        source.message('frame', LOUD);
       });
 
       // Run rAF frame
@@ -322,7 +297,7 @@ describe('Waveform and WaveformMouth', () => {
     it('throttles drawing to DRAW_MIN_MS (25ms)', () => {
       render(<Waveform levelsUrl="http://127.0.0.1:8765/levels" />);
       const mouth = window.voiceWaveform!;
-      const source = MockEventSource.instances[0]!;
+      const source = FakeEventSource.instances[0]!;
 
       act(() => {
         useDisplayStore.setState({
@@ -334,7 +309,7 @@ describe('Waveform and WaveformMouth', () => {
             status: null,
           },
         });
-        source.emit('frame', LOUD);
+        source.message('frame', LOUD);
       });
 
       const drawSpy = vi.spyOn(mouth, 'drawFrame');
@@ -360,7 +335,7 @@ describe('Waveform and WaveformMouth', () => {
     it('hides waveform after 400ms staleness threshold', () => {
       const { container } = render(<Waveform levelsUrl="http://127.0.0.1:8765/levels" />);
       const svg = container.querySelector('svg.mm-voice-waveform')!;
-      const source = MockEventSource.instances[0]!;
+      const source = FakeEventSource.instances[0]!;
 
       act(() => {
         useDisplayStore.setState({
@@ -372,7 +347,7 @@ describe('Waveform and WaveformMouth', () => {
             status: null,
           },
         });
-        source.emit('frame', LOUD);
+        source.message('frame', LOUD);
       });
 
       act(() => {
@@ -396,7 +371,7 @@ describe('Waveform and WaveformMouth', () => {
 
       // Receiving a fresh level frame while still speaking restarts the loop and marks animating
       act(() => {
-        source.emit('frame', LOUD);
+        source.message('frame', LOUD);
       });
       expect(svg.classList.contains('is-active')).toBe(true);
       expect(window.voiceWaveform?.looping).toBe(true);
@@ -405,7 +380,7 @@ describe('Waveform and WaveformMouth', () => {
 
     it('marks body.dataset.animating = "1" while speaking and returns to "0" across all stop paths', () => {
       const { unmount } = render(<Waveform levelsUrl="http://127.0.0.1:8765/levels" />);
-      const source = MockEventSource.instances[0]!;
+      const source = FakeEventSource.instances[0]!;
 
       expect(document.body.dataset.animating).toBe('0');
 
@@ -448,7 +423,7 @@ describe('Waveform and WaveformMouth', () => {
             status: null,
           },
         });
-        source.emit('frame', LOUD);
+        source.message('frame', LOUD);
       });
       expect(document.body.dataset.animating).toBe('1');
 
@@ -460,7 +435,7 @@ describe('Waveform and WaveformMouth', () => {
 
       // Fresh frame resumes animation while still speaking -> '1'
       act(() => {
-        source.emit('frame', LOUD);
+        source.message('frame', LOUD);
       });
       expect(document.body.dataset.animating).toBe('1');
 
@@ -526,7 +501,7 @@ describe('Waveform and WaveformMouth', () => {
       // Initial mount render
       expect(renderCount).toBe(1);
 
-      const source = MockEventSource.instances[0]!;
+      const source = FakeEventSource.instances[0]!;
 
       // Entering speaking state triggers 1 React render (state change boolean)
       act(() => {
@@ -545,7 +520,7 @@ describe('Waveform and WaveformMouth', () => {
       // Now stream 50 consecutive level frames into EventSource and run animation frames
       act(() => {
         for (let i = 0; i < 50; i++) {
-          source.emit('frame', i % 2 === 0 ? LOUD : QUIET);
+          source.message('frame', i % 2 === 0 ? LOUD : QUIET);
           triggerRaf(1000 + i * 30);
         }
       });

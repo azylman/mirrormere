@@ -12,6 +12,7 @@ import {
   tryUnref,
   useWebRTCStream,
 } from './useWebRTCStream';
+import { FakeRTCPeerConnection } from '../test-utils/fakeRTCPeerConnection';
 
 /** Drains enough microtask turns for an un-guarded negotiation to reach its next SDP step. */
 async function flushMicrotasks(): Promise<void> {
@@ -114,77 +115,10 @@ describe('useHlsStream', () => {
 });
 
 describe('useWebRTCStream', () => {
-  class MockRTCPeerConnection {
-    connectionState: RTCPeerConnectionState = 'new';
-    iceConnectionState: RTCIceConnectionState = 'new';
-    iceGatheringState: RTCIceGatheringState = 'complete';
-    localDescription: { sdp: string; type: RTCSdpType } | null = null;
-    remoteDescription: { sdp: string; type: RTCSdpType } | null = null;
-    oniceconnectionstatechange: (() => void) | null = null;
-    onconnectionstatechange: (() => void) | null = null;
-    ontrack: ((e: RTCTrackEvent) => void) | null = null;
-    onicecandidate: ((e: RTCPeerConnectionIceEvent) => void) | null = null;
-    closed = false;
-
-    private listeners = new Map<string, (() => void)[]>();
-    private receivers: RTCRtpReceiver[] = [];
-
-    addEventListener(type: string, listener: () => void) {
-      const arr = this.listeners.get(type) ?? [];
-      arr.push(listener);
-      this.listeners.set(type, arr);
-    }
-
-    removeEventListener(type: string, listener: () => void) {
-      const arr = this.listeners.get(type) ?? [];
-      this.listeners.set(type, arr.filter((cb) => cb !== listener));
-    }
-
-    dispatch(type: string) {
-      for (const listener of this.listeners.get(type) ?? []) {
-        listener();
-      }
-    }
-
-    async createOffer(): Promise<RTCSessionDescriptionInit> {
-      return { type: 'offer', sdp: 'v=0\r\no=mock 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n' };
-    }
-
-    async setLocalDescription(desc: RTCSessionDescriptionInit): Promise<void> {
-      this.localDescription = { sdp: desc.sdp ?? '', type: desc.type };
-    }
-
-    async setRemoteDescription(desc: RTCSessionDescriptionInit): Promise<void> {
-      this.remoteDescription = { sdp: desc.sdp ?? '', type: desc.type };
-    }
-
-    addTransceiver(kind: string, init?: RTCRtpTransceiverInit): RTCRtpTransceiver {
-      const receiver = {
-        track: { kind, id: `${kind}-track` } as MediaStreamTrack,
-        playoutDelayHint: 1,
-      } as unknown as RTCRtpReceiver;
-      this.receivers.push(receiver);
-      return {
-        receiver,
-        direction: init?.direction ?? 'recvonly',
-      } as unknown as RTCRtpTransceiver;
-    }
-
-    getReceivers(): RTCRtpReceiver[] {
-      return this.receivers;
-    }
-
-    close(): void {
-      this.closed = true;
-      this.connectionState = 'closed';
-      this.iceConnectionState = 'closed';
-    }
-  }
-
-  let activePC: MockRTCPeerConnection | null = null;
+  let activePC: FakeRTCPeerConnection | null = null;
 
   const MockPCFactory = function () {
-    const pc = new MockRTCPeerConnection();
+    const pc = new FakeRTCPeerConnection();
     activePC = pc;
     return pc;
   } as unknown as typeof RTCPeerConnection;
@@ -279,7 +213,7 @@ describe('useWebRTCStream', () => {
     const videoRef = { current: video };
 
     const DeferredIceMockPCFactory = function () {
-      const pc = new MockRTCPeerConnection();
+      const pc = new FakeRTCPeerConnection();
       pc.iceGatheringState = 'gathering';
       activePC = pc;
       return pc;
@@ -306,7 +240,7 @@ describe('useWebRTCStream', () => {
     // Dispatch ICE gathering completion event directly
     pc.iceGatheringState = 'complete';
     await act(async () => {
-      pc.dispatch('icegatheringstatechange');
+      pc.dispatchEvent('icegatheringstatechange');
       await Promise.resolve();
     });
 
@@ -503,7 +437,7 @@ describe('useWebRTCStream', () => {
     const videoRef = { current: video };
 
     const SlowIceMockPCFactory = function () {
-      const pc = new MockRTCPeerConnection();
+      const pc = new FakeRTCPeerConnection();
       pc.iceGatheringState = 'gathering';
       activePC = pc;
       return pc;
@@ -542,7 +476,7 @@ describe('useWebRTCStream', () => {
 
     let resolveOffer: ((desc: RTCSessionDescriptionInit) => void) | null = null;
     const SlowOfferPCFactory = function () {
-      const pc = new MockRTCPeerConnection();
+      const pc = new FakeRTCPeerConnection();
       pc.createOffer = () => new Promise((res) => { resolveOffer = res; });
       activePC = pc;
       return pc;
