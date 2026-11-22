@@ -50,7 +50,12 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 		states:   map[string]mockState{"sensor-1": {data: map[string]any{"temp": "68F"}, state: "healthy"}, "b1": {data: "string-not-map", state: "healthy"}, "cal-1": {data: map[string]any{}, state: "healthy"}},
 	}
 	resolver := &testutil.Packages{ByType: pkgs}
-	return render.NewHandler(render.NewEngine(resolver, provider), resolver, render.WithCSSPath(filepath.Join(tmpDir, "hud.css"))), tmpDir, pkg
+	return render.NewHandler(render.NewEngine(resolver, provider, render.WithNodeDataFunc(handlerNodeData)), resolver, render.WithCSSPath(filepath.Join(tmpDir, "hud.css"))), tmpDir, pkg
+}
+
+// handlerNodeData overrides sensor-1's data on the "kitchen" display only.
+func handlerNodeData(widgetID, nodeID string) (any, bool) {
+	return map[string]any{"temp": "71F"}, widgetID == "sensor-1" && nodeID == "kitchen"
 }
 
 type widgetRenderTestCase struct {
@@ -94,6 +99,7 @@ func TestHandler_GetWidgetRender(t *testing.T) {
 
 	tests := []widgetRenderTestCase{
 		{name: "success GET 200", method: http.MethodGet, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusOK, wantBody: []string{`<div class="sensor">68F</div>`}, checkCORS: true},
+		{name: "node data passthrough", method: http.MethodGet, path: "/api/widgets/sensor-1/render?node=kitchen", widgetID: "sensor-1", wantStatus: http.StatusOK, wantBody: []string{`<div class="sensor">71F</div>`}},
 		{name: "HEAD 200 empty body", method: http.MethodHead, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusOK, wantEmpty: true},
 		{name: "OPTIONS 204", method: http.MethodOptions, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusNoContent},
 		{name: "POST 405 method not allowed", method: http.MethodPost, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusMethodNotAllowed, wantAllow: "GET, HEAD, OPTIONS", wantErrMsg: "method not allowed"},

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -104,23 +105,19 @@ func startDaemon(t *testing.T, yamlContent, customCSS string, customWidget map[s
 	}
 }
 
-func TestMain_Execution(t *testing.T) {
+func TestRunMain(t *testing.T) {
 	tests := []struct {
-		name, arg string
-		wantExit  int
+		name, wantErr string
+		args          []string
 	}{
-		{"help_flag", "-help", 0}, {"invalid_arg", "-invalid-arg", 1},
+		{name: "help", args: []string{"-help"}},
+		{name: "unsupported_flag", args: []string{"-invalid-arg"}, wantErr: "flags are not supported"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			oldArgs, oldExit := argsHook, exitFunc
-			argsHook = []string{tc.arg}
-			exitCode := 0
-			exitFunc = func(c int) { exitCode = c }
-			defer func() { argsHook, exitFunc = oldArgs, oldExit }()
-			main()
-			if exitCode != tc.wantExit {
-				t.Fatalf("exitCode = %d, want %d", exitCode, tc.wantExit)
+			err := run(tc.args)
+			if (err == nil) != (tc.wantErr == "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("run(%q) error = %v, want %q", tc.args, err, tc.wantErr)
 			}
 		})
 	}
@@ -139,117 +136,123 @@ func (*fakeSnapProvider) CurrentStatus() config.Status { return config.Status{} 
 func (f *fakeSnapProvider) GetTheme() string           { return f.theme }
 func (f *fakeSnapProvider) SetTheme(s string)          { f.theme = s }
 
-func runHouseholdNowCase(t *testing.T, sp *fakeSnapProvider, wantTheme string) {
-	t.Helper()
-	var prov render.StateSnapshotProvider
-	if sp != nil {
-		prov = sp
+func householdSnap(tz, themeMode string, withCoords bool) *fakeSnapProvider {
+	cfg := &config.Config{Timezone: tz, Display: config.DisplayConfig{Theme: &config.ThemeConfig{Mode: themeMode}}}
+	if withCoords {
+		lat, lon := 37.7749, -122.4194
+		cfg.LocationConfig = &config.LocationConfig{Latitude: &lat, Longitude: &lon}
 	}
-	now := householdNowFunc(prov)()
-	if wantTheme != "" {
-		if z, _ := now.Zone(); z != wantTheme {
-			t.Fatalf("zone = %s, want %s", z, wantTheme)
-		}
-	} else if now.IsZero() {
-		t.Fatal("expected non-zero time")
-	}
+	return &fakeSnapProvider{theme: "day", snap: &config.Snapshot{Config: cfg}}
 }
 
-func runHouseholdThemeCase(t *testing.T, sp *fakeSnapProvider, wantTheme string) {
-	t.Helper()
-	var prov render.StateSnapshotProvider
-	if sp != nil {
-		prov = sp
-	}
-	got := householdThemeFunc(prov)()
-	if wantTheme == "auto" {
-		if got != "day" && got != "night" {
-			t.Fatalf("auto theme = %s", got)
-		}
-	} else if got != wantTheme {
-		t.Fatalf("theme = %s, want %s", got, wantTheme)
-	}
-}
-
-func runHouseholdTransitionCase(t *testing.T, sp *fakeSnapProvider, tcName, themeMode string, wantBool bool) {
-	t.Helper()
-	var cur func() string
-	if tcName != "trans_nil_fn" {
-		cur = func() string { return themeMode }
-	}
-	var prov interface {
-		GetTheme() string
-		SetTheme(theme string)
-	}
-	if sp != nil {
-		prov = sp
-	}
-	hub := events.NewHub(events.HubConfig{}, nil, nil)
-	defer hub.Close()
-	if changed := evaluateThemeTransition(cur, prov, hub, slog.Default()); changed != wantBool {
-		t.Fatalf("transition = %v, want %v", changed, wantBool)
-	}
-}
-
-func TestHouseholdHelpers(t *testing.T) {
+func TestHouseholdNowFunc(t *testing.T) {
 	tests := []struct {
-		name, helper, tz, themeMode string
-		hasCoords, nilSnap, nilProv bool
-		wantTheme                   string
-		wantBool                    bool
+		name     string
+		sp       render.StateSnapshotProvider
+		wantZone string
 	}{
-		{"now_nil_provider", "now", "", "", false, false, true, "", false},
-		{"now_nil_snapshot", "now", "", "", false, true, false, "", false},
-		{"now_valid_tz", "now", "Asia/Tokyo", "", false, false, false, "JST", false},
-		{"now_invalid_tz", "now", "Invalid/TZ", "", false, false, false, "UTC", false},
-		{"theme_nil_provider", "theme", "", "", false, false, true, "day", false},
-		{"theme_nil_snapshot", "theme", "", "", false, true, false, "day", false},
-		{"theme_day", "theme", "", "day", false, false, false, "day", false},
-		{"theme_night", "theme", "", "night", false, false, false, "night", false},
-		{"theme_auto_no_coords", "theme", "", "auto", false, false, false, "day", false},
-		{"theme_auto_coords", "theme", "", "auto", true, false, false, "auto", false},
-		{"trans_nil_fn", "transition", "", "", false, false, false, "", false},
-		{"trans_nil_sp", "transition", "", "", false, false, true, "", false},
-		{"trans_same", "transition", "", "day", false, false, false, "", false},
-		{"trans_changed", "transition", "", "night", false, false, false, "", true},
+		{"nil_provider", nil, time.Local.String()},
+		{"nil_snapshot", &fakeSnapProvider{}, time.Local.String()},
+		{"valid_tz", householdSnap("Asia/Tokyo", "", false), "Asia/Tokyo"},
+		{"invalid_tz", householdSnap("Invalid/TZ", "", false), "UTC"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var sp *fakeSnapProvider
-			if !tc.nilProv {
-				sp = &fakeSnapProvider{theme: "day"}
-				if !tc.nilSnap {
-					cfg := &config.Config{Timezone: tc.tz, Display: config.DisplayConfig{Theme: &config.ThemeConfig{Mode: tc.themeMode}}}
-					if tc.hasCoords {
-						lat, lon := 37.7749, -122.4194
-						cfg.LocationConfig = &config.LocationConfig{Latitude: &lat, Longitude: &lon}
-					}
-					sp.snap = &config.Snapshot{Config: cfg}
-				}
-			}
-			switch tc.helper {
-			case "now":
-				runHouseholdNowCase(t, sp, tc.wantTheme)
-			case "theme":
-				runHouseholdThemeCase(t, sp, tc.wantTheme)
-			case "transition":
-				runHouseholdTransitionCase(t, sp, tc.name, tc.themeMode, tc.wantBool)
+			if got := householdNowFunc(tc.sp)().Location().String(); got != tc.wantZone {
+				t.Fatalf("location = %q, want %q", got, tc.wantZone)
 			}
 		})
 	}
+}
 
-	h := buildDisplayHandler(&fakeSnapProvider{}, func() string { return "day" })
-	_ = h.Timezone()
-	_ = h.HideCursor()
-	_ = h.RemoteURL()
-	_ = h.HeaderVideo()
-	_ = h.Theme()
-	if h.Grid() != "6x2" {
-		t.Fatalf("expected default grid 6x2, got %s", h.Grid())
+func TestHouseholdThemeFunc(t *testing.T) {
+	tests := []struct {
+		name  string
+		sp    render.StateSnapshotProvider
+		oneOf []string
+	}{
+		{"nil_provider", nil, []string{"day"}},
+		{"nil_snapshot", &fakeSnapProvider{}, []string{"day"}},
+		{"fixed_day", householdSnap("", "day", false), []string{"day"}},
+		{"fixed_night", householdSnap("", "night", false), []string{"night"}},
+		{"auto_without_coords", householdSnap("", "auto", false), []string{"day"}},
+		{"auto_with_coords_follows_sun", householdSnap("", "auto", true), []string{"day", "night"}},
 	}
-	hPortrait := buildDisplayHandler(&fakeSnapProvider{snap: &config.Snapshot{Config: &config.Config{Display: config.DisplayConfig{Grid: config.GridConfig{Columns: 3, Rows: 6}}}}}, func() string { return "day" })
-	if hPortrait.Grid() != "3x6" {
-		t.Fatalf("expected portrait grid 3x6, got %s", hPortrait.Grid())
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := householdThemeFunc(tc.sp)(); !slices.Contains(tc.oneOf, got) {
+				t.Fatalf("theme = %q, want one of %q", got, tc.oneOf)
+			}
+		})
+	}
+}
+
+func TestEvaluateThemeTransition(t *testing.T) {
+	tests := []struct {
+		name, currentTheme string // "" means no theme func
+		sp                 *fakeSnapProvider
+		want               bool
+		wantTheme          string
+	}{
+		{name: "nil_theme_func", sp: &fakeSnapProvider{theme: "day"}, wantTheme: "day"},
+		{name: "nil_provider", currentTheme: "night"},
+		{name: "unchanged", currentTheme: "day", sp: &fakeSnapProvider{theme: "day"}, wantTheme: "day"},
+		{name: "changed", currentTheme: "night", sp: &fakeSnapProvider{theme: "day"}, want: true, wantTheme: "night"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var cur func() string
+			if tc.currentTheme != "" {
+				cur = func() string { return tc.currentTheme }
+			}
+			var prov interface {
+				GetTheme() string
+				SetTheme(theme string)
+			}
+			if tc.sp != nil {
+				prov = tc.sp
+			}
+			hub := events.NewHub(events.HubConfig{}, nil, nil)
+			defer hub.Close()
+			if got := evaluateThemeTransition(cur, prov, hub, slog.Default()); got != tc.want {
+				t.Fatalf("transition = %v, want %v", got, tc.want)
+			}
+			if tc.sp != nil && tc.sp.theme != tc.wantTheme {
+				t.Fatalf("provider theme = %q, want %q", tc.sp.theme, tc.wantTheme)
+			}
+		})
+	}
+}
+
+func TestBuildDisplayHandler_Getters(t *testing.T) {
+	enabled := true
+	configured := &config.Config{Timezone: "Asia/Tokyo", Display: config.DisplayConfig{
+		HideCursor: true, RemoteURL: "http://remote.example.com", Grid: config.GridConfig{Columns: 3, Rows: 6},
+		Header: config.HeaderConfig{Video: &config.HeaderVideoConfig{Enabled: &enabled, StreamURL: "http://camera.example.com/stream"}},
+	}}
+	tests := []struct {
+		name, wantGrid, wantTZ, wantRemote, wantVideoStream string
+		sp                                                  *fakeSnapProvider
+		wantHideCursor                                      bool
+	}{
+		{name: "no_snapshot_defaults", sp: &fakeSnapProvider{}, wantGrid: "6x2", wantTZ: "UTC"},
+		{
+			name: "configured_portrait", sp: &fakeSnapProvider{snap: &config.Snapshot{Config: configured}}, wantGrid: "3x6", wantTZ: "Asia/Tokyo",
+			wantRemote: "http://remote.example.com", wantVideoStream: "http://camera.example.com/stream", wantHideCursor: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := buildDisplayHandler(tc.sp, func() string { return "night" })
+			var gotStream string
+			if v := h.HeaderVideo(); v != nil {
+				gotStream = v.StreamURL
+			}
+			if h.Grid() != tc.wantGrid || h.Timezone() != tc.wantTZ || h.RemoteURL() != tc.wantRemote || h.HideCursor() != tc.wantHideCursor ||
+				gotStream != tc.wantVideoStream || h.Theme() != "night" {
+				t.Fatalf("grid=%q tz=%q remote=%q hide=%v stream=%q theme=%q", h.Grid(), h.Timezone(), h.RemoteURL(), h.HideCursor(), gotStream, h.Theme())
+			}
+		})
 	}
 }
 
@@ -330,7 +333,7 @@ func TestRun_CLIAndErrors(t *testing.T) {
 	tests := []struct {
 		name, envCfg, yamlData, wantErr string
 		args                            []string
-		useFailOut, useFailErr          bool
+		useFailOut, useFailErr, chdir   bool
 	}{
 		{name: "flag_h", args: []string{"-h"}},
 		{name: "flag_help", args: []string{"-help"}},
@@ -343,10 +346,16 @@ func TestRun_CLIAndErrors(t *testing.T) {
 		{name: "invalid_yaml", yamlData: "timezone: [invalid yaml", wantErr: "failed to initialize configuration manager"},
 		{name: "bind_error", yamlData: "timezone: UTC\nhost: \"999.999.999.999\"\nport: 80\ndisplay:\n  widgets:\n    - id: spacer\n      type: spacer\n      dimensions: [6, 2]\n", wantErr: "failed to bind address"},
 		{name: "fail_stdout", yamlData: "timezone: UTC\nhost: \"127.0.0.1\"\nport: 0\ndisplay:\n  widgets:\n    - id: spacer\n      type: spacer\n      dimensions: [6, 2]\n", useFailOut: true, wantErr: "simulated stdout write failure"},
+		{name: "fail_stdout_outside_repo_css_fallback", yamlData: "timezone: UTC\nhost: \"127.0.0.1\"\nport: 0\ndisplay:\n  widgets:\n    - id: spacer\n      type: spacer\n      dimensions: [6, 2]\n", useFailOut: true, chdir: true, wantErr: "simulated stdout write failure"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
+			if tc.chdir { // widgets resolve via the config dir; web/static is absent
+				repoWidgets, _ := filepath.Abs(filepath.Join("..", "..", "widgets"))
+				_ = os.Symlink(repoWidgets, filepath.Join(tmpDir, "widgets"))
+				t.Chdir(tmpDir)
+			}
 			args := tc.args
 			if tc.yamlData != "" {
 				cfgFile := filepath.Join(tmpDir, "config.yaml")
