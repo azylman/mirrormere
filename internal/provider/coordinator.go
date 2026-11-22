@@ -180,11 +180,6 @@ func NewCoordinator(cfg CoordinatorConfig, initialSnapshot *config.Snapshot) *Pr
 	return c
 }
 
-// Cache returns the coordinator's in-memory SWR cache.
-func (c *ProviderCoordinator) Cache() *SWRCache {
-	return c.cache
-}
-
 // RefreshWidget triggers an immediate, out-of-band poll for the given widgetID.
 func (c *ProviderCoordinator) RefreshWidget(widgetID string) error {
 	c.mu.RLock()

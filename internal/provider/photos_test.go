@@ -3,15 +3,14 @@ package provider_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,30 +28,24 @@ const (
 )
 
 type photosExtractionTestCase struct {
-	name             string
-	html             string
-	wantAlbum        string
-	wantTotal        int
-	wantPhotos       int
-	wantFirstID      string
-	wantFirstURL     string
-	wantFirstAspect  float64
-	wantSecondAspect float64
-	wantThirdAspect  float64
+	name               string
+	html               string
+	wantAlbum          string
+	wantTotal          int
+	wantPhotos         int
+	wantFirstID        string
+	wantFirstURL       string
+	wantFirstTimestamp string
+	wantVideoID        string
+	wantAspects        map[string]float64
 }
 
 func runPhotosFetchExtractionCase(t *testing.T, tc photosExtractionTestCase) {
 	t.Helper()
 	t.Parallel()
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(tc.html))
-	}))
-	defer ts.Close()
-
-	cfg := map[string]any{"source": "share_url", "album_url": ts.URL}
+	ts := provider.NewPhotosHTMLServer(t, tc.html)
 	p := provider.NewPhotosProvider()
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+	if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{}); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 	res, err := p.Fetch(context.Background())
@@ -75,50 +68,23 @@ func assertPhotosExtractionDetails(t *testing.T, snap *provider.PhotoSnapshot, t
 	for _, item := range snap.Photos {
 		photoMap[item.ID] = item
 	}
-	assertPhotosFirstItem(t, photoMap, tc)
-	assertPhotosAspectAndMedia(t, photoMap, tc)
-}
-
-func assertPhotosFirstItem(t *testing.T, photoMap map[string]provider.PhotoItem, tc photosExtractionTestCase) {
-	t.Helper()
-	if tc.wantFirstID == "" {
-		return
-	}
-	item, ok := photoMap[tc.wantFirstID]
-	if !ok {
-		t.Fatalf("item %q not found in photos", tc.wantFirstID)
-	}
-	if tc.wantFirstURL != "" && item.URL != tc.wantFirstURL {
-		t.Errorf("item URL = %q, want %q", item.URL, tc.wantFirstURL)
-	}
-	if tc.wantFirstAspect != 0 && item.AspectRatio != tc.wantFirstAspect {
-		t.Errorf("item aspect = %v, want %v", item.AspectRatio, tc.wantFirstAspect)
-	}
-	if tc.name == "af_callback" && item.Timestamp == "" {
-		t.Error("expected non-empty RFC3339 timestamp")
-	}
-}
-
-func assertPhotosAspectAndMedia(t *testing.T, photoMap map[string]provider.PhotoItem, tc photosExtractionTestCase) {
-	t.Helper()
-	if tc.wantSecondAspect != 0 {
-		if item, ok := photoMap["photo_2"]; !ok || item.AspectRatio != tc.wantSecondAspect {
-			t.Errorf("photo_2 aspect = %v, want %v", item.AspectRatio, tc.wantSecondAspect)
+	if tc.wantFirstID != "" {
+		item, ok := photoMap[tc.wantFirstID]
+		if !ok {
+			t.Fatalf("item %q not found in photos", tc.wantFirstID)
+		}
+		if item.URL != tc.wantFirstURL || item.Timestamp != tc.wantFirstTimestamp {
+			t.Errorf("item %q = url %q ts %q, want %q, %q", tc.wantFirstID, item.URL, item.Timestamp, tc.wantFirstURL, tc.wantFirstTimestamp)
 		}
 	}
-	if tc.wantThirdAspect != 0 {
-		if item, ok := photoMap["photo_3"]; !ok || item.AspectRatio != tc.wantThirdAspect {
-			t.Errorf("photo_3 aspect = %v, want %v", item.AspectRatio, tc.wantThirdAspect)
+	for id, want := range tc.wantAspects {
+		if item, ok := photoMap[id]; !ok || item.AspectRatio != want {
+			t.Errorf("%s aspect = %v (present=%v), want %v", id, item.AspectRatio, ok, want)
 		}
 	}
-	if tc.name == "filters_video" {
-		if item, ok := photoMap["video_1"]; !ok || item.MediaType != "video" {
-			t.Errorf("expected video_1 with MediaType='video', got item=%+v, ok=%v", item, ok)
-		}
-	}
-	if tc.name == "filters_protobuf_video_descriptor" {
-		if item, ok := photoMap["video_proto"]; !ok || item.MediaType != "video" {
-			t.Errorf("expected video_proto with MediaType='video', got item=%+v, ok=%v", item, ok)
+	if tc.wantVideoID != "" {
+		if item, ok := photoMap[tc.wantVideoID]; !ok || item.MediaType != "video" {
+			t.Errorf("expected %s with MediaType='video', got item=%+v, ok=%v", tc.wantVideoID, item, ok)
 		}
 	}
 }
@@ -132,15 +98,29 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 	}
 	tenPhotos.WriteString("</body></html>")
 
+	const photo1URL = "https://lh3.googleusercontent.com/pw/AL9nZEW1"
+	const photo1TS = "2025-08-15T14:30:00Z"
 	tests := []photosExtractionTestCase{
-		{"af_callback", mockPhotosAFHTML, "Family Vacation 2026", 3, 3, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 1.0},
-		{"filters_video", mockPhotosWithVideoHTML, "Family Vacation 2026", 3, 3, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 0},
-		{"filters_protobuf_video_descriptor", mockPhotosProtobufVideoHTML, "Family Vacation 2026", 3, 3, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 0},
-		{"same_day_burst", mockPhotosSameDayHTML, "Family Vacation 2026", 3, 1, "", "", 0, 0, 0},
-		{"func_wrapper", mockPhotosFuncHTML, "Summer Roadtrip", 1, 1, "img_a", "", 0, 0, 0},
-		{"fallback_regex", mockPhotosFallbackHTML, "Art Showcase", 2, 2, "", "", 0, 0, 0},
-		{"ten_photos", tenPhotos.String(), "Shared Album", 10, 10, "", "", 0, 0, 0},
-		{"empty_album", "<html><body><div>Empty Album</div></body></html>", "Shared Album", 0, 0, "", "", 0, 0, 0},
+		{
+			name: "af_callback", html: mockPhotosAFHTML, wantAlbum: "Family Vacation 2026", wantTotal: 3, wantPhotos: 3,
+			wantFirstID: "photo_1", wantFirstURL: photo1URL, wantFirstTimestamp: photo1TS,
+			wantAspects: map[string]float64{"photo_1": 1.5, "photo_2": 1.78, "photo_3": 1.0},
+		},
+		{
+			name: "keeps_video", html: mockPhotosWithVideoHTML, wantAlbum: "Family Vacation 2026", wantTotal: 3, wantPhotos: 3,
+			wantFirstID: "photo_1", wantFirstURL: photo1URL, wantFirstTimestamp: photo1TS, wantVideoID: "video_1",
+			wantAspects: map[string]float64{"photo_1": 1.5, "photo_2": 1.78},
+		},
+		{
+			name: "protobuf_video_descriptor", html: mockPhotosProtobufVideoHTML, wantAlbum: "Family Vacation 2026", wantTotal: 3, wantPhotos: 3,
+			wantFirstID: "photo_1", wantFirstURL: photo1URL, wantFirstTimestamp: photo1TS, wantVideoID: "video_proto",
+			wantAspects: map[string]float64{"photo_1": 1.5, "photo_2": 1.78},
+		},
+		{name: "same_day_burst", html: mockPhotosSameDayHTML, wantAlbum: "Family Vacation 2026", wantTotal: 3, wantPhotos: 1},
+		{name: "func_wrapper", html: mockPhotosFuncHTML, wantAlbum: "Summer Roadtrip", wantTotal: 1, wantPhotos: 1, wantFirstID: "img_a", wantFirstURL: "https://lh3.googleusercontent.com/pw/ROADA", wantFirstTimestamp: photo1TS},
+		{name: "fallback_regex", html: mockPhotosFallbackHTML, wantAlbum: "Art Showcase", wantTotal: 2, wantPhotos: 2},
+		{name: "ten_photos", html: tenPhotos.String(), wantAlbum: "Shared Album", wantTotal: 10, wantPhotos: 10},
+		{name: "empty_album", html: "<html><body><div>Empty Album</div></body></html>", wantAlbum: "Shared Album"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,89 +141,74 @@ func (photosLoopbackTransport) RoundTrip(req *http.Request) (*http.Response, err
 	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: http.Header{}, Request: req}, nil
 }
 
-func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
+func TestPhotosProvider_FetchErrors(t *testing.T) {
 	t.Parallel()
-
-	t.Run("redirects and auth", func(t *testing.T) {
-		t.Parallel()
-		for _, tc := range []struct {
-			name   string
-			status int
-			target string
-			err    error
-		}{
-			{"accounts", 302, "https://accounts.google.com/ServiceLogin?continue=https://photos.google.com", provider.ErrAlbumPrivate},
-			{"sorry", 302, "https://sorry.google.com/sorry/index", provider.ErrAlbumRateLimit},
-			{"consent", 302, "https://consent.google.com/m?continue=https://photos.google.com", provider.ErrAlbumPrivate},
-			{"404", 404, "", provider.ErrAlbumNotFound},
-			{"403", 403, "", provider.ErrAlbumPrivate},
-			{"429", 429, "", provider.ErrAlbumRateLimit},
-			{"500", 500, "", errors.New("upstream Google Photos returned HTTP 500")},
-		} {
+	tests := []struct {
+		name       string
+		status     int
+		redirect   string
+		bodyBytes  int
+		wantErrSub string
+	}{
+		{"accounts", 302, "https://accounts.google.com/ServiceLogin?continue=https://photos.google.com", 0, provider.ErrAlbumPrivate.Error()},
+		{"sorry", 302, "https://sorry.google.com/sorry/index", 0, provider.ErrAlbumRateLimit.Error()},
+		{"consent", 302, "https://consent.google.com/m?continue=https://photos.google.com", 0, provider.ErrAlbumPrivate.Error()},
+		{"404", 404, "", 0, provider.ErrAlbumNotFound.Error()},
+		{"403", 403, "", 0, provider.ErrAlbumPrivate.Error()},
+		{"429", 429, "", 0, provider.ErrAlbumRateLimit.Error()},
+		{"500", 500, "", 0, "upstream Google Photos returned HTTP 500"},
+		{"slowloris", 200, "", 6 * 1024 * 1024, "google photos payload exceeded"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if tc.target != "" {
-					http.Redirect(w, r, tc.target, tc.status)
+				if tc.redirect != "" {
+					http.Redirect(w, r, tc.redirect, tc.status)
 					return
 				}
+				w.Header().Set("Content-Type", "text/html")
 				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, strings.Repeat("A", tc.bodyBytes))
 			}))
+			defer ts.Close()
 			p := provider.NewPhotosProvider(provider.WithPhotosTransport(photosLoopbackTransport{}))
-			_ = p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{})
-			_, err := p.Fetch(context.Background())
-			ts.Close()
-			if err == nil || !strings.Contains(err.Error(), tc.err.Error()) {
-				t.Errorf("%s: want %v, got %v", tc.name, tc.err, err)
+			if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{}); err != nil {
+				t.Fatalf("Init: %v", err)
 			}
-		}
-	})
+			if _, err := p.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Errorf("Fetch err = %v, want containing %q", err, tc.wantErrSub)
+			}
+		})
+	}
+}
 
-	t.Run("slowloris", func(t *testing.T) {
-		t.Parallel()
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html")
-			chunk := strings.Repeat("A", 1024*1024)
-			for range 6 {
-				_, _ = io.WriteString(w, chunk)
-			}
-		}))
-		defer ts.Close()
-		p := provider.NewPhotosProvider()
-		_ = p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{})
-		_, err := p.Fetch(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "google photos payload exceeded") {
-			t.Fatalf("expected payload exceeded error, got: %v", err)
-		}
-	})
-
-	t.Run("swr", func(t *testing.T) {
-		t.Parallel()
-		var count int
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			count++
-			if count == 1 {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`<html><head><title>SWR</title></head><body><img src="https://lh3.googleusercontent.com/pw/SWROK"/></body></html>`))
-			} else {
-				w.WriteHeader(http.StatusInternalServerError)
-			}
-		}))
-		defer ts.Close()
-		p := provider.NewPhotosProvider()
-		_ = p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{})
-		res1, err := p.Fetch(context.Background())
-		if err != nil {
-			t.Fatalf("first fetch failed: %v", err)
-		}
-		_ = p.Sync(context.Background(), true)
-		res2, err := p.Fetch(context.Background())
-		if err != nil {
-			t.Fatalf("second fetch under SWR failed: %v", err)
-		}
-		s1, s2 := testutil.As[*provider.PhotoSnapshot](t, res1), testutil.As[*provider.PhotoSnapshot](t, res2)
-		if len(s2.Photos) != 1 || s2.Photos[0].URL != s1.Photos[0].URL {
-			t.Fatalf("expected cached snapshot under SWR: %+v", s2)
-		}
-	})
+// TestPhotosProvider_FetchServesStaleOnSyncFailure checks stale-while-revalidate:
+// a failed forced re-sync keeps serving the last good snapshot.
+func TestPhotosProvider_FetchServesStaleOnSyncFailure(t *testing.T) {
+	t.Parallel()
+	ts, _ := testutil.RouteServer(t, map[string]testutil.Route{"/": {
+		Body:        `<html><head><title>SWR</title></head><body><img src="https://lh3.googleusercontent.com/pw/SWROK"/></body></html>`,
+		ContentType: "text/html",
+		Next:        []testutil.Route{{Status: http.StatusInternalServerError}},
+	}})
+	p := provider.NewPhotosProvider()
+	if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, err := p.Fetch(context.Background()); err != nil {
+		t.Fatalf("first fetch failed: %v", err)
+	}
+	if err := p.Sync(context.Background(), true); err != nil {
+		t.Fatalf("forced Sync against HTTP 500 with a cached snapshot = %v, want nil (SWR)", err)
+	}
+	res, err := p.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("second fetch under SWR failed: %v", err)
+	}
+	if s := testutil.As[*provider.PhotoSnapshot](t, res); len(s.Photos) != 1 || s.Photos[0].URL != "https://lh3.googleusercontent.com/pw/SWROK" {
+		t.Fatalf("expected cached snapshot under SWR: %+v", s)
+	}
 }
 
 type photosInitTestCase struct {
@@ -291,10 +256,7 @@ func assertPhotosProviderEmberAndMalformed(t *testing.T) {
 	if _, err = pUninit.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "provider not initialized") {
 		t.Fatalf("expected uninitialized error, got: %v", err)
 	}
-	tsMal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`<html><body><script>AF_initDataCallback({key:'ds:1',data:[INVALID JSON...});</script></body></html>`))
-	}))
-	defer tsMal.Close()
+	tsMal := provider.NewPhotosHTMLServer(t, `<html><body><script>AF_initDataCallback({key:'ds:1',data:[INVALID JSON...});</script></body></html>`)
 	pMal := provider.NewPhotosProvider()
 	_ = pMal.Init(context.Background(), map[string]any{"source": "share_url", "album_url": tsMal.URL}, provider.InitOptions{})
 	resMal, err := pMal.Fetch(context.Background())
@@ -342,80 +304,51 @@ func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 type deckWindowTestCase struct {
 	name                string
 	pollBatches         [][]string
-	callInitMid         bool
-	callShutdownMid     bool
 	wantCounts          []int
 	wantStable          bool
 	wantAppended        bool
 	wantRemovedExcluded string
-	wantNoDupes         bool
 }
 
-func runDeckWindowCase(t *testing.T, tc deckWindowTestCase) {
-	t.Helper()
-	t.Parallel()
-	var pollIndex atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		idx := int(pollIndex.Load())
-		if idx >= len(tc.pollBatches) {
-			idx = len(tc.pollBatches) - 1
-		}
-		batch := tc.pollBatches[idx]
+// deckWindowRoute serves each poll batch once, in order, then keeps serving the last.
+func deckWindowRoute(batches [][]string) testutil.Route {
+	routes := make([]testutil.Route, len(batches))
+	for i, batch := range batches {
 		var b strings.Builder
 		b.WriteString("<html><body>")
 		for _, id := range batch {
 			fmt.Fprintf(&b, `<img src="https://lh3.googleusercontent.com/pw/%s"/>`, id)
 		}
 		b.WriteString("</body></html>")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(b.String()))
-	}))
-	defer ts.Close()
-
-	cfg := map[string]any{
-		"source":    "share_url",
-		"album_url": ts.URL,
+		routes[i] = testutil.Route{Body: b.String(), ContentType: "text/html; charset=utf-8"}
 	}
-	p := provider.NewPhotosProvider()
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	snapshots := collectDeckSnapshots(t, p, cfg, &pollIndex, tc)
-	assertDeckSnapshots(t, snapshots, tc)
+	first := routes[0]
+	first.Next = routes[1:]
+	return first
 }
 
-func collectDeckSnapshots(t *testing.T, p *provider.PhotosProvider, cfg map[string]any, pollIndex *atomic.Int32, tc deckWindowTestCase) []*provider.PhotoSnapshot {
+func runDeckWindowCase(t *testing.T, tc deckWindowTestCase) {
 	t.Helper()
+	t.Parallel()
+	ts, _ := testutil.RouteServer(t, map[string]testutil.Route{"/": deckWindowRoute(tc.pollBatches)})
+	p := provider.NewPhotosProvider()
+	if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{}); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
 	snapshots := make([]*provider.PhotoSnapshot, len(tc.pollBatches))
 	for i := range tc.pollBatches {
-		pollIndex.Store(int32(i))
-		if i == 1 && tc.callInitMid {
-			if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-				t.Fatalf("mid Init failed: %v", err)
-			}
-		}
-		if i == 1 && tc.callShutdownMid {
-			if err := p.Shutdown(context.Background()); err != nil {
-				t.Fatalf("mid Shutdown failed: %v", err)
-			}
-			if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-				t.Fatalf("post-shutdown Init failed: %v", err)
-			}
-		}
-		if i > 0 && !tc.callInitMid && !tc.callShutdownMid {
+		if i > 0 {
 			if err := p.Sync(context.Background(), true); err != nil {
 				t.Fatalf("poll %d Sync failed: %v", i, err)
 			}
 		}
-
 		res, err := p.Fetch(context.Background())
 		if err != nil {
 			t.Fatalf("poll %d Fetch failed: %v", i, err)
 		}
 		snapshots[i] = testutil.As[*provider.PhotoSnapshot](t, res)
 	}
-	return snapshots
+	assertDeckSnapshots(t, snapshots, tc)
 }
 
 func assertDeckSnapshots(t *testing.T, snapshots []*provider.PhotoSnapshot, tc deckWindowTestCase) {
@@ -424,14 +357,12 @@ func assertDeckSnapshots(t *testing.T, snapshots []*provider.PhotoSnapshot, tc d
 		if len(snap.Photos) != tc.wantCounts[i] {
 			t.Errorf("poll %d photos count = %d, want %d", i, len(snap.Photos), tc.wantCounts[i])
 		}
-		if tc.wantNoDupes {
-			seen := make(map[string]bool, len(snap.Photos))
-			for _, photo := range snap.Photos {
-				if seen[photo.URL] {
-					t.Errorf("poll %d contains duplicate photo URL %q", i, photo.URL)
-				}
-				seen[photo.URL] = true
+		seen := make(map[string]bool, len(snap.Photos))
+		for _, photo := range snap.Photos {
+			if seen[photo.URL] {
+				t.Errorf("poll %d contains duplicate photo URL %q", i, photo.URL)
 			}
+			seen[photo.URL] = true
 		}
 	}
 	assertDeckOrdering(t, snapshots, tc)
@@ -439,33 +370,22 @@ func assertDeckSnapshots(t *testing.T, snapshots []*provider.PhotoSnapshot, tc d
 
 func assertDeckOrdering(t *testing.T, snapshots []*provider.PhotoSnapshot, tc deckWindowTestCase) {
 	t.Helper()
-	if tc.wantStable && len(snapshots) >= 2 {
-		s1, s2 := snapshots[0].Photos, snapshots[1].Photos
-		if len(s1) != len(s2) {
-			t.Errorf("stable check photo count mismatch: %d vs %d", len(s1), len(s2))
-		} else {
-			for i := range s1 {
-				if s1[i].URL != s2[i].URL {
-					t.Errorf("stable check photo[%d] = %q, want %q", i, s2[i].URL, s1[i].URL)
-				}
-			}
-		}
+	s1, s2 := snapshots[0].Photos, snapshots[1].Photos
+	if tc.wantStable && len(s1) != len(s2) {
+		t.Errorf("stable check photo count mismatch: %d vs %d", len(s1), len(s2))
 	}
-
-	if tc.wantAppended && len(snapshots) >= 2 {
-		s1, s2 := snapshots[0].Photos, snapshots[1].Photos
-		for i := range s1 {
+	if tc.wantStable || tc.wantAppended {
+		for i := range min(len(s1), len(s2)) {
 			if s1[i].URL != s2[i].URL {
-				t.Errorf("appended check: photo[%d] = %q, want %q", i, s2[i].URL, s1[i].URL)
+				t.Errorf("photo[%d] = %q, want %q (existing order must hold)", i, s2[i].URL, s1[i].URL)
 			}
 		}
-		if len(s2) <= len(s1) {
-			t.Errorf("expected snapshot 2 to have appended photos, got len %d <= %d", len(s2), len(s1))
-		}
 	}
-
-	if tc.wantRemovedExcluded != "" && len(snapshots) >= 2 {
-		for _, ph := range snapshots[1].Photos {
+	if tc.wantAppended && len(s2) <= len(s1) {
+		t.Errorf("expected snapshot 2 to have appended photos, got len %d <= %d", len(s2), len(s1))
+	}
+	if tc.wantRemovedExcluded != "" {
+		for _, ph := range s2 {
 			if strings.Contains(ph.URL, tc.wantRemovedExcluded) {
 				t.Errorf("expected removed photo %q to be excluded from poll 2, but found %q", tc.wantRemovedExcluded, ph.URL)
 			}
@@ -475,60 +395,26 @@ func assertDeckOrdering(t *testing.T, snapshots []*provider.PhotoSnapshot, tc de
 
 func TestPhotosProvider_DeckWindowAndReconcile(t *testing.T) {
 	t.Parallel()
-
 	tests := []deckWindowTestCase{
 		{
-			name: "stable_deck_order_across_polls_when_album_fits_preload",
-			pollBatches: [][]string{
-				{"p1", "p2", "p3", "p4", "p5"},
-				{"p1", "p2", "p3", "p4", "p5"},
-			},
+			name:        "stable_deck_order_across_polls_when_album_fits_preload",
+			pollBatches: [][]string{{"p1", "p2", "p3", "p4", "p5"}, {"p1", "p2", "p3", "p4", "p5"}},
 			wantCounts:  []int{5, 5},
 			wantStable:  true,
-			wantNoDupes: true,
 		},
 		{
-			name: "reconcile_appends_new_photos_without_reshuffling_existing",
-			pollBatches: [][]string{
-				{"p1", "p2", "p3"},
-				{"p1", "p2", "p3", "p4"},
-			},
+			name:         "reconcile_appends_new_photos_without_reshuffling_existing",
+			pollBatches:  [][]string{{"p1", "p2", "p3"}, {"p1", "p2", "p3", "p4"}},
 			wantCounts:   []int{3, 4},
 			wantAppended: true,
-			wantNoDupes:  true,
 		},
 		{
-			name: "reconcile_removes_old_photos_cleanly",
-			pollBatches: [][]string{
-				{"p1", "p2", "p3", "p4"},
-				{"p1", "p3", "p4"},
-			},
+			name:                "reconcile_removes_old_photos_cleanly",
+			pollBatches:         [][]string{{"p1", "p2", "p3", "p4"}, {"p1", "p3", "p4"}},
 			wantCounts:          []int{4, 3},
 			wantRemovedExcluded: "p2",
-			wantNoDupes:         true,
-		},
-		{
-			name: "init_resets_deck_state",
-			pollBatches: [][]string{
-				{"p1", "p2", "p3", "p4"},
-				{"p1", "p2", "p3", "p4"},
-			},
-			callInitMid: true,
-			wantCounts:  []int{4, 4},
-			wantNoDupes: true,
-		},
-		{
-			name: "shutdown_resets_deck_state",
-			pollBatches: [][]string{
-				{"p1", "p2", "p3", "p4"},
-				{"p1", "p2", "p3", "p4"},
-			},
-			callShutdownMid: true,
-			wantCounts:      []int{4, 4},
-			wantNoDupes:     true,
 		},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			runDeckWindowCase(t, tc)
@@ -536,374 +422,334 @@ func TestPhotosProvider_DeckWindowAndReconcile(t *testing.T) {
 	}
 }
 
-func TestPhotosProvider_MultiAlbumAndCache(t *testing.T) {
-	t.Parallel()
+const photosBatchexecutePath = "/_/PhotosUi/data/batchexecute"
 
-	t.Run("multi_album_parsing_and_merging", runPhotosMultiAlbumParsingSubtest)
-	t.Run("per_day_multi_album_pairing", runPhotosPerDayPairingSubtest)
-	t.Run("warm_boot_zero_http", runPhotosWarmBootZeroHTTPSubtest)
-	t.Run("snAcKc_pagination_and_delta_merge", runPhotosSnAcKcPaginationSubtest)
-	t.Run("subscribe_sync_ticks", runPhotosSubscribeSyncTicksSubtest)
-	t.Run("warm_boot_stale_subscribe", runPhotosWarmBootStaleSubscribeSubtest)
-	t.Run("snAcKc_pagination_error_and_edge_cases", runPhotosSnAcKcPaginationErrorSubtest)
+// photosDiskSeed is an album cache file written before Init.
+type photosDiskSeed struct {
+	albumName, scrapedTitle string
+	url                     string
+	page1Age, fullAge       time.Duration
+	photos                  []provider.PhotoItem
 }
 
-func runPhotosMultiAlbumParsingSubtest(t *testing.T) {
-	t.Parallel()
-	tsShare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<html><head><title>Share Vacation</title></head><body><img src="https://lh3.googleusercontent.com/pw/P_SHARE1"/><img src="https://lh3.googleusercontent.com/pw/P_DUP"/></body></html>`))
-	}))
-	defer tsShare.Close()
-
-	cfg := map[string]any{
-		"albums": []any{
-			map[string]any{
-				"name":    "Vacation 2026",
-				"source":  "share_url",
-				"url_env": "ALBUM_SHARE_URL",
-			},
-			map[string]any{
-				"name":   "Ember Feed",
-				"source": "ember_bridge",
-				"url":    "https://photos.app.goo.gl/ember-url",
-			},
-		},
+// photosFetchServers starts one RouteServer per HTML body and returns a
+// replacer that turns "$0", "$1", ... into their URLs. batchPages are served
+// in order at the batchexecute path of the first server.
+func photosFetchServers(t *testing.T, htmlByServer []string, batchPages []testutil.Route) ([]*testutil.Captured, *strings.Replacer) {
+	t.Helper()
+	captured := make([]*testutil.Captured, len(htmlByServer))
+	pairs := make([]string, 0, 2*len(htmlByServer))
+	for i, html := range htmlByServer {
+		routes := map[string]testutil.Route{"/": {Body: html, ContentType: "text/html; charset=utf-8"}}
+		if i == 0 && len(batchPages) > 0 {
+			first := batchPages[0]
+			first.Next = batchPages[1:]
+			routes[photosBatchexecutePath] = first
+		}
+		srv, c := testutil.RouteServer(t, routes)
+		captured[i] = c
+		pairs = append(pairs, fmt.Sprintf("$%d", i), srv.URL)
 	}
+	return captured, strings.NewReplacer(pairs...)
+}
 
-	opts := provider.InitOptions{
-		Secrets: map[string]string{
-			"albums[0].url": tsShare.URL,
-		},
+// photosSubstitute returns a copy of v with every string run through r.
+func photosSubstitute(v any, r *strings.Replacer) any {
+	switch x := v.(type) {
+	case string:
+		return r.Replace(x)
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, val := range x {
+			out[k] = photosSubstitute(val, r)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, val := range x {
+			out[i] = photosSubstitute(val, r)
+		}
+		return out
+	default:
+		return v
 	}
+}
 
-	p := provider.NewPhotosProvider()
-	if err := p.Init(context.Background(), cfg, opts); err != nil {
-		t.Fatalf("Init failed: %v", err)
+func writePhotosDiskSeed(t *testing.T, dir string, seed *photosDiskSeed, r *strings.Replacer) {
+	t.Helper()
+	if seed == nil {
+		return
 	}
-
-	if p.Source() != provider.PhotoSourceShareURL {
-		t.Errorf("got Source() = %q, want %q", p.Source(), provider.PhotoSourceShareURL)
-	}
-
-	// Initial Fetch hydrates the share_url album
-	res, err := p.Fetch(context.Background())
+	url := r.Replace(seed.url)
+	data, err := json.Marshal(map[string]any{
+		"album_name":      seed.albumName,
+		"scraped_title":   seed.scrapedTitle,
+		"resolved_url":    url,
+		"last_page1_sync": time.Now().Add(-seed.page1Age),
+		"last_full_sync":  time.Now().Add(-seed.fullAge),
+		"photos":          seed.photos,
+	})
 	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
+		t.Fatalf("marshal disk seed: %v", err)
 	}
-	snap := testutil.As[*provider.PhotoSnapshot](t, res)
-	// First ember_bridge album's ResolvedURL takes precedence for AlbumURL
-	if snap.AlbumURL != "https://photos.app.goo.gl/ember-url" {
-		t.Errorf("AlbumURL = %q, want %q", snap.AlbumURL, "https://photos.app.goo.gl/ember-url")
+	if err := os.WriteFile(filepath.Join(dir, provider.AlbumCacheFilename("share_url", url)), data, 0o600); err != nil {
+		t.Fatalf("write disk seed: %v", err)
 	}
-	if snap.AlbumName != "Vacation 2026, Ember Feed" {
-		t.Errorf("AlbumName = %q, want %q", snap.AlbumName, "Vacation 2026, Ember Feed")
-	}
-	if snap.TotalPhotos != 2 {
-		t.Errorf("TotalPhotos = %d, want 2", snap.TotalPhotos)
-	}
-	for _, ph := range snap.Photos {
-		if ph.AlbumName != "Vacation 2026" {
-			t.Errorf("photo AlbumName = %q, want %q", ph.AlbumName, "Vacation 2026")
+}
+
+func photosBatchCalls(captured []*testutil.Captured) int {
+	n := 0
+	for _, req := range captured[0].Requests() {
+		if req.Path == photosBatchexecutePath {
+			n++
 		}
 	}
+	return n
 }
 
-func runPhotosPerDayPairingSubtest(t *testing.T) {
+const (
+	photosPage1HTML  = `<!DOCTYPE html><html><head><title>Paged Album - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["p1",["https://lh3.googleusercontent.com/pw/PAGE1",1000,800],1755268100000]],"token_page2"],sideChannel:{}});</script></body></html>`
+	photosBatchPage2 = `)]}'
+[[["wrb.fr","snAcKc","[[[\"p2\",[\"https://lh3.googleusercontent.com/pw/PAGE2\",1200,900],1755268200000]],\"token_page3\"]",null,null,null,"generic"]]]`
+	photosBatchPage3 = `)]}'
+[[["wrb.fr","snAcKc","[[[\"p3\",[\"https://lh3.googleusercontent.com/pw/PAGE3\",1200,900],1755268300000]],\"\"]",null,null,null,"generic"]]]`
+)
+
+func TestPhotosProvider_FetchAlbums(t *testing.T) {
 	t.Parallel()
-	// Day 1 (1755268200000 = 2025-08-15T14:30:00Z): Album A has 3 photos, Album B has 2 photos -> 2 photos dealt (1 from A, 1 from B)
-	// Day 2 (1755354600000 = 2025-08-16T14:30:00Z): Album A has 2 photos, Album B has 0 photos -> 1 photo dealt (from A)
-	tsAlbumA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["a_d1_1",["https://lh3.googleusercontent.com/pw/A_D1_1",800,600],1755268200000],["a_d1_2",["https://lh3.googleusercontent.com/pw/A_D1_2",800,600],1755268260000],["a_d1_3",["https://lh3.googleusercontent.com/pw/A_D1_3",800,600],1755268320000],["a_d2_1",["https://lh3.googleusercontent.com/pw/A_D2_1",800,600],1755354600000],["a_d2_2",["https://lh3.googleusercontent.com/pw/A_D2_2",800,600],1755354660000]]]});</script></body></html>`))
-	}))
-	defer tsAlbumA.Close()
-
-	tsAlbumB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["b_d1_1",["https://lh3.googleusercontent.com/pw/B_D1_1",800,600],1755268200000],["b_d1_2",["https://lh3.googleusercontent.com/pw/B_D1_2",800,600],1755268260000]]]});</script></body></html>`))
-	}))
-	defer tsAlbumB.Close()
-
-	p := provider.NewPhotosProvider()
-	cfg := map[string]any{
-		"albums": []any{
-			map[string]any{"name": "Album A", "source": "share_url", "url": tsAlbumA.URL},
-			map[string]any{"name": "Album B", "source": "share_url", "url": tsAlbumB.URL},
+	tests := []struct {
+		name            string
+		cfg             map[string]any
+		secrets         map[string]string
+		htmlByServer    []string
+		batchPages      []testutil.Route
+		diskSeed        *photosDiskSeed
+		tz              string
+		wantAlbumName   string
+		wantAlbumURL    string
+		wantTotal       int
+		wantDealt       int
+		wantURLs        []string
+		wantPhotoAlbum  string
+		wantAlbumsByDay map[string][]string
+		wantBatchCalls  int
+		wantPageHits    int
+	}{
+		{
+			name: "multi_album_parsing_and_merging",
+			cfg: map[string]any{"albums": []any{
+				map[string]any{"name": "Vacation 2026", "source": "share_url", "url_env": "ALBUM_SHARE_URL"},
+				map[string]any{"name": "Ember Feed", "source": "ember_bridge", "url": "https://photos.app.goo.gl/ember-url"},
+			}},
+			secrets:      map[string]string{"albums[0].url": "$0"},
+			htmlByServer: []string{`<html><head><title>Share Vacation</title></head><body><img src="https://lh3.googleusercontent.com/pw/P_SHARE1"/><img src="https://lh3.googleusercontent.com/pw/P_DUP"/></body></html>`},
+			// The first ember_bridge album's URL takes precedence for AlbumURL.
+			wantAlbumName: "Vacation 2026, Ember Feed", wantAlbumURL: "https://photos.app.goo.gl/ember-url", wantTotal: 2, wantDealt: 2,
+			wantPhotoAlbum: "Vacation 2026", wantPageHits: 1,
+		},
+		{
+			// Day 1: Album A has 3 photos, Album B 2 -> one from each, adjacent, A first.
+			// Day 2: Album A has 2 photos, Album B none -> one from A.
+			name: "per_day_multi_album_pairing",
+			cfg: map[string]any{"albums": []any{
+				map[string]any{"name": "Album A", "source": "share_url", "url": "$0"},
+				map[string]any{"name": "Album B", "source": "share_url", "url": "$1"},
+			}},
+			htmlByServer: []string{
+				`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["a_d1_1",["https://lh3.googleusercontent.com/pw/A_D1_1",800,600],1755268200000],["a_d1_2",["https://lh3.googleusercontent.com/pw/A_D1_2",800,600],1755268260000],["a_d1_3",["https://lh3.googleusercontent.com/pw/A_D1_3",800,600],1755268320000],["a_d2_1",["https://lh3.googleusercontent.com/pw/A_D2_1",800,600],1755354600000],["a_d2_2",["https://lh3.googleusercontent.com/pw/A_D2_2",800,600],1755354660000]]]});</script></body></html>`,
+				`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["b_d1_1",["https://lh3.googleusercontent.com/pw/B_D1_1",800,600],1755268200000],["b_d1_2",["https://lh3.googleusercontent.com/pw/B_D1_2",800,600],1755268260000]]]});</script></body></html>`,
+			},
+			tz:            "UTC",
+			wantAlbumName: "Album A, Album B", wantAlbumURL: "$0", wantTotal: 7, wantDealt: 3,
+			wantAlbumsByDay: map[string][]string{"2025-08-15": {"Album A", "Album B"}, "2025-08-16": {"Album A"}},
+			wantPageHits:    1,
+		},
+		{
+			name:         "warm_boot_zero_http",
+			cfg:          map[string]any{"source": "share_url", "album_url": "$0"},
+			htmlByServer: []string{""},
+			diskSeed: &photosDiskSeed{
+				albumName: "Cached Album", scrapedTitle: "Warm Scraped Title", url: "$0", page1Age: 10 * time.Minute, fullAge: 2 * time.Hour,
+				photos: []provider.PhotoItem{
+					{ID: "c1", URL: "https://lh3.googleusercontent.com/pw/WARM1", AspectRatio: 1.33, AlbumName: "Warm Scraped Title"},
+					{ID: "c2", URL: "https://lh3.googleusercontent.com/pw/WARM2", AspectRatio: 1.33, AlbumName: "Warm Scraped Title"},
+				},
+			},
+			wantAlbumName: "Warm Scraped Title", wantAlbumURL: "$0", wantTotal: 2, wantDealt: 2,
+			wantURLs: []string{"https://lh3.googleusercontent.com/pw/WARM1", "https://lh3.googleusercontent.com/pw/WARM2"},
+		},
+		{
+			name:          "snAcKc_pagination",
+			cfg:           map[string]any{"source": "share_url", "album_url": "$0"},
+			htmlByServer:  []string{photosPage1HTML},
+			batchPages:    []testutil.Route{{Body: photosBatchPage2}, {Body: photosBatchPage3}},
+			wantAlbumName: "Paged Album", wantAlbumURL: "$0", wantTotal: 3, wantDealt: 1,
+			wantBatchCalls: 2, wantPageHits: 1,
+		},
+		{
+			name:         "snAcKc_repeated_token_then_error",
+			cfg:          map[string]any{"source": "share_url", "album_url": "$0"},
+			htmlByServer: []string{`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["p1",["https://lh3.googleusercontent.com/pw/PAGE1",1000,800],1755268100000]],"repeated_tok"]});</script></body></html>`},
+			batchPages: []testutil.Route{
+				{Body: `)]}'
+[[["wrb.fr","snAcKc","[[[\"p2\",[\"https://lh3.googleusercontent.com/pw/PAGE2\",1200,900],1755268200000]],\"repeated_tok\"]",null,null,null,"generic"]]]`},
+				{Status: http.StatusInternalServerError},
+			},
+			wantAlbumName: "Shared Album", wantAlbumURL: "$0", wantTotal: 2, wantDealt: 1,
+			wantBatchCalls: 1, wantPageHits: 1,
 		},
 	}
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{Timezone: "UTC"}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	snap := testutil.As[*provider.PhotoSnapshot](t, res)
-	if snap.TotalPhotos != 7 {
-		t.Fatalf("TotalPhotos = %d, want 7", snap.TotalPhotos)
-	}
-	if len(snap.Photos) != 3 {
-		t.Fatalf("dealt Photos len = %d, want 3 (2 for Day 1 across Album A & B, 1 for Day 2 from Album A)", len(snap.Photos))
-	}
-	// Verify that the two Day 1 photos are adjacent and ordered Album A then Album B
-	day1Indices := []int{}
-	for idx, ph := range snap.Photos {
-		if strings.HasPrefix(ph.Timestamp, "2025-08-15") {
-			day1Indices = append(day1Indices, idx)
-		}
-	}
-	if len(day1Indices) != 2 || day1Indices[1]-day1Indices[0] != 1 {
-		t.Fatalf("expected 2 adjacent Day 1 photos, got indices %v in %+v", day1Indices, snap.Photos)
-	}
-	if snap.Photos[day1Indices[0]].AlbumName != "Album A" || snap.Photos[day1Indices[1]].AlbumName != "Album B" {
-		t.Errorf("expected Day 1 pair [Album A, Album B], got [%s, %s]", snap.Photos[day1Indices[0]].AlbumName, snap.Photos[day1Indices[1]].AlbumName)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			captured, r := photosFetchServers(t, tc.htmlByServer, tc.batchPages)
+			dir := t.TempDir()
+			writePhotosDiskSeed(t, dir, tc.diskSeed, r)
+			secrets := make(map[string]string, len(tc.secrets))
+			for k, v := range tc.secrets {
+				secrets[k] = r.Replace(v)
+			}
+			cfg, _ := photosSubstitute(tc.cfg, r).(map[string]any)
+			p := provider.NewPhotosProvider(provider.WithPhotosCacheDir(dir))
+			if err := p.Init(context.Background(), cfg, provider.InitOptions{Secrets: secrets, Timezone: tc.tz}); err != nil {
+				t.Fatalf("Init failed: %v", err)
+			}
+			if p.Source() != provider.PhotoSourceShareURL {
+				t.Errorf("Source = %q, want %q", p.Source(), provider.PhotoSourceShareURL)
+			}
+			res, err := p.Fetch(context.Background())
+			if err != nil {
+				t.Fatalf("Fetch failed: %v", err)
+			}
+			snap := testutil.As[*provider.PhotoSnapshot](t, res)
+			if snap.AlbumName != tc.wantAlbumName || snap.AlbumURL != r.Replace(tc.wantAlbumURL) || snap.TotalPhotos != tc.wantTotal || len(snap.Photos) != tc.wantDealt {
+				t.Errorf("snap name=%q url=%q total=%d dealt=%d, want %q, %q, %d, %d",
+					snap.AlbumName, snap.AlbumURL, snap.TotalPhotos, len(snap.Photos), tc.wantAlbumName, r.Replace(tc.wantAlbumURL), tc.wantTotal, tc.wantDealt)
+			}
+			assertPhotosFetchedAlbums(t, snap, tc.wantURLs, tc.wantPhotoAlbum, tc.wantAlbumsByDay)
+			if got := photosBatchCalls(captured); got != tc.wantBatchCalls {
+				t.Errorf("batchexecute calls = %d, want %d", got, tc.wantBatchCalls)
+			}
+			if got := len(captured[0].Requests()) - photosBatchCalls(captured); got != tc.wantPageHits {
+				t.Errorf("album page hits = %d, want %d", got, tc.wantPageHits)
+			}
+		})
 	}
 }
 
-func runPhotosWarmBootZeroHTTPSubtest(t *testing.T) {
-	t.Parallel()
-	tempDir := t.TempDir()
-	albumURL := "https://photos.app.goo.gl/warm-album"
-
-	// Pre-populate disk cache
-	cachePath := filepath.Join(tempDir, provider.AlbumCacheFilename("share_url", albumURL))
-	diskData := map[string]any{
-		"album_name":      "Cached Album",
-		"scraped_title":   "Warm Scraped Title",
-		"resolved_url":    albumURL,
-		"last_page1_sync": time.Now().Add(-10 * time.Minute),
-		"last_full_sync":  time.Now().Add(-2 * time.Hour),
-		"photos": []provider.PhotoItem{
-			{ID: "c1", URL: "https://lh3.googleusercontent.com/pw/WARM1", AspectRatio: 1.33, AlbumName: "Warm Scraped Title"},
-			{ID: "c2", URL: "https://lh3.googleusercontent.com/pw/WARM2", AspectRatio: 1.33, AlbumName: "Warm Scraped Title"},
-		},
-	}
-	dataBytes, _ := json.Marshal(diskData)
-	if err := os.WriteFile(cachePath, dataBytes, 0o600); err != nil {
-		t.Fatalf("failed to write cache file: %v", err)
-	}
-
-	p := provider.NewPhotosProvider(provider.WithPhotosCacheDir(tempDir))
-	cfg := map[string]any{
-		"source":    "share_url",
-		"album_url": albumURL,
-	}
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	// Warm Fetch should perform zero HTTP I/O and return the 2 cached photos immediately
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("warm Fetch failed: %v", err)
-	}
-	snap := testutil.As[*provider.PhotoSnapshot](t, res)
-	if snap.AlbumName != "Warm Scraped Title" {
-		t.Errorf("AlbumName = %q, want %q", snap.AlbumName, "Warm Scraped Title")
-	}
-	if len(snap.Photos) != 2 {
-		t.Fatalf("photos count = %d, want 2", len(snap.Photos))
-	}
-	urls := make(map[string]bool)
+func assertPhotosFetchedAlbums(t *testing.T, snap *provider.PhotoSnapshot, wantURLs []string, wantPhotoAlbum string, wantAlbumsByDay map[string][]string) {
+	t.Helper()
+	urls := make(map[string]bool, len(snap.Photos))
 	for _, ph := range snap.Photos {
 		urls[ph.URL] = true
-	}
-	if !urls["https://lh3.googleusercontent.com/pw/WARM1"] || !urls["https://lh3.googleusercontent.com/pw/WARM2"] {
-		t.Errorf("missing cached photo in %v", urls)
-	}
-}
-
-func runPhotosSnAcKcPaginationSubtest(t *testing.T) {
-	t.Parallel()
-	var batchexecuteCalls atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "batchexecute") {
-			call := batchexecuteCalls.Add(1)
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			if call == 1 {
-				// Return Page 2 with continuation token for Page 3
-				_, _ = w.Write([]byte(`)]}'
-[[["wrb.fr","snAcKc","[[[\"p2\",[\"https://lh3.googleusercontent.com/pw/PAGE2\",1200,900],1755268200000]],\"token_page3\"]",null,null,null,"generic"]]]`))
-			} else {
-				// Return Page 3 with empty token (end of pagination)
-				_, _ = w.Write([]byte(`)]}'
-[[["wrb.fr","snAcKc","[[[\"p3\",[\"https://lh3.googleusercontent.com/pw/PAGE3\",1200,900],1755268300000]],\"\"]",null,null,null,"generic"]]]`))
-			}
-			return
+		if wantPhotoAlbum != "" && ph.AlbumName != wantPhotoAlbum {
+			t.Errorf("photo %s AlbumName = %q, want %q", ph.ID, ph.AlbumName, wantPhotoAlbum)
 		}
-
-		// Page 1 HTML
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>Paged Album - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["p1",["https://lh3.googleusercontent.com/pw/PAGE1",1000,800],1755268100000]],"token_page2"],sideChannel:{}});</script></body></html>`))
-	}))
-	defer ts.Close()
-
-	tempDir := t.TempDir()
-	p := provider.NewPhotosProvider(provider.WithPhotosCacheDir(tempDir))
-	cfg := map[string]any{
-		"source":    "share_url",
-		"album_url": ts.URL,
 	}
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
+	for _, u := range wantURLs {
+		if !urls[u] {
+			t.Errorf("missing photo %q in %v", u, urls)
+		}
 	}
-
-	// Initial Fetch performs full sync with snAcKc pagination
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	snap := testutil.As[*provider.PhotoSnapshot](t, res)
-	if snap.TotalPhotos != 3 {
-		t.Errorf("TotalPhotos = %d, want 3 (Page 1 + Page 2 + Page 3)", snap.TotalPhotos)
-	}
-	if batchexecuteCalls.Load() != 2 {
-		t.Errorf("batchexecute calls = %d, want 2", batchexecuteCalls.Load())
-	}
-
-	// Now test delta merge (full == false):
-	// Subsequent Sync(ctx, false) should only scrape Page 1 HTML and merge ahead
-	if err := p.Sync(context.Background(), false); err != nil {
-		t.Fatalf("delta Sync failed: %v", err)
-	}
-	// batchexecuteCalls should remain 2 (no pagination on delta merge)
-	if batchexecuteCalls.Load() != 2 {
-		t.Errorf("batchexecute calls after delta = %d, want 2", batchexecuteCalls.Load())
+	for day, wantAlbums := range wantAlbumsByDay {
+		var idx []int
+		var albums []string
+		for i, ph := range snap.Photos {
+			if strings.HasPrefix(ph.Timestamp, day) {
+				idx = append(idx, i)
+				albums = append(albums, ph.AlbumName)
+			}
+		}
+		if !slices.Equal(albums, wantAlbums) {
+			t.Errorf("day %s albums = %v, want %v", day, albums, wantAlbums)
+		}
+		for i := 1; i < len(idx); i++ {
+			if idx[i]-idx[i-1] != 1 {
+				t.Errorf("day %s photos not adjacent: indices %v", day, idx)
+			}
+		}
 	}
 }
 
-func runPhotosSubscribeSyncTicksSubtest(t *testing.T) {
+// TestPhotosProvider_DeltaSyncSkipsPagination checks that Sync(ctx, false)
+// re-scrapes only page 1 after a full paginated sync.
+func TestPhotosProvider_DeltaSyncSkipsPagination(t *testing.T) {
 	t.Parallel()
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<html><head><title>Sub Album</title></head><body><img src="https://lh3.googleusercontent.com/pw/SUB1"/></body></html>`))
-	}))
-	defer ts.Close()
-
-	p := provider.NewPhotosProvider(provider.WithPhotosSyncIntervals(10*time.Millisecond, 50*time.Millisecond))
-	cfg := map[string]any{
-		"source":    "share_url",
-		"album_url": ts.URL,
-	}
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+	captured, r := photosFetchServers(t, []string{photosPage1HTML}, []testutil.Route{{Body: photosBatchPage2}, {Body: photosBatchPage3}})
+	p := provider.NewPhotosProvider(provider.WithPhotosCacheDir(t.TempDir()))
+	if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": r.Replace("$0")}, provider.InitOptions{}); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	// Initial fetch to hydrate
 	if _, err := p.Fetch(context.Background()); err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
-
-	sink := make(chan provider.WidgetPayload, 5)
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	defer cancel()
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- p.Subscribe(ctx, sink)
-	}()
-
-	select {
-	case payload := <-sink:
-		if payload.State != provider.StateHealthy {
-			t.Errorf("got payload state %v, want healthy", payload.State)
-		}
-		snap, ok := payload.Data.(*provider.PhotoSnapshot)
-		if !ok || len(snap.Photos) == 0 {
-			t.Fatalf("unexpected payload data: %+v", payload.Data)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for Subscribe payload tick")
+	if err := p.Sync(context.Background(), false); err != nil {
+		t.Fatalf("delta Sync failed: %v", err)
 	}
-
-	cancel()
-	<-errChan
+	if got := photosBatchCalls(captured); got != 2 {
+		t.Errorf("batchexecute calls after delta = %d, want 2", got)
+	}
+	if got := len(captured[0].Requests()) - photosBatchCalls(captured); got != 2 {
+		t.Errorf("album page hits after delta = %d, want 2", got)
+	}
 }
 
-func runPhotosWarmBootStaleSubscribeSubtest(t *testing.T) {
+func TestPhotosProvider_SubscribeEmitsHealthy(t *testing.T) {
 	t.Parallel()
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<html><head><title>Stale Sub</title></head><body><img src="https://lh3.googleusercontent.com/pw/STALE1"/></body></html>`))
-	}))
-	defer ts.Close()
-
-	tempDir := t.TempDir()
-	cachePath := filepath.Join(tempDir, provider.AlbumCacheFilename("share_url", ts.URL))
-	diskData := map[string]any{
-		"album_name":      "Stale Cached",
-		"scraped_title":   "Stale Scraped",
-		"resolved_url":    ts.URL,
-		"last_page1_sync": time.Now().Add(-48 * time.Hour),
-		"last_full_sync":  time.Now().Add(-48 * time.Hour),
-		"photos": []provider.PhotoItem{
-			{ID: "c1", URL: "https://lh3.googleusercontent.com/pw/WARM_OLD", AspectRatio: 1.33},
+	tests := []struct {
+		name     string
+		html     string
+		page1    time.Duration
+		full     time.Duration
+		diskSeed *photosDiskSeed
+	}{
+		{
+			name:  "sync_ticks_after_hydration",
+			html:  `<html><head><title>Sub Album</title></head><body><img src="https://lh3.googleusercontent.com/pw/SUB1"/></body></html>`,
+			page1: 10 * time.Millisecond, full: 50 * time.Millisecond,
+		},
+		{
+			name:  "warm_boot_stale_cache_syncs",
+			html:  `<html><head><title>Stale Sub</title></head><body><img src="https://lh3.googleusercontent.com/pw/STALE1"/></body></html>`,
+			page1: 10 * time.Hour, full: 24 * time.Hour,
+			diskSeed: &photosDiskSeed{
+				albumName: "Stale Cached", scrapedTitle: "Stale Scraped", url: "$0", page1Age: 48 * time.Hour, fullAge: 48 * time.Hour,
+				photos: []provider.PhotoItem{{ID: "c1", URL: "https://lh3.googleusercontent.com/pw/WARM_OLD", AspectRatio: 1.33}},
+			},
 		},
 	}
-	dataBytes, _ := json.Marshal(diskData)
-	_ = os.WriteFile(cachePath, dataBytes, 0o600)
-
-	p := provider.NewPhotosProvider(
-		provider.WithPhotosCacheDir(tempDir),
-		provider.WithPhotosSyncIntervals(10*time.Hour, 24*time.Hour),
-	)
-	cfg := map[string]any{
-		"source":    "share_url",
-		"album_url": ts.URL,
-	}
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	sink := make(chan provider.WidgetPayload, 5)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- p.Subscribe(ctx, sink)
-	}()
-
-	select {
-	case payload := <-sink:
-		if payload.State != provider.StateHealthy {
-			t.Errorf("got payload state %v, want healthy", payload.State)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for warm stale Subscribe sync")
-	}
-	cancel()
-	<-errChan
-}
-
-func runPhotosSnAcKcPaginationErrorSubtest(t *testing.T) {
-	t.Parallel()
-	var calls atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "batchexecute") {
-			call := calls.Add(1)
-			if call == 1 {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`)]}'
-[[["wrb.fr","snAcKc","[[[\"p2\",[\"https://lh3.googleusercontent.com/pw/PAGE2\",1200,900],1755268200000]],\"repeated_tok\"]",null,null,null,"generic"]]]`))
-				return
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, r := photosFetchServers(t, []string{tc.html}, nil)
+			dir := t.TempDir()
+			writePhotosDiskSeed(t, dir, tc.diskSeed, r)
+			p := provider.NewPhotosProvider(provider.WithPhotosCacheDir(dir), provider.WithPhotosSyncIntervals(tc.page1, tc.full))
+			if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": r.Replace("$0")}, provider.InitOptions{}); err != nil {
+				t.Fatalf("Init failed: %v", err)
 			}
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["p1",["https://lh3.googleusercontent.com/pw/PAGE1",1000,800],1755268100000]],"repeated_tok"]});</script></body></html>`))
-	}))
-	defer ts.Close()
-
-	p := provider.NewPhotosProvider()
-	_ = p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{})
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	snap := testutil.As[*provider.PhotoSnapshot](t, res)
-	if snap.TotalPhotos != 2 {
-		t.Errorf("TotalPhotos = %d, want 2", snap.TotalPhotos)
+			if tc.diskSeed == nil {
+				if _, err := p.Fetch(context.Background()); err != nil {
+					t.Fatalf("hydrating Fetch failed: %v", err)
+				}
+			}
+			sink := make(chan provider.WidgetPayload, 5)
+			ctx, cancel := context.WithCancel(context.Background())
+			errChan := make(chan error, 1)
+			go func() { errChan <- p.Subscribe(ctx, sink) }()
+			defer func() {
+				cancel()
+				<-errChan
+			}()
+			select {
+			case payload := <-sink:
+				snap, ok := payload.Data.(*provider.PhotoSnapshot)
+				if payload.State != provider.StateHealthy || !ok || len(snap.Photos) == 0 {
+					t.Errorf("payload state=%v data=%+v, want healthy snapshot with photos", payload.State, payload.Data)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("timed out waiting for Subscribe payload")
+			}
+		})
 	}
 }

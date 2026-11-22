@@ -18,3 +18,18 @@ func NewTasksProviderWithAdapter(adapter adapters.Adapter) *TasksProvider {
 func WithPhotosTransport(rt http.RoundTripper) PhotosOption {
 	return func(p *PhotosProvider) { p.client.Transport = rt }
 }
+
+// selectAlbumWindow takes the provider lock and selects the next album window.
+func (p *PhotosProvider) selectAlbumWindow(scraped []PhotoItem) []PhotoItem {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.selectAlbumWindowLocked(scraped)
+}
+
+// Cache returns the coordinator's in-memory SWR cache.
+func (c *ProviderCoordinator) Cache() *SWRCache {
+	return c.cache
+}
+
+// NewPhotosHTMLServer serves body as text/html at the server root.
+var NewPhotosHTMLServer = newPhotosHTMLServer
