@@ -13,6 +13,7 @@ import (
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/provider"
+	"github.com/azylman/mirrormere/internal/testutil/eventstest"
 )
 
 type mockHeaderSink struct {
@@ -82,7 +83,7 @@ func runHeaderWeatherFetchCase(t *testing.T, tc headerFetchTestCase) {
 		defer ts.Close()
 		baseURL, client = ts.URL, ts.Client()
 	}
-	sink, broadcaster := &mockHeaderSink{}, &mockBroadcaster{}
+	sink, broadcaster := &mockHeaderSink{}, &eventstest.Broadcaster{}
 	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
 		Client: client, BaseURL: baseURL, Broadcaster: broadcaster, StateSink: sink,
 	})
@@ -136,12 +137,12 @@ func assertHeaderWeatherFields(t *testing.T, hw *events.HeaderWeather, tc header
 	}
 }
 
-func assertHeaderWeatherSink(t *testing.T, sink *mockHeaderSink, broadcaster *mockBroadcaster, tc headerFetchTestCase) {
+func assertHeaderWeatherSink(t *testing.T, sink *mockHeaderSink, broadcaster *eventstest.Broadcaster, tc headerFetchTestCase) {
 	t.Helper()
 	if saved := sink.GetWeather(); saved == nil || saved.Temperature != tc.wantTemp {
 		t.Errorf("sink mismatch: %+v", saved)
 	}
-	evts := broadcaster.getEvents()
+	evts := broadcaster.Events()
 	if len(evts) == 0 || evts[len(evts)-1].Type != events.EventHeaderUpdate {
 		t.Fatalf("expected header.update event, got %+v", evts)
 	}
@@ -205,14 +206,14 @@ func TestProviderCoordinator_HeaderWeatherPoller_Lifecycle(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	sink, broadcaster := &mockHeaderSink{}, &mockBroadcaster{}
+	sink, broadcaster := &mockHeaderSink{}, &eventstest.Broadcaster{}
 	snap := &config.Snapshot{Config: &config.Config{Timezone: "America/Los_Angeles", Display: config.DisplayConfig{
 		Header: config.HeaderConfig{Enabled: new(true), Weather: mkHeaderCfg(37.8044, -122.2712, "imperial", new(900))},
 	}}}
 	coord := provider.NewCoordinator(provider.CoordinatorConfig{
 		Broadcaster: broadcaster, HeaderWeatherSink: sink, HeaderPollerClient: ts.Client(), HeaderPollerBaseURL: ts.URL,
 	}, snap)
-	if _, ok := broadcaster.waitForPublish(2 * time.Second); !ok {
+	if _, ok := broadcaster.WaitForPublish(2 * time.Second); !ok {
 		t.Fatal("waitForPublish timed out")
 	}
 	if saved := sink.GetWeather(); saved == nil || saved.Temperature != 72.4 {

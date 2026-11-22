@@ -1,15 +1,15 @@
 package events
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 type flushingRecorder struct {
@@ -51,21 +51,6 @@ func (f *flushingRecorder) wait(n int) {
 	}
 }
 
-type nonFlusher struct {
-	h    http.Header
-	code int
-	buf  bytes.Buffer
-}
-
-func (n *nonFlusher) Header() http.Header         { return n.h }
-func (n *nonFlusher) Write(b []byte) (int, error) { return n.buf.Write(b) }
-func (n *nonFlusher) WriteHeader(c int)           { n.code = c }
-
-type failFlusher struct{ nonFlusher }
-
-func (*failFlusher) Write([]byte) (int, error) { return 0, errors.New("e") }
-func (*failFlusher) Flush()                    {}
-
 type hookStateProvider struct {
 	StateProvider
 
@@ -92,40 +77,57 @@ func (s *slowWriterRecorder) Write(b []byte) (int, error) {
 	return s.flushingRecorder.Write(b)
 }
 
-func TestHandler_MethodsAndValidation(t *testing.T) {
+func TestHandler_Methods(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, method, kind string
-		wantCode           int
-		wantSub            string
+	tests := []struct {
+		name, method string
+		wantCode     int
+		wantSub      string
+		wantHeaders  map[string]string
 	}{
-		{"options_preflight", http.MethodOptions, "flush", http.StatusNoContent, ""},
-		{"method_not_allowed", http.MethodPost, "flush", http.StatusMethodNotAllowed, "method not allowed"},
-		{"non_flusher", http.MethodGet, "non_flush", http.StatusInternalServerError, "streaming unsupported"},
-		{"fail_write_initial_batch", http.MethodGet, "fail_write", http.StatusOK, ""},
-	} {
+		{"options_preflight", http.MethodOptions, http.StatusNoContent, "", map[string]string{"Access-Control-Allow-Origin": "*"}},
+		{"method_not_allowed", http.MethodPost, http.StatusMethodNotAllowed, "method not allowed", nil},
+	}
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			hub := NewHub(HubConfig{}, nil, nil)
 			defer hub.Close()
 			rec := newFlushingRecorder()
-			var w http.ResponseWriter = rec
-			var nf *nonFlusher
-			switch tc.kind {
-			case "non_flush":
-				nf = &nonFlusher{h: make(http.Header)}
-				w = nf
-			case "fail_write":
-				ff := &failFlusher{nonFlusher{h: make(http.Header)}}
-				nf, w = &ff.nonFlusher, ff
+			Handler(hub).ServeHTTP(rec, httptest.NewRequest(tc.method, "/api/events", http.NoBody))
+			if body := rec.BodyString(); rec.Code != tc.wantCode || !strings.Contains(body, tc.wantSub) {
+				t.Fatalf("got %d %q, want %d containing %q", rec.Code, body, tc.wantCode, tc.wantSub)
 			}
-			Handler(hub).ServeHTTP(w, httptest.NewRequest(tc.method, "/api/events", http.NoBody))
-			code, body := rec.Code, rec.BodyString()
-			if nf != nil {
-				code, body = nf.code, nf.buf.String()
+			for k, v := range tc.wantHeaders {
+				if got := rec.Header().Get(k); got != v {
+					t.Errorf("header %s = %q, want %q", k, got, v)
+				}
 			}
-			if code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(body, tc.wantSub)) || (tc.name == "options_preflight" && w.Header().Get("Access-Control-Allow-Origin") != "*") {
-				t.Fatalf("got %d %s, want %d %s", code, body, tc.wantCode, tc.wantSub)
+		})
+	}
+}
+
+func TestHandler_WriterCapabilities(t *testing.T) {
+	t.Parallel()
+	nonFlusher, failing := &testutil.NonFlusher{}, &testutil.FailingFlusher{}
+	tests := []struct {
+		name     string
+		w        http.ResponseWriter
+		got      *testutil.NonFlusher
+		wantCode int
+		wantSub  string
+	}{
+		{"non_flusher", nonFlusher, nonFlusher, http.StatusInternalServerError, "streaming unsupported"},
+		{"fail_write_initial_batch", failing, &failing.NonFlusher, http.StatusOK, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hub := NewHub(HubConfig{}, nil, nil)
+			defer hub.Close()
+			Handler(hub).ServeHTTP(tc.w, httptest.NewRequest(http.MethodGet, "/api/events", http.NoBody))
+			if body := tc.got.Body.String(); tc.got.Code != tc.wantCode || !strings.Contains(body, tc.wantSub) {
+				t.Fatalf("got %d %q, want %d containing %q", tc.got.Code, body, tc.wantCode, tc.wantSub)
 			}
 		})
 	}

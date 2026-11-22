@@ -7,6 +7,7 @@ import (
 
 	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 func TestNewTodoistAdapter_Validation(t *testing.T) {
@@ -39,7 +40,7 @@ func TestNewTodoistAdapter_Validation(t *testing.T) {
 type todoistFetchCase struct {
 	name      string
 	cfg       adapters.TodoistAdapterConfig
-	routes    map[string]mockRoute
+	routes    map[string]testutil.Route
 	wantName  string
 	wantItems int
 	checkSec  string
@@ -50,7 +51,7 @@ type todoistFetchCase struct {
 
 func runTodoistFetchListCase(t *testing.T, tc todoistFetchCase) {
 	t.Helper()
-	srv := newRouteServer(t, tc.routes, nil)
+	srv, _ := testutil.RouteServer(t, tc.routes)
 	cfg := tc.cfg
 	cfg.Token, cfg.BaseURL, cfg.Client = "tok", srv.URL, srv.Client()
 	ad, err := adapters.NewTodoistAdapter(cfg)
@@ -79,26 +80,26 @@ func todoistFetchListTestCases() []todoistFetchCase {
 	return []todoistFetchCase{
 		{
 			name: "project_id_success", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
-			routes: map[string]mockRoute{
-				"/api/v1/projects/p1":            {body: `{"id":"p1","name":"Work"}`},
-				"/api/v1/sections?project_id=p1": {body: `[{"id":"s1","name":"Dev"}]`},
-				"/api/v1/tasks?project_id=p1":    {body: `[{"id":"t1","content":"Code","section_id":"s1"}]`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects/p1":            {Body: `{"id":"p1","name":"Work"}`},
+				"/api/v1/sections?project_id=p1": {Body: `[{"id":"s1","name":"Dev"}]`},
+				"/api/v1/tasks?project_id=p1":    {Body: `[{"id":"t1","content":"Code","section_id":"s1"}]`},
 			}, wantName: "Work", wantItems: 1,
 		},
 		{
 			name: "multi_page_cursor_pagination",
 			cfg:  adapters.TodoistAdapterConfig{ProjectName: "Work"},
-			routes: map[string]mockRoute{
-				"/api/v1/projects":                               {body: `{"results":[{"id":"p0","name":"Other"}],"next_cursor":"c2"}`},
-				"/api/v1/projects?cursor=c2":                     {body: `{"results":[{"id":"p1","name":"Work"}],"next_cursor":"c1"}`},
-				"/api/v1/projects?cursor=c1":                     {body: `{"results":[],"next_cursor":"c2"}`},
-				"/api/v1/sections?project_id=p1":                 {body: `{"results":[{"id":"s1","name":"Sec1","order":1}],"next_cursor":"c2"}`},
-				"/api/v1/sections?project_id=p1&cursor=c2":       {body: `{"results":[{"id":"s2","name":"Sec2","order":2}],"next_cursor":"c1"}`},
-				"/api/v1/sections?project_id=p1&cursor=c1":       {body: `{"results":[],"next_cursor":"c2"}`},
-				"/api/v1/tasks?project_id=p1":                    {body: `{"results":[{"id":"t1","content":"Task 1","section_id":"s1"}],"next_cursor":"c2"}`},
-				"/api/v1/tasks?project_id=p1&cursor=c2":          {body: `{"results":[{"id":"t2","content":"Task 2","section_id":"s2"}],"next_cursor":"c1"}`},
-				"/api/v1/tasks?project_id=p1&cursor=c1":          {body: `{"results":[],"next_cursor":"c2"}`},
-				"/api/v1/tasks/completed?project_id=p1&limit=30": {body: `{"items":[]}`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects":                               {Body: `{"results":[{"id":"p0","name":"Other"}],"next_cursor":"c2"}`},
+				"/api/v1/projects?cursor=c2":                     {Body: `{"results":[{"id":"p1","name":"Work"}],"next_cursor":"c1"}`},
+				"/api/v1/projects?cursor=c1":                     {Body: `{"results":[],"next_cursor":"c2"}`},
+				"/api/v1/sections?project_id=p1":                 {Body: `{"results":[{"id":"s1","name":"Sec1","order":1}],"next_cursor":"c2"}`},
+				"/api/v1/sections?project_id=p1&cursor=c2":       {Body: `{"results":[{"id":"s2","name":"Sec2","order":2}],"next_cursor":"c1"}`},
+				"/api/v1/sections?project_id=p1&cursor=c1":       {Body: `{"results":[],"next_cursor":"c2"}`},
+				"/api/v1/tasks?project_id=p1":                    {Body: `{"results":[{"id":"t1","content":"Task 1","section_id":"s1"}],"next_cursor":"c2"}`},
+				"/api/v1/tasks?project_id=p1&cursor=c2":          {Body: `{"results":[{"id":"t2","content":"Task 2","section_id":"s2"}],"next_cursor":"c1"}`},
+				"/api/v1/tasks?project_id=p1&cursor=c1":          {Body: `{"results":[],"next_cursor":"c2"}`},
+				"/api/v1/tasks/completed?project_id=p1&limit=30": {Body: `{"items":[]}`},
 			},
 			wantName:  "Work",
 			wantItems: 2,
@@ -106,119 +107,119 @@ func todoistFetchListTestCases() []todoistFetchCase {
 		},
 		{
 			name: "project_name_match", cfg: adapters.TodoistAdapterConfig{ProjectName: "Shopping"},
-			routes: map[string]mockRoute{
-				"/api/v1/projects":               {body: `[{"id":"p2","name":"Shopping"}]`},
-				"/api/v1/sections?project_id=p2": {body: `[]`},
-				"/api/v1/tasks?project_id=p2":    {body: `[{"id":"t2","content":"Milk"}]`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects":               {Body: `[{"id":"p2","name":"Shopping"}]`},
+				"/api/v1/sections?project_id=p2": {Body: `[]`},
+				"/api/v1/tasks?project_id=p2":    {Body: `[{"id":"t2","content":"Milk"}]`},
 			}, wantName: "Shopping", wantItems: 1,
 		},
 		{
 			name: "project_name_not_found", cfg: adapters.TodoistAdapterConfig{ProjectName: "Missing"},
-			routes:    map[string]mockRoute{"/api/v1/projects": {body: `[{"id":"p1","name":"Other"}]`}},
+			routes:    map[string]testutil.Route{"/api/v1/projects": {Body: `[{"id":"p1","name":"Other"}]`}},
 			wantErrIs: adapters.ErrUpstreamNotFound,
 		},
 		{
 			name: "inbox_fallback", cfg: adapters.TodoistAdapterConfig{},
-			routes: map[string]mockRoute{
-				"/api/v1/projects":                    {body: `[{"id":"p1","name":"Other"},{"id":"p-inbox","name":"Inbox","inbox_project":true}]`},
-				"/api/v1/sections?project_id=p-inbox": {body: `[]`},
-				"/api/v1/tasks?project_id=p-inbox":    {body: `[{"id":"t3","content":"Task"}]`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects":                    {Body: `[{"id":"p1","name":"Other"},{"id":"p-inbox","name":"Inbox","inbox_project":true}]`},
+				"/api/v1/sections?project_id=p-inbox": {Body: `[]`},
+				"/api/v1/tasks?project_id=p-inbox":    {Body: `[{"id":"t3","content":"Task"}]`},
 			}, wantName: "Inbox", wantItems: 1,
 		},
 		{
 			name: "non_inbox_first_project_fallback", cfg: adapters.TodoistAdapterConfig{},
-			routes: map[string]mockRoute{
-				"/api/v1/projects":                    {body: `[{"id":"p-first","name":"General"}]`},
-				"/api/v1/sections?project_id=p-first": {body: `[]`},
-				"/api/v1/tasks?project_id=p-first":    {body: `[{"id":"t4","content":"Task"}]`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects":                    {Body: `[{"id":"p-first","name":"General"}]`},
+				"/api/v1/sections?project_id=p-first": {Body: `[]`},
+				"/api/v1/tasks?project_id=p-first":    {Body: `[{"id":"t4","content":"Task"}]`},
 			}, wantName: "General", wantItems: 1,
 		},
 		{
 			name: "empty_projects_fallback", cfg: adapters.TodoistAdapterConfig{},
-			routes: map[string]mockRoute{
-				"/api/v1/projects": {body: `[]`},
-				"/api/v1/tasks":    {body: `[{"id":"t5","content":"Task"}]`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects": {Body: `[]`},
+				"/api/v1/tasks":    {Body: `[{"id":"t5","content":"Task"}]`},
 			}, wantName: "Inbox", wantItems: 1,
 		},
 		{
 			name: "list_name_override", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1", ListName: "Custom"},
-			routes: map[string]mockRoute{
-				"/api/v1/projects/p1":            {body: `{"id":"p1","name":"Work"}`},
-				"/api/v1/sections?project_id=p1": {body: `[]`},
-				"/api/v1/tasks?project_id=p1":    {body: `[]`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects/p1":            {Body: `{"id":"p1","name":"Work"}`},
+				"/api/v1/sections?project_id=p1": {Body: `[]`},
+				"/api/v1/tasks?project_id=p1":    {Body: `[]`},
 			}, wantName: "Custom", wantItems: 0,
 		},
 		{
 			name: "hierarchy_and_sections", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
-			routes: map[string]mockRoute{
-				"/api/v1/projects/p1":            {body: `{"id":"p1"}`},
-				"/api/v1/sections?project_id=p1": {body: `[{"id":"s1","name":"Sprint"}]`},
-				"/api/v1/tasks?project_id=p1":    {body: `[{"id":"t1","section_id":"s1","order":1},{"id":"t2","parent_id":"t1","child_order":1},{"id":"t3","parent_id":"missing"}]`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects/p1":            {Body: `{"id":"p1"}`},
+				"/api/v1/sections?project_id=p1": {Body: `[{"id":"s1","name":"Sprint"}]`},
+				"/api/v1/tasks?project_id=p1":    {Body: `[{"id":"t1","section_id":"s1","order":1},{"id":"t2","parent_id":"t1","child_order":1},{"id":"t3","parent_id":"missing"}]`},
 			}, wantName: "p1", wantItems: 3, checkSec: "Sprint",
 		},
 		{
 			name: "cycle_protection", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
-			routes: map[string]mockRoute{
-				"/api/v1/projects/p1":            {body: `{"id":"p1"}`},
-				"/api/v1/sections?project_id=p1": {body: `[]`},
-				"/api/v1/tasks?project_id=p1":    {body: `[{"id":"t1","parent_id":"t2"},{"id":"t2","parent_id":"t1"}]`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects/p1":            {Body: `{"id":"p1"}`},
+				"/api/v1/sections?project_id=p1": {Body: `[]`},
+				"/api/v1/tasks?project_id=p1":    {Body: `[{"id":"t1","parent_id":"t2"},{"id":"t2","parent_id":"t1"}]`},
 			}, wantName: "p1", wantItems: 2,
 		},
 		{
 			name: "numeric_bool_null_ids", cfg: adapters.TodoistAdapterConfig{ProjectID: "123"},
-			routes: map[string]mockRoute{
-				"/api/v1/projects/123":            {body: `{"id":123,"name":"Numeric"}`},
-				"/api/v1/sections?project_id=123": {body: `[{"id":true,"name":"Sec"}]`},
-				"/api/v1/tasks?project_id=123":    {body: `[{"id":456,"content":"Num","parent_id":null,"section_id":true,"added_at":"invalid-date","order":2}]`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects/123":            {Body: `{"id":123,"name":"Numeric"}`},
+				"/api/v1/sections?project_id=123": {Body: `[{"id":true,"name":"Sec"}]`},
+				"/api/v1/tasks?project_id=123":    {Body: `[{"id":456,"content":"Num","parent_id":null,"section_id":true,"added_at":"invalid-date","order":2}]`},
 			}, wantName: "Numeric", wantItems: 1,
 		},
 		{
 			name: "due_dates_date_and_datetime", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
-			routes: map[string]mockRoute{
-				"/api/v1/projects/p1":            {body: `{"id":"p1"}`},
-				"/api/v1/sections?project_id=p1": {body: `[]`},
-				"/api/v1/tasks?project_id=p1":    {body: `[{"id":"t1","due":{"date":"2026-10-01"}},{"id":"t2","due":{"datetime":"2026-10-02T15:04:05Z"}}]`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects/p1":            {Body: `{"id":"p1"}`},
+				"/api/v1/sections?project_id=p1": {Body: `[]`},
+				"/api/v1/tasks?project_id=p1":    {Body: `[{"id":"t1","due":{"date":"2026-10-01"}},{"id":"t2","due":{"datetime":"2026-10-02T15:04:05Z"}}]`},
 			}, wantName: "p1", wantItems: 2, checkDue: true,
 		},
 		{
 			name: "sync_completed_degradation", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
-			routes: map[string]mockRoute{
-				"/api/v1/projects/p1":                            {body: `{"id":"p1"}`},
-				"/api/v1/sections?project_id=p1":                 {body: `[]`},
-				"/api/v1/tasks?project_id=p1":                    {body: `[{"id":"t1","content":"Active"}]`},
-				"/api/v1/tasks/completed?project_id=p1&limit=30": {status: 500},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects/p1":                            {Body: `{"id":"p1"}`},
+				"/api/v1/sections?project_id=p1":                 {Body: `[]`},
+				"/api/v1/tasks?project_id=p1":                    {Body: `[{"id":"t1","content":"Active"}]`},
+				"/api/v1/tasks/completed?project_id=p1&limit=30": {Status: 500},
 			}, wantName: "p1", wantItems: 1,
 		},
 		{
 			name: "completed_tasks_success", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
-			routes: map[string]mockRoute{
-				"/api/v1/projects/p1":                            {body: `{"id":"p1"}`},
-				"/api/v1/sections?project_id=p1":                 {body: `[{"id":"s1","name":"DoneSec"}]`},
-				"/api/v1/tasks?project_id=p1":                    {body: `[{"id":"t1","content":"Active"}]`},
-				"/api/v1/tasks/completed?project_id=p1&limit=30": {body: `{"items":[{"task_id":"c1","content":"Done","section_id":"other_sec","completed_date":"2026-09-27"},{"id":"c2","content":"NoTaskID"}]}`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects/p1":                            {Body: `{"id":"p1"}`},
+				"/api/v1/sections?project_id=p1":                 {Body: `[{"id":"s1","name":"DoneSec"}]`},
+				"/api/v1/tasks?project_id=p1":                    {Body: `[{"id":"t1","content":"Active"}]`},
+				"/api/v1/tasks/completed?project_id=p1&limit=30": {Body: `{"items":[{"task_id":"c1","content":"Done","section_id":"other_sec","completed_date":"2026-09-27"},{"id":"c2","content":"NoTaskID"}]}`},
 			}, wantName: "p1", wantItems: 3,
 		},
 		{
 			name: "envelope_results_format", cfg: adapters.TodoistAdapterConfig{},
-			routes: map[string]mockRoute{
-				"/api/v1/projects":                  {body: `{"results":[{"id":"p-env","name":"Env"}]}`},
-				"/api/v1/sections?project_id=p-env": {body: `{"results":[{"id":"s-env","name":"EnvSec"}]}`},
-				"/api/v1/tasks?project_id=p-env":    {body: `{"results":[{"id":"t-env","content":"EnvTask"}]}`},
+			routes: map[string]testutil.Route{
+				"/api/v1/projects":                  {Body: `{"results":[{"id":"p-env","name":"Env"}]}`},
+				"/api/v1/sections?project_id=p-env": {Body: `{"results":[{"id":"s-env","name":"EnvSec"}]}`},
+				"/api/v1/tasks?project_id=p-env":    {Body: `{"results":[{"id":"t-env","content":"EnvTask"}]}`},
 			}, wantName: "Env", wantItems: 1,
 		},
-		{"payload_too_large", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {body: strings.Repeat("x", adapters.MaxPayloadBytes+10)}}, "", 0, "", false, "", adapters.ErrPayloadTooLarge},
-		{"error_401", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {status: 401}}, "", 0, "", false, "", adapters.ErrUnauthorized},
-		{"error_403", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {status: 403}}, "", 0, "", false, "", adapters.ErrUnauthorized},
-		{"error_404", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {status: 404}}, "", 0, "", false, "", adapters.ErrUpstreamNotFound},
-		{"error_429", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {status: 429}}, "", 0, "", false, "status 429", nil},
-		{"error_500", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {status: 500}}, "", 0, "", false, "status 500", nil},
-		{"malformed_project_json", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{bad`}}, "", 0, "", false, "failed to parse todoist project", nil},
-		{"malformed_projects_list_json", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {body: `{bad`}}, "", 0, "", false, "failed to parse todoist projects", nil},
-		{"project_name_500", adapters.TodoistAdapterConfig{ProjectName: "P"}, map[string]mockRoute{"/api/v1/projects": {status: 500}}, "", 0, "", false, "status 500", nil},
-		{"sections_500", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {status: 500}}, "", 0, "", false, "failed to fetch todoist sections", nil},
-		{"malformed_sections_json", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {body: `{bad`}}, "", 0, "", false, "failed to parse todoist sections", nil},
-		{"tasks_500", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {body: `[]`}, "/api/v1/tasks?project_id=p1": {status: 500}}, "", 0, "", false, "failed to fetch todoist tasks", nil},
-		{"malformed_tasks_json", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {body: `[]`}, "/api/v1/tasks?project_id=p1": {body: `{bad`}}, "", 0, "", false, "failed to parse todoist tasks", nil},
+		{"payload_too_large", adapters.TodoistAdapterConfig{}, map[string]testutil.Route{"/api/v1/projects": {Body: strings.Repeat("x", adapters.MaxPayloadBytes+10)}}, "", 0, "", false, "", adapters.ErrPayloadTooLarge},
+		{"error_401", adapters.TodoistAdapterConfig{}, map[string]testutil.Route{"/api/v1/projects": {Status: 401}}, "", 0, "", false, "", adapters.ErrUnauthorized},
+		{"error_403", adapters.TodoistAdapterConfig{}, map[string]testutil.Route{"/api/v1/projects": {Status: 403}}, "", 0, "", false, "", adapters.ErrUnauthorized},
+		{"error_404", adapters.TodoistAdapterConfig{}, map[string]testutil.Route{"/api/v1/projects": {Status: 404}}, "", 0, "", false, "", adapters.ErrUpstreamNotFound},
+		{"error_429", adapters.TodoistAdapterConfig{}, map[string]testutil.Route{"/api/v1/projects": {Status: 429}}, "", 0, "", false, "status 429", nil},
+		{"error_500", adapters.TodoistAdapterConfig{}, map[string]testutil.Route{"/api/v1/projects": {Status: 500}}, "", 0, "", false, "status 500", nil},
+		{"malformed_project_json", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]testutil.Route{"/api/v1/projects/p1": {Body: `{bad`}}, "", 0, "", false, "failed to parse todoist project", nil},
+		{"malformed_projects_list_json", adapters.TodoistAdapterConfig{}, map[string]testutil.Route{"/api/v1/projects": {Body: `{bad`}}, "", 0, "", false, "failed to parse todoist projects", nil},
+		{"project_name_500", adapters.TodoistAdapterConfig{ProjectName: "P"}, map[string]testutil.Route{"/api/v1/projects": {Status: 500}}, "", 0, "", false, "status 500", nil},
+		{"sections_500", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]testutil.Route{"/api/v1/projects/p1": {Body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {Status: 500}}, "", 0, "", false, "failed to fetch todoist sections", nil},
+		{"malformed_sections_json", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]testutil.Route{"/api/v1/projects/p1": {Body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {Body: `{bad`}}, "", 0, "", false, "failed to parse todoist sections", nil},
+		{"tasks_500", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]testutil.Route{"/api/v1/projects/p1": {Body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {Body: `[]`}, "/api/v1/tasks?project_id=p1": {Status: 500}}, "", 0, "", false, "failed to fetch todoist tasks", nil},
+		{"malformed_tasks_json", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]testutil.Route{"/api/v1/projects/p1": {Body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {Body: `[]`}, "/api/v1/tasks?project_id=p1": {Body: `{bad`}}, "", 0, "", false, "failed to parse todoist tasks", nil},
 	}
 }
 

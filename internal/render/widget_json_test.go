@@ -67,8 +67,8 @@ func TestHandler_GetWidgetJSON_Errors(t *testing.T) {
 		"cal-bad": {data: sampleCalendarData(), state: "healthy"},
 		"nan":     {data: map[string]any{"value": math.NaN()}, state: "healthy"},
 	}
-	engine := render.NewEngine(&mockResolver{packages: pkgs}, &mockSnapshotProvider{snapshot: snap, states: states}, render.WithNowFunc(func() time.Time { return widgetJSONNow }))
-	handler := render.NewHandler(engine, &mockResolver{packages: pkgs})
+	engine := render.NewEngine(&testutil.Packages{ByType: pkgs}, &mockSnapshotProvider{snapshot: snap, states: states}, render.WithNowFunc(func() time.Time { return widgetJSONNow }))
+	handler := render.NewHandler(engine, &testutil.Packages{ByType: pkgs})
 
 	tests := []struct {
 		name       string
@@ -121,8 +121,8 @@ func TestHandler_GetWidgetJSON_Fields(t *testing.T) {
 	cfg := map[string]any{"name": "Home", "api_key_env": "WEATHER_KEY", "token": "secret", "units": "metric"}
 	snap := singleWidgetSnapshot("w1", "weather-forecast", []int{2, 1}, cfg)
 	states := map[string]mockState{"w1": {data: sampleWeatherData(), state: "degraded", timestamp: "2026-09-26T12:00:00Z"}}
-	engine := render.NewEngine(&mockResolver{packages: pkgs}, &mockSnapshotProvider{snapshot: snap, states: states}, render.WithNowFunc(func() time.Time { return widgetJSONNow }))
-	handler := render.NewHandler(engine, &mockResolver{packages: pkgs})
+	engine := render.NewEngine(&testutil.Packages{ByType: pkgs}, &mockSnapshotProvider{snapshot: snap, states: states}, render.WithNowFunc(func() time.Time { return widgetJSONNow }))
+	handler := render.NewHandler(engine, &testutil.Packages{ByType: pkgs})
 
 	rec := httptest.NewRecorder()
 	handler.GetWidgetJSON(rec, httptest.NewRequest(http.MethodGet, "/api/widgets/w1", http.NoBody), "w1")
@@ -169,9 +169,9 @@ func TestHandler_GetWidgetJSON_HeadAndNodeData(t *testing.T) {
 		}
 		return nil, false
 	}
-	engine := render.NewEngine(&mockResolver{packages: pkgs}, &mockSnapshotProvider{snapshot: snap, states: states},
+	engine := render.NewEngine(&testutil.Packages{ByType: pkgs}, &mockSnapshotProvider{snapshot: snap, states: states},
 		render.WithNowFunc(func() time.Time { return widgetJSONNow }), render.WithNodeDataFunc(nodeData))
-	handler := render.NewHandler(engine, &mockResolver{packages: pkgs})
+	handler := render.NewHandler(engine, &testutil.Packages{ByType: pkgs})
 
 	head := httptest.NewRecorder()
 	handler.GetWidgetJSON(head, httptest.NewRequest(http.MethodHead, "/api/widgets/w1", http.NoBody), "w1")
@@ -197,8 +197,8 @@ func TestHandler_GetWidgetJSON_CalendarViewModel(t *testing.T) {
 	pkgs := loadRepoPackages(t, "calendar-grid")
 	snap := singleWidgetSnapshot("cal-1", "calendar-grid", []int{4, 2}, nil)
 	states := map[string]mockState{"cal-1": {data: sampleCalendarData(), state: "healthy", timestamp: "2026-09-26T12:00:00Z"}}
-	engine := render.NewEngine(&mockResolver{packages: pkgs}, &mockSnapshotProvider{snapshot: snap, states: states}, render.WithNowFunc(func() time.Time { return widgetJSONNow }))
-	handler := render.NewHandler(engine, &mockResolver{packages: pkgs})
+	engine := render.NewEngine(&testutil.Packages{ByType: pkgs}, &mockSnapshotProvider{snapshot: snap, states: states}, render.WithNowFunc(func() time.Time { return widgetJSONNow }))
+	handler := render.NewHandler(engine, &testutil.Packages{ByType: pkgs})
 
 	fetch := func(t *testing.T, path string) map[string]any {
 		t.Helper()
@@ -248,7 +248,7 @@ func TestEngine_WidgetContext(t *testing.T) {
 	snap := singleWidgetSnapshot("w1", "weather-forecast", []int{2, 1}, cfg)
 	states := map[string]mockState{"w1": {data: sampleWeatherData(), state: "healthy", timestamp: "2026-09-26T12:00:00Z"}}
 	nodeData := func(widgetID, nodeID string) (any, bool) { return map[string]any{"node": nodeID}, nodeID != "" }
-	engine := render.NewEngine(&mockResolver{packages: pkgs}, &mockSnapshotProvider{snapshot: snap, states: states}, render.WithNodeDataFunc(nodeData))
+	engine := render.NewEngine(&testutil.Packages{ByType: pkgs}, &mockSnapshotProvider{snapshot: snap, states: states}, render.WithNodeDataFunc(nodeData))
 
 	ctxOut, err := engine.WidgetContext(t.Context(), "w1", "lobby", map[string]any{"date": "2026-10-15"})
 	if err != nil {
@@ -334,8 +334,8 @@ func TestHandler_GetWidgetJSON_MatchesHydration(t *testing.T) {
 		provider.SetWidgetState("w-"+name, samples[name], "healthy", "2026-09-26T12:00:00Z")
 	}
 
-	engine := render.NewEngine(&mockResolver{packages: pkgs}, provider, render.WithNowFunc(func() time.Time { return widgetJSONNow }))
-	handler := render.NewHandler(engine, &mockResolver{packages: pkgs})
+	engine := render.NewEngine(&testutil.Packages{ByType: pkgs}, provider, render.WithNowFunc(func() time.Time { return widgetJSONNow }))
+	handler := render.NewHandler(engine, &testutil.Packages{ByType: pkgs})
 
 	hydrated := map[string]any{}
 	for _, ev := range events.BuildHydrationBatch(provider, events.NewIDGenerator(), widgetJSONNow) {

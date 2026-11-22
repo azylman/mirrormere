@@ -8,32 +8,33 @@ import (
 
 	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 func TestTodoistAdapter_CompleteItem(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name, itemID  string
-		route         mockRoute
+		route         testutil.Route
 		close, cancel bool
 		wantErr       string
 		wantErrIs     error
 		wantCode      int
 	}{
-		{"204_no_content", "i1", mockRoute{status: 204}, false, false, "", nil, 0},
-		{"200_ok", "i1", mockRoute{status: 200}, false, false, "", nil, 0},
-		{"404_not_found", "i1", mockRoute{status: 404}, false, false, "", adapters.ErrUpstreamNotFound, 0},
-		{"401_unauthorized", "i1", mockRoute{status: 401}, false, false, "", adapters.ErrUnauthorized, 0},
-		{"500_error", "i1", mockRoute{status: 500}, false, false, "", nil, 500},
-		{"empty_item_id", "", mockRoute{}, false, false, "item ID is required", nil, 0},
-		{"invalid_item_id", "bad/..", mockRoute{}, false, false, "invalid item ID", nil, 0},
-		{"network_error", "i1", mockRoute{}, true, false, "todoist close request failed", nil, 0},
-		{"canceled_context", "i1", mockRoute{status: 200}, false, true, "context canceled", nil, 0},
+		{"204_no_content", "i1", testutil.Route{Status: 204}, false, false, "", nil, 0},
+		{"200_ok", "i1", testutil.Route{Status: 200}, false, false, "", nil, 0},
+		{"404_not_found", "i1", testutil.Route{Status: 404}, false, false, "", adapters.ErrUpstreamNotFound, 0},
+		{"401_unauthorized", "i1", testutil.Route{Status: 401}, false, false, "", adapters.ErrUnauthorized, 0},
+		{"500_error", "i1", testutil.Route{Status: 500}, false, false, "", nil, 500},
+		{"empty_item_id", "", testutil.Route{}, false, false, "item ID is required", nil, 0},
+		{"invalid_item_id", "bad/..", testutil.Route{}, false, false, "invalid item ID", nil, 0},
+		{"network_error", "i1", testutil.Route{}, true, false, "todoist close request failed", nil, 0},
+		{"canceled_context", "i1", testutil.Route{Status: 200}, false, true, "context canceled", nil, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			srv := newRouteServer(t, map[string]mockRoute{"/api/v1/tasks/" + tc.itemID + "/close": tc.route}, nil)
+			srv, _ := testutil.RouteServer(t, map[string]testutil.Route{"/api/v1/tasks/" + tc.itemID + "/close": tc.route})
 			if tc.close {
 				srv.Close()
 			}

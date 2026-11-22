@@ -14,22 +14,8 @@ import (
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/server"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
-
-type mockLoader struct {
-	pkgs map[string]*domain.Package
-}
-
-func (m *mockLoader) LoadPackage(name string) (*domain.Package, error) {
-	if m == nil || m.pkgs == nil {
-		return nil, fmt.Errorf("package not found: %s", name)
-	}
-	p, ok := m.pkgs[name]
-	if !ok {
-		return nil, fmt.Errorf("package not found: %s", name)
-	}
-	return p, nil
-}
 
 type mockEditorHub struct {
 	dispatched bool
@@ -94,10 +80,10 @@ display:
 `
 )
 
-func newTestManager(t *testing.T, yamlStr, overridePath string) (*config.Manager, *mockLoader) {
+func newTestManager(t *testing.T, yamlStr, overridePath string) (*config.Manager, *testutil.Packages) {
 	t.Helper()
-	loader := &mockLoader{
-		pkgs: map[string]*domain.Package{
+	loader := &testutil.Packages{
+		ByType: map[string]*domain.Package{
 			"clock": {
 				Type: "clock",
 				Manifest: domain.WidgetManifest{
@@ -168,7 +154,7 @@ func TestDefaultLayoutEditorHandler_GetLayoutEditor(t *testing.T) {
 			t.Parallel()
 			tmp := filepath.Join(t.TempDir(), "layout-override.yaml")
 			var mgr *config.Manager
-			var loader *mockLoader
+			var loader *testutil.Packages
 			if !tc.nilMgr {
 				mgr, loader = newTestManager(t, testValidYAML, tmp)
 			}
@@ -206,23 +192,9 @@ func TestDefaultLayoutEditorHandler_PutLayoutEditor(t *testing.T) {
 			wantCode:   http.StatusOK,
 			wantSubstr: `"has_override":true`,
 		},
-		{
-			name:     "options_cors",
-			method:   http.MethodOptions,
-			wantCode: http.StatusNoContent,
-		},
-		{
-			name:     "method_not_allowed",
-			method:   http.MethodGet,
-			wantCode: http.StatusMethodNotAllowed,
-		},
-		{
-			name:     "nil_manager",
-			method:   http.MethodPut,
-			body:     `{"widgets":[]}`,
-			nilMgr:   true,
-			wantCode: http.StatusInternalServerError,
-		},
+		{name: "options_cors", method: http.MethodOptions, wantCode: http.StatusNoContent},
+		{name: "method_not_allowed", method: http.MethodGet, wantCode: http.StatusMethodNotAllowed},
+		{name: "nil_manager", method: http.MethodPut, body: `{"widgets":[]}`, nilMgr: true, wantCode: http.StatusInternalServerError},
 		{
 			name:       "disabled_editing",
 			method:     http.MethodPut,
@@ -231,13 +203,7 @@ func TestDefaultLayoutEditorHandler_PutLayoutEditor(t *testing.T) {
 			wantCode:   http.StatusForbidden,
 			wantSubstr: "layout editing is disabled",
 		},
-		{
-			name:       "invalid_json",
-			method:     http.MethodPut,
-			body:       `{invalid-json`,
-			wantCode:   http.StatusBadRequest,
-			wantSubstr: "invalid request payload",
-		},
+		{name: "invalid_json", method: http.MethodPut, body: `{invalid-json`, wantCode: http.StatusBadRequest, wantSubstr: "invalid request payload"},
 		{
 			name:       "empty_widget_id",
 			method:     http.MethodPut,
@@ -287,7 +253,7 @@ func TestDefaultLayoutEditorHandler_PutLayoutEditor(t *testing.T) {
 			t.Parallel()
 			tmp := filepath.Join(t.TempDir(), "layout-override.yaml")
 			var mgr *config.Manager
-			var loader *mockLoader
+			var loader *testutil.Packages
 			if !tc.nilMgr {
 				yamlStr := testValidYAML
 				if tc.disabled {
@@ -323,35 +289,11 @@ func TestDefaultLayoutEditorHandler_DeleteLayoutEditor(t *testing.T) {
 		wantCode   int
 		wantSubstr string
 	}{
-		{
-			name:       "ok_delete_no_override",
-			method:     http.MethodDelete,
-			wantCode:   http.StatusOK,
-			wantSubstr: `"has_override":false`,
-		},
-		{
-			name:       "ok_delete_with_override",
-			method:     http.MethodDelete,
-			seedFile:   true,
-			wantCode:   http.StatusOK,
-			wantSubstr: `"has_override":false`,
-		},
-		{
-			name:     "options_cors",
-			method:   http.MethodOptions,
-			wantCode: http.StatusNoContent,
-		},
-		{
-			name:     "method_not_allowed",
-			method:   http.MethodPost,
-			wantCode: http.StatusMethodNotAllowed,
-		},
-		{
-			name:     "nil_manager",
-			method:   http.MethodDelete,
-			nilMgr:   true,
-			wantCode: http.StatusInternalServerError,
-		},
+		{name: "ok_delete_no_override", method: http.MethodDelete, wantCode: http.StatusOK, wantSubstr: `"has_override":false`},
+		{name: "ok_delete_with_override", method: http.MethodDelete, seedFile: true, wantCode: http.StatusOK, wantSubstr: `"has_override":false`},
+		{name: "options_cors", method: http.MethodOptions, wantCode: http.StatusNoContent},
+		{name: "method_not_allowed", method: http.MethodPost, wantCode: http.StatusMethodNotAllowed},
+		{name: "nil_manager", method: http.MethodDelete, nilMgr: true, wantCode: http.StatusInternalServerError},
 		{
 			name:       "disabled_editing",
 			method:     http.MethodDelete,
@@ -372,7 +314,7 @@ func TestDefaultLayoutEditorHandler_DeleteLayoutEditor(t *testing.T) {
 			t.Parallel()
 			tmp := filepath.Join(t.TempDir(), "layout-override.yaml")
 			var mgr *config.Manager
-			var loader *mockLoader
+			var loader *testutil.Packages
 			if !tc.nilMgr {
 				yamlStr := testValidYAML
 				if tc.disabled {
@@ -485,8 +427,8 @@ func TestDefaultLayoutEditorHandler_ResponseDetails(t *testing.T) {
 
 func TestDefaultLayoutEditorHandler_DimensionResolution(t *testing.T) {
 	t.Parallel()
-	loader := &mockLoader{
-		pkgs: map[string]*domain.Package{
+	loader := &testutil.Packages{
+		ByType: map[string]*domain.Package{
 			"custom-card": {
 				Type: "custom-card",
 				Manifest: domain.WidgetManifest{

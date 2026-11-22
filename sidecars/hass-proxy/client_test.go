@@ -3,138 +3,104 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/azylman/mirrormere/internal/testutil"
 )
-
-type clientProcessIntentCase struct {
-	name        string
-	serverMode  string
-	reqText     string
-	cancelCtx   bool
-	wantMatched bool
-	wantErr     bool
-	wantIntent  string
-	wantSpeech  string
-}
-
-func setupIntentMockServer(t *testing.T, mode string) (string, func()) {
-	t.Helper()
-	switch mode {
-	case "unreachable":
-		srv := httptest.NewServer(http.NotFoundHandler())
-		srv.Close()
-		return srv.URL, func() {}
-	case "invalid_url":
-		return "http://[invalid-host-bracket", func() {}
-	case "truncated":
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("failed to bind listener: %v", err)
-		}
-		go func() {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			defer c.Close()
-			buf := make([]byte, 1024)
-			_, _ = c.Read(buf)
-			_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n32\r\npartially written content"))
-		}()
-		return "http://" + ln.Addr().String(), func() { _ = ln.Close() }
-	case "ok", "default_intent", "no_match", "empty_speech", "status_500", "bad_json", "canceled":
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch mode {
-			case "ok":
-				if r.Header.Get("Authorization") != "Bearer test-token" {
-					t.Errorf("expected Bearer token, got %q", r.Header.Get("Authorization"))
-				}
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"response":{"speech":{"plain":{"speech":"Turned off the kitchen light."}},"response_type":"action_done"},"conversation_id":"conv-123"}`))
-			case "default_intent":
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"response":{"speech":{"plain":{"speech":"Done!"}}}}`))
-			case "no_match":
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"response":{"response_type":"error","data":{"code":"no_intent_match"}}}`))
-			case "empty_speech":
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"response":{"speech":{"plain":{"speech":"   "}},"response_type":"action_done"}}`))
-			case "status_500":
-				http.Error(w, "internal server error", http.StatusInternalServerError)
-			case "bad_json":
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{not valid json`))
-			case "canceled":
-				w.WriteHeader(http.StatusOK)
-			}
-		}))
-		return srv.URL, srv.Close
-	default:
-		return "http://example.com", func() {}
-	}
-}
-
-func runClientProcessIntentCase(t *testing.T, tc clientProcessIntentCase) {
-	t.Helper()
-	url, cleanup := setupIntentMockServer(t, tc.serverMode)
-	defer cleanup()
-
-	client := NewHAClient(HomeAssistantConfig{
-		URL:       url,
-		Token:     "test-token",
-		AgentID:   "conversation.home_assistant",
-		Language:  "en",
-		TimeoutMS: 2000,
-	}, nil)
-
-	ctx := context.Background()
-	if tc.cancelCtx {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithCancel(ctx)
-		cancel()
-	}
-
-	resp, matched, err := client.ProcessIntent(ctx, IntentRequest{Text: tc.reqText, TurnID: "turn-456", Speaker: "alpha"})
-	if (err != nil) != tc.wantErr {
-		t.Fatalf("err=%v, wantErr=%v", err, tc.wantErr)
-	}
-	if matched != tc.wantMatched {
-		t.Fatalf("matched=%v, wantMatched=%v", matched, tc.wantMatched)
-	}
-	if tc.wantMatched && (resp == nil || resp.Intent != tc.wantIntent || resp.Speech != tc.wantSpeech) {
-		t.Fatalf("resp=%+v, want Intent=%q Speech=%q", resp, tc.wantIntent, tc.wantSpeech)
-	}
-}
 
 func TestClient_ProcessIntent(t *testing.T) {
 	t.Parallel()
-	tests := []clientProcessIntentCase{
-		{"empty_text", "", "   ", false, false, false, "", ""},
-		{"success", "ok", "turn off kitchen light", false, true, false, "action_done", "Turned off the kitchen light."},
-		{"default_response_type", "default_intent", "test", false, true, false, "action_done", "Done!"},
-		{"no_intent_match", "no_match", "unrecognized", false, false, false, "", ""},
-		{"empty_speech", "empty_speech", "silent", false, false, false, "", ""},
-		{"non_200_error", "status_500", "something", false, false, false, "", ""},
-		{"malformed_json", "bad_json", "something", false, false, false, "", ""},
-		{"unreachable_server", "unreachable", "turn on lamp", false, false, false, "", ""},
-		{"context_canceled", "canceled", "test", true, false, true, "", ""},
-		{"invalid_url", "invalid_url", "turn on lamp", false, false, false, "", ""},
-		{"truncated_response", "truncated", "test", false, false, false, "", ""},
+	tests := []struct {
+		name        string
+		route       testutil.Route
+		text        string
+		cancelCtx   bool
+		wantAuth    string
+		wantMatched bool
+		wantErr     bool
+		wantIntent  string
+		wantSpeech  string
+	}{
+		{name: "empty_text", text: "   "},
+		{
+			name: "success", text: "turn off kitchen light", wantAuth: "Bearer test-token", wantMatched: true, wantIntent: "action_done", wantSpeech: "Turned off the kitchen light.",
+			route: testutil.Route{Body: `{"response":{"speech":{"plain":{"speech":"Turned off the kitchen light."}},"response_type":"action_done"},"conversation_id":"conv-123"}`},
+		},
+		{name: "default_response_type", route: testutil.Route{Body: `{"response":{"speech":{"plain":{"speech":"Done!"}}}}`}, text: "test", wantAuth: "Bearer test-token", wantMatched: true, wantIntent: "action_done", wantSpeech: "Done!"},
+		{name: "no_intent_match", route: testutil.Route{Body: `{"response":{"response_type":"error","data":{"code":"no_intent_match"}}}`}, text: "unrecognized", wantAuth: "Bearer test-token"},
+		{name: "empty_speech", route: testutil.Route{Body: `{"response":{"speech":{"plain":{"speech":"   "}},"response_type":"action_done"}}`}, text: "silent", wantAuth: "Bearer test-token"},
+		{name: "non_200_error", route: testutil.Route{Status: http.StatusInternalServerError, Body: "internal server error"}, text: "something", wantAuth: "Bearer test-token"},
+		{name: "malformed_json", route: testutil.Route{Body: `{not valid json`}, text: "something", wantAuth: "Bearer test-token"},
+		{name: "context_canceled", text: "test", cancelCtx: true, wantErr: true},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			runClientProcessIntentCase(t, tc)
+			srv, captured := testutil.RouteServer(t, map[string]testutil.Route{DefaultHAConversationPath: tc.route})
+			client := NewHAClient(HomeAssistantConfig{URL: srv.URL, ConversationPath: DefaultHAConversationPath, Token: "test-token", AgentID: "conversation.home_assistant", Language: "en", TimeoutMS: 2000}, nil)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tc.cancelCtx {
+				cancel()
+			}
+			resp, matched, err := client.ProcessIntent(ctx, IntentRequest{Text: tc.text, TurnID: "turn-456", Speaker: "alpha"})
+			if (err != nil) != tc.wantErr || matched != tc.wantMatched {
+				t.Fatalf("err=%v matched=%v, want wantErr=%v matched=%v", err, matched, tc.wantErr, tc.wantMatched)
+			}
+			if tc.wantMatched && (resp == nil || resp.Intent != tc.wantIntent || resp.Speech != tc.wantSpeech) {
+				t.Fatalf("resp=%+v, want Intent=%q Speech=%q", resp, tc.wantIntent, tc.wantSpeech)
+			}
+			if reqs := captured.Requests(); tc.wantAuth != "" && (len(reqs) != 1 || reqs[0].Header.Get("Authorization") != tc.wantAuth) {
+				t.Fatalf("requests=%+v, want one with Authorization %q", reqs, tc.wantAuth)
+			}
+		})
+	}
+}
+
+// newTruncatedIntentServer answers one request with a chunked 200 whose body
+// is cut off mid-chunk, so reading the response fails.
+func newTruncatedIntentServer(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to bind listener: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		buf := make([]byte, 1024)
+		_, _ = c.Read(buf)
+		_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n32\r\npartially written content"))
+	}()
+	return "http://" + ln.Addr().String()
+}
+
+// TestClient_ProcessIntent_Transport covers requests that never yield a usable
+// HTTP response; each one is reported as no match without an error.
+func TestClient_ProcessIntent_Transport(t *testing.T) {
+	t.Parallel()
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	tests := []struct{ name, url string }{
+		{"unreachable_server", closed.URL},
+		{"invalid_url", "http://[invalid-host-bracket"},
+		{"truncated_response", newTruncatedIntentServer(t)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := NewHAClient(HomeAssistantConfig{URL: tc.url, Token: "test-token", TimeoutMS: 2000}, nil)
+			resp, matched, err := client.ProcessIntent(t.Context(), IntentRequest{Text: "turn on lamp"})
+			if resp != nil || matched || err != nil {
+				t.Fatalf("got resp=%+v matched=%v err=%v, want no match and no error", resp, matched, err)
+			}
 		})
 	}
 }
@@ -160,22 +126,17 @@ func TestClient_ProcessIntent_DeviceIDRouting(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var capturedRaw map[string]any
-			var capturedReq HAConversationRequest
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				bodyBytes, _ := io.ReadAll(r.Body)
-				_ = json.Unmarshal(bodyBytes, &capturedRaw)
-				_ = json.Unmarshal(bodyBytes, &capturedReq)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"response":{"speech":{"plain":{"speech":"Done"}},"response_type":"action_done"}}`))
-			}))
-			defer server.Close()
-
-			client := NewHAClient(HomeAssistantConfig{URL: server.URL, DeviceID: tc.defDev, NodeDevices: tc.nodeDevs}, nil)
-			resp, matched, err := client.ProcessIntent(context.Background(), IntentRequest{Text: "pause", Node: tc.reqNode})
+			srv, captured := testutil.RouteServer(t, map[string]testutil.Route{"/": {Body: `{"response":{"speech":{"plain":{"speech":"Done"}},"response_type":"action_done"}}`}})
+			client := NewHAClient(HomeAssistantConfig{URL: srv.URL + "/", DeviceID: tc.defDev, NodeDevices: tc.nodeDevs}, nil)
+			resp, matched, err := client.ProcessIntent(t.Context(), IntentRequest{Text: "pause", Node: tc.reqNode})
 			if err != nil || !matched || resp == nil {
 				t.Fatalf("unexpected result err=%v matched=%v resp=%+v", err, matched, resp)
+			}
+			var capturedRaw map[string]any
+			var capturedReq HAConversationRequest
+			body := []byte(captured.Requests()[0].Body)
+			if json.Unmarshal(body, &capturedRaw) != nil || json.Unmarshal(body, &capturedReq) != nil {
+				t.Fatalf("request body is not JSON: %s", body)
 			}
 			if capturedReq.DeviceID != tc.expectedDev {
 				t.Errorf("DeviceID=%q, want %q", capturedReq.DeviceID, tc.expectedDev)

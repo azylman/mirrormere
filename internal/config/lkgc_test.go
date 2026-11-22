@@ -12,22 +12,8 @@ import (
 
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
-
-type mockPackageLoader struct {
-	packages map[string]*domain.Package
-	err      error
-}
-
-func (m *mockPackageLoader) LoadPackage(widgetType string) (*domain.Package, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	if pkg, ok := m.packages[widgetType]; ok {
-		return pkg, nil
-	}
-	return nil, fmt.Errorf("widget package '%s' not found", widgetType)
-}
 
 func mkTestPkg(t, src, prov string, c, r, refresh int, schema, respSchema map[string]any, supported ...domain.Dimension) *domain.Package {
 	return &domain.Package{
@@ -62,7 +48,7 @@ func buildFamilyWithHoursYAML(hours, membersBlock string) string {
 	if hours != "" {
 		h = "        hours: " + hours + "\n"
 	}
-	return "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: family-cal\n      type: calendar-grid\n      dimensions: [6, 2]\n      config:\n" + h + "        shared_color: \"#3D405B\"\n        calendars:\n          - {name: alex-personal, url: \"https://example.org/alex.ics\"}\n          - {name: school, url: \"https://example.org/school.ics\"}\n        members:\n" + membersBlock + "\n"
+	return "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: family-cal\n      type: calendar-grid\n      dimensions: [6, 2]\n      config:\n" + h + "        shared_color: \"#3D405B\"\n        calendars:\n          - {name: alpha-personal, url: \"https://example.org/alpha.ics\"}\n          - {name: school, url: \"https://example.org/school.ics\"}\n        members:\n" + membersBlock + "\n"
 }
 
 func mkMemberYAML(name, color, pattern, cals string) string {
@@ -82,7 +68,7 @@ func mkMemberYAML(name, color, pattern, cals string) string {
 func makeNineMembers() string {
 	var sb strings.Builder
 	for i := range 9 {
-		sb.WriteString(mkMemberYAML(fmt.Sprintf("Member%c", 'A'+i), "#E07A5F", "solid", "[alex-personal]"))
+		sb.WriteString(mkMemberYAML(fmt.Sprintf("Member%c", 'A'+i), "#E07A5F", "solid", "[alpha-personal]"))
 	}
 	return sb.String()
 }
@@ -208,7 +194,7 @@ func verifyManagerPackageErrors(t *testing.T, m *config.Manager) {
 
 func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 	t.Parallel()
-	loader := &mockPackageLoader{packages: createStandardPackages()}
+	loader := &testutil.Packages{ByType: createStandardPackages()}
 
 	if _, err := config.NewManager([]byte(validBaseYAML), nil, nil, nil); err == nil || !strings.Contains(err.Error(), "package loader cannot be nil") {
 		t.Fatalf("expected nil loader error, got %v", err)
@@ -238,7 +224,7 @@ func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 
 func TestLKGC_ReloadValidationFailures(t *testing.T) {
 	t.Parallel()
-	loader := &mockPackageLoader{packages: createStandardPackages()}
+	loader := &testutil.Packages{ByType: createStandardPackages()}
 
 	tests := []struct {
 		name       string
@@ -276,14 +262,14 @@ func TestLKGC_ReloadValidationFailures(t *testing.T) {
 		{"Stage 5: tasks todoist missing todoist block", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "todoist", "")), "tasks widget 'tasks-1' with source 'todoist' requires 'todoist' config block", nil},
 		{"Stage 5: tasks todoist invalid base_url", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "todoist", "        todoist: {base_url: \"not-a-valid-url\"}\n")), "invalid todoist.base_url 'not-a-valid-url'", nil},
 		{"Stage 5: family more than 8 members", buildFamilyYAML(makeNineMembers()), "at most 8 members are supported, found 9", nil},
-		{"Stage 5: family duplicate member name", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]") + mkMemberYAML("Alex", "#81B29A", "stripes", "[alex-personal]")), "duplicate member name \"Alex\"", nil},
-		{"Stage 5: family duplicate pattern", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "dots", "[alex-personal]") + mkMemberYAML("Taylor", "#81B29A", "dots", "[alex-personal]")), "member \"Alex\" and member \"Taylor\" both declare e-ink pattern \"dots\"", nil},
-		{"Stage 5: family omitted colliding with explicit solid", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "", "[alex-personal]") + mkMemberYAML("Taylor", "#81B29A", "solid", "[alex-personal]")), "both declare e-ink pattern \"solid\"", nil},
-		{"Stage 5: family omitted patterns colliding", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "", "[alex-personal]") + mkMemberYAML("Taylor", "#81B29A", "", "[alex-personal]")), "both declare e-ink pattern \"solid\"", nil},
-		{"Stage 5: family unknown calendar reference", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "solid", "[unknown-cal]")), "member \"Alex\" claims unknown calendar \"unknown-cal\"", nil},
-		{"Stage 5: family empty calendar reference", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "solid", "[\"\"]")), "member \"Alex\" declares an empty calendar reference", nil},
-		{"Stage 5: family missing member name", buildFamilyYAML(mkMemberYAML("", "#E07A5F", "solid", "[alex-personal]")), "requires non-empty 'name'", nil},
-		{"Stage 5: family bad hours order", buildFamilyWithHoursYAML("[\"18:00\", \"08:00\"]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]")), "'hours' start \"18:00\" must be before end \"08:00\"", nil},
+		{"Stage 5: family duplicate member name", buildFamilyYAML(mkMemberYAML("Alpha", "#E07A5F", "solid", "[alpha-personal]") + mkMemberYAML("Alpha", "#81B29A", "stripes", "[alpha-personal]")), "duplicate member name \"Alpha\"", nil},
+		{"Stage 5: family duplicate pattern", buildFamilyYAML(mkMemberYAML("Alpha", "#E07A5F", "dots", "[alpha-personal]") + mkMemberYAML("Beta", "#81B29A", "dots", "[alpha-personal]")), "member \"Alpha\" and member \"Beta\" both declare e-ink pattern \"dots\"", nil},
+		{"Stage 5: family omitted colliding with explicit solid", buildFamilyYAML(mkMemberYAML("Alpha", "#E07A5F", "", "[alpha-personal]") + mkMemberYAML("Beta", "#81B29A", "solid", "[alpha-personal]")), "both declare e-ink pattern \"solid\"", nil},
+		{"Stage 5: family omitted patterns colliding", buildFamilyYAML(mkMemberYAML("Alpha", "#E07A5F", "", "[alpha-personal]") + mkMemberYAML("Beta", "#81B29A", "", "[alpha-personal]")), "both declare e-ink pattern \"solid\"", nil},
+		{"Stage 5: family unknown calendar reference", buildFamilyYAML(mkMemberYAML("Alpha", "#E07A5F", "solid", "[unknown-cal]")), "member \"Alpha\" claims unknown calendar \"unknown-cal\"", nil},
+		{"Stage 5: family empty calendar reference", buildFamilyYAML(mkMemberYAML("Alpha", "#E07A5F", "solid", "[\"\"]")), "member \"Alpha\" declares an empty calendar reference", nil},
+		{"Stage 5: family missing member name", buildFamilyYAML(mkMemberYAML("", "#E07A5F", "solid", "[alpha-personal]")), "requires non-empty 'name'", nil},
+		{"Stage 5: family bad hours order", buildFamilyWithHoursYAML("[\"18:00\", \"08:00\"]", mkMemberYAML("Alpha", "#E07A5F", "solid", "[alpha-personal]")), "'hours' start \"18:00\" must be before end \"08:00\"", nil},
 		{"Stage 6: layout cell deficit", withLKGCWidgets("    - id: cal-1\n      type: calendar-feed\n      dimensions: [4, 2]\n      config:\n        calendars: []\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]"), "Deficit", nil},
 		{"Stage 6: layout geometric conflict", withLKGCWidgets(mkWYAML("w1", "calendar-feed", "[4, 2]", "      pinned: true\n      config: {calendars: [{name: c}]}\n") + mkWYAML("w2", "calendar-grid", "[6, 2]", "      pinned: true\n")), "layout solver error", nil},
 	}
@@ -293,7 +279,7 @@ func TestLKGC_ReloadValidationFailures(t *testing.T) {
 			t.Parallel()
 			loaderToUse := loader
 			if tc.pkgs != nil {
-				loaderToUse = &mockPackageLoader{packages: tc.pkgs}
+				loaderToUse = &testutil.Packages{ByType: tc.pkgs}
 			}
 			m, err := config.NewManager([]byte(tc.yamlData), loaderToUse, nil, nil)
 			if err == nil {
@@ -311,16 +297,20 @@ func TestLKGC_ReloadValidationFailures(t *testing.T) {
 
 func TestLKGC_ReloadValidDomainConfigs(t *testing.T) {
 	t.Parallel()
-	loader := &mockPackageLoader{packages: createStandardPackages()}
+	loader := &testutil.Packages{ByType: createStandardPackages()}
+	portraitYAML := "timezone: America/New_York\ndisplay:\n  grid:\n    columns: 3\n    rows: 6\n  widgets:\n    - id: cal-1\n      type: calendar-feed\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n    - id: tasks-1\n      type: tasks\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
 
 	tests := []struct {
-		name     string
-		yamlData string
+		name        string
+		yamlData    string
+		wantGrid    [2]int
+		wantScreens int
 	}{
-		{"valid todoist source", withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: todoist\n        todoist:\n          project_id: proj-123\n")},
-		{"matching gtasks source with different show_completed", withLKGCWidgets("    - id: t1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 5\n    - id: t2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 1\n")},
-		{"valid calendar-grid config", buildFamilyWithHoursYAML("[\"08:00\", \"18:00\"]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]")+mkMemberYAML("Taylor", "#81B29A", "dots", "[school]"))},
-		{"calendar-grid with non-string hours elements skipped", buildFamilyWithHoursYAML("[7, 21]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]"))},
+		{"valid todoist source", withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: todoist\n        todoist:\n          project_id: proj-123\n"), [2]int{6, 2}, 1},
+		{"matching gtasks source with different show_completed", withLKGCWidgets("    - id: t1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 5\n    - id: t2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 1\n"), [2]int{6, 2}, 1},
+		{"valid calendar-grid config", buildFamilyWithHoursYAML("[\"08:00\", \"18:00\"]", mkMemberYAML("Alpha", "#E07A5F", "solid", "[alpha-personal]")+mkMemberYAML("Beta", "#81B29A", "dots", "[school]")), [2]int{6, 2}, 1},
+		{"calendar-grid with non-string hours elements skipped", buildFamilyWithHoursYAML("[7, 21]", mkMemberYAML("Alpha", "#E07A5F", "solid", "[alpha-personal]")), [2]int{6, 2}, 1},
+		{"portrait 3x6 grid auto-transposes default dimensions", portraitYAML, [2]int{3, 6}, 1},
 	}
 
 	for _, tc := range tests {
@@ -330,8 +320,11 @@ func TestLKGC_ReloadValidDomainConfigs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("expected valid domain config for %s, got: %v", tc.name, err)
 			}
-			if snap == nil || snap.Config == nil {
-				t.Fatal("expected non-nil snapshot and config")
+			if snap == nil || snap.Config == nil || snap.Layout == nil {
+				t.Fatal("expected non-nil snapshot, config and layout")
+			}
+			if grid := [2]int{snap.Config.Display.Grid.Columns, snap.Config.Display.Grid.Rows}; grid != tc.wantGrid || snap.Layout.TotalScreens != tc.wantScreens {
+				t.Fatalf("grid %v screens %d, want %v screens %d", grid, snap.Layout.TotalScreens, tc.wantGrid, tc.wantScreens)
 			}
 		})
 	}
@@ -414,7 +407,7 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 
 func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 	t.Parallel()
-	m, err := config.NewManager([]byte(validBaseYAML), &mockPackageLoader{packages: createStandardPackages()}, nil, nil)
+	m, err := config.NewManager([]byte(validBaseYAML), &testutil.Packages{ByType: createStandardPackages()}, nil, nil)
 	if err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
@@ -459,21 +452,17 @@ func withVoice(c *config.Config, v *config.DisplayVoiceConfig) *config.Config {
 	return c
 }
 
-func TestValidatePipeline_Portrait3x6Grid(t *testing.T) {
-	t.Parallel()
-	loader := &mockPackageLoader{packages: createStandardPackages()}
-	portraitYAML := "timezone: America/New_York\ndisplay:\n  grid:\n    columns: 3\n    rows: 6\n  widgets:\n    - id: cal-1\n      type: calendar-feed\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n    - id: tasks-1\n      type: tasks\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
-	snap, err := config.ValidatePipeline([]byte(portraitYAML), loader, nil)
-	if err != nil {
-		t.Fatalf("expected 3x6 portrait pipeline to succeed with auto-transposed default dimensions, got: %v", err)
-	}
-	if snap.Config.Display.Grid.Columns != 3 || snap.Config.Display.Grid.Rows != 6 || snap.Layout.TotalScreens != 1 {
-		t.Fatalf("unexpected 3x6 snapshot: %+v", snap)
-	}
-}
-
 func TestResolveWidgetDefaultDimensions_Portrait3x6(t *testing.T) {
 	t.Parallel()
+	dim := domain.NewDimension
+	sup := func(d ...domain.Dimension) []domain.Dimension { return d }
+	pad := func(dims ...string) string {
+		var sb strings.Builder
+		for i, d := range dims {
+			fmt.Fprintf(&sb, "    - id: pad-%d\n      type: pad-pkg\n      dimensions: %s\n", i+1, d)
+		}
+		return sb.String()
+	}
 	cases := []struct {
 		name      string
 		defDim    domain.Dimension
@@ -481,54 +470,19 @@ func TestResolveWidgetDefaultDimensions_Portrait3x6(t *testing.T) {
 		wantDim   []int
 		extraYAML string
 	}{
-		{
-			name:      "6x2 maps to 3x6",
-			defDim:    domain.NewDimension(6, 2),
-			supported: []domain.Dimension{domain.NewDimension(3, 6), domain.NewDimension(6, 2)},
-			wantDim:   []int{3, 6},
-		},
-		{
-			name:      "4x2 maps to 3x4",
-			defDim:    domain.NewDimension(4, 2),
-			supported: []domain.Dimension{domain.NewDimension(3, 4), domain.NewDimension(4, 2)},
-			wantDim:   []int{3, 4},
-			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [3, 2]\n",
-		},
-		{
-			name:      "3x2 maps to 3x3",
-			defDim:    domain.NewDimension(3, 2),
-			supported: []domain.Dimension{domain.NewDimension(3, 3), domain.NewDimension(3, 2)},
-			wantDim:   []int{3, 3},
-			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [3, 3]\n",
-		},
-		{
-			name:      "2x2 maps to 3x2",
-			defDim:    domain.NewDimension(2, 2),
-			supported: []domain.Dimension{domain.NewDimension(3, 2), domain.NewDimension(2, 2)},
-			wantDim:   []int{3, 2},
-			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [3, 4]\n",
-		},
-		{
-			name:      "2x1 maps to 3x1",
-			defDim:    domain.NewDimension(2, 1),
-			supported: []domain.Dimension{domain.NewDimension(3, 1), domain.NewDimension(2, 1)},
-			wantDim:   []int{3, 1},
-			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [3, 5]\n",
-		},
+		{name: "6x2 maps to 3x6", defDim: dim(6, 2), supported: sup(dim(3, 6), dim(6, 2)), wantDim: []int{3, 6}},
+		{name: "4x2 maps to 3x4", defDim: dim(4, 2), supported: sup(dim(3, 4), dim(4, 2)), wantDim: []int{3, 4}, extraYAML: pad("[3, 2]")},
+		{name: "3x2 maps to 3x3", defDim: dim(3, 2), supported: sup(dim(3, 3), dim(3, 2)), wantDim: []int{3, 3}, extraYAML: pad("[3, 3]")},
+		{name: "2x2 maps to 3x2", defDim: dim(2, 2), supported: sup(dim(3, 2), dim(2, 2)), wantDim: []int{3, 2}, extraYAML: pad("[3, 4]")},
+		{name: "2x1 maps to 3x1", defDim: dim(2, 1), supported: sup(dim(3, 1), dim(2, 1)), wantDim: []int{3, 1}, extraYAML: pad("[3, 5]")},
 		{
 			name:      "mapped 3x4 not supported falls back to flipped 2x4",
-			defDim:    domain.NewDimension(4, 2),
-			supported: []domain.Dimension{domain.NewDimension(4, 2), domain.NewDimension(2, 4)},
+			defDim:    dim(4, 2),
+			supported: sup(dim(4, 2), dim(2, 4)),
 			wantDim:   []int{2, 4},
-			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [1, 4]\n    - id: pad-2\n      type: pad-pkg\n      dimensions: [3, 2]\n",
+			extraYAML: pad("[1, 4]", "[3, 2]"),
 		},
-		{
-			name:      "empty supported allows mapped 3x4",
-			defDim:    domain.NewDimension(4, 2),
-			supported: nil,
-			wantDim:   []int{3, 4},
-			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [3, 2]\n",
-		},
+		{name: "empty supported allows mapped 3x4", defDim: dim(4, 2), supported: nil, wantDim: []int{3, 4}, extraYAML: pad("[3, 2]")},
 	}
 
 	for _, tc := range cases {
@@ -553,7 +507,7 @@ func TestResolveWidgetDefaultDimensions_Portrait3x6(t *testing.T) {
 					DefaultDimensions: domain.NewDimension(1, 1),
 				},
 			}
-			loader := &mockPackageLoader{packages: map[string]*domain.Package{
+			loader := &testutil.Packages{ByType: map[string]*domain.Package{
 				"test-pkg": pkg,
 				"pad-pkg":  padPkg,
 			}}
@@ -776,7 +730,7 @@ func runLayoutOverrideTestStep(t *testing.T, tc layoutOverrideTestCase) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "layout-override.yaml")
-	loader := &mockPackageLoader{packages: createStandardPackages()}
+	loader := &testutil.Packages{ByType: createStandardPackages()}
 
 	yamlText := tc.baseYAML
 	var opts []config.ManagerOption
@@ -834,7 +788,7 @@ func TestLayoutOverride_ManagerLifecycle(t *testing.T) {
 		},
 	}
 	disabledYAML := "timezone: America/New_York\ndisplay:\n  allow_layout_edit: false\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
-	gridYAML := "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: family-cal\n      type: calendar-grid\n      dimensions: [6, 2]\n      config: {calendars: [{name: Alex, url: \"https://example.org/alex.ics\"}], members: [{name: Alex, calendars: [Alex]}]}\n"
+	gridYAML := "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: family-cal\n      type: calendar-grid\n      dimensions: [6, 2]\n      config: {calendars: [{name: Alpha, url: \"https://example.org/alpha.ics\"}], members: [{name: Alpha, calendars: [Alpha]}]}\n"
 	userSpacerYAML := "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      config: {calendars: [{name: Family}]}\n    - id: user-spacer\n      type: spacer\n      dimensions: [2, 2]\n"
 	pinnedBaseYAML := "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      pinned: true\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
 

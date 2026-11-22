@@ -56,19 +56,6 @@ func (m *mockSnapshotProvider) GetWidgetTimestamp(widgetID string) (string, bool
 	return ts, ok
 }
 
-type mockResolver struct {
-	packages map[string]*domain.Package
-}
-
-func (m *mockResolver) LoadPackage(widgetType string) (*domain.Package, error) {
-	if m.packages != nil {
-		if pkg, ok := m.packages[widgetType]; ok {
-			return pkg, nil
-		}
-	}
-	return nil, errors.New("package not found")
-}
-
 func createTestPackage(t *testing.T, dir, widgetType, viewContent string) *domain.Package {
 	t.Helper()
 	pkgDir := filepath.Join(dir, widgetType)
@@ -194,7 +181,7 @@ func TestEngine_RenderWidget(t *testing.T) {
 		"w-overrides":   {data: map[string]any{}, state: "healthy"},
 	}
 	fallbackTS := map[string]string{"w-fallback-ts": "2026-09-25T10:30:00Z"}
-	resolver := &mockResolver{packages: map[string]*domain.Package{"generic": pkg}}
+	resolver := &testutil.Packages{ByType: map[string]*domain.Package{"generic": pkg}}
 	fixedNow := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 
 	tests := []struct {
@@ -276,7 +263,7 @@ func TestEngine_RenderWidget_Errors(t *testing.T) {
 		Packages: pkgs,
 	}
 	baseProvider := &mockSnapshotProvider{snapshot: snap, states: map[string]mockState{"w-exec-err": {data: 12345, state: "healthy"}}}
-	resolver := &mockResolver{packages: pkgs}
+	resolver := &testutil.Packages{ByType: pkgs}
 
 	tests := []struct {
 		name        string
@@ -327,7 +314,7 @@ func TestEngine_CacheAndInvalidation(t *testing.T) {
 		Config:   &config.Config{Display: config.DisplayConfig{Widgets: []config.WidgetConfig{{ID: "instance-1", Type: "cached-w"}}}},
 		Packages: map[string]*domain.Package{"cached-w": pkg},
 	}
-	engine := render.NewEngine(&mockResolver{packages: map[string]*domain.Package{"cached-w": pkg}}, &mockSnapshotProvider{snapshot: snap})
+	engine := render.NewEngine(&testutil.Packages{ByType: map[string]*domain.Package{"cached-w": pkg}}, &mockSnapshotProvider{snapshot: snap})
 
 	out1, err := engine.RenderWidget(context.Background(), "instance-1")
 	if err != nil || !strings.Contains(string(out1), "v1: instance-1") {
@@ -464,7 +451,7 @@ func TestEngine_BuiltinWidgetPackages(t *testing.T) {
 			}
 			var res render.PackageResolver
 			if !tc.nilResolver {
-				res = &mockResolver{packages: packages}
+				res = &testutil.Packages{ByType: packages}
 			}
 			eng := render.NewEngine(res, &mockSnapshotProvider{snapshot: snap, states: map[string]mockState{widgetID: tc.state}}, render.WithNowFunc(func() time.Time { return fixedNow }))
 			htmlBytes, err := eng.RenderWidget(context.Background(), widgetID)
@@ -503,7 +490,7 @@ func TestChatLogWidget_RendersFromProviderPerNode(t *testing.T) {
 		Config:   &config.Config{Display: config.DisplayConfig{Widgets: []config.WidgetConfig{{ID: "chat", Type: "chat-log", Dimensions: []int{3, 2}, Config: map[string]any{"title": "Home"}}}}},
 		Packages: map[string]*domain.Package{"chat-log": pkg},
 	}
-	res := &mockResolver{packages: map[string]*domain.Package{"chat-log": pkg}}
+	res := &testutil.Packages{ByType: map[string]*domain.Package{"chat-log": pkg}}
 	engine := render.NewEngine(res, &mockSnapshotProvider{snapshot: snap, states: map[string]mockState{}},
 		render.WithNodeDataFunc(func(widgetID, nodeID string) (any, bool) {
 			if widgetID != "chat" {
