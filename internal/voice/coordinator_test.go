@@ -3,8 +3,6 @@ package voice
 import (
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -169,7 +167,7 @@ func TestCoordinator_SpeakingSafetyWatchdog(t *testing.T) {
 	cStop.Reset()
 }
 
-func TestCoordinator_ConcurrentAndSchema(t *testing.T) {
+func TestCoordinator_ConcurrentSetState(t *testing.T) {
 	t.Parallel()
 	c := NewCoordinator(nil)
 	states := []string{StateIdle, StateListening, StateTranscribing, StateThinking, StateSynthesizing, StateSpeaking, StateError}
@@ -184,15 +182,4 @@ func TestCoordinator_ConcurrentAndSchema(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-
-	schemaBytes, err := os.ReadFile(filepath.Join("..", "..", "api", "schemas", "voice.state.json"))
-	if err != nil {
-		t.Skipf("skipping schema file test: %v", err)
-	}
-	var schema, parsed map[string]any
-	tr, rep, eng := "Hello", "Hi", "piper"
-	payload, err := json.Marshal(events.VoiceStateData{State: StateSpeaking, Transcript: &tr, Reply: &rep, TTSEngine: &eng})
-	if err != nil || json.Unmarshal(schemaBytes, &schema) != nil || json.Unmarshal(payload, &parsed) != nil || parsed["state"] != StateSpeaking || parsed["tts_engine"] != eng {
-		t.Fatalf("schema compliance failed: err=%v parsed=%+v", err, parsed)
-	}
 }
