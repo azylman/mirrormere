@@ -402,3 +402,23 @@ func TestWeatherProvider_LifecycleAndSerialization(t *testing.T) {
 		t.Errorf("unexpected json: %+v", parsed)
 	}
 }
+
+func TestWeatherSnapshot_TodayPrecipProbMax(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		snap provider.WeatherSnapshot
+		want int
+	}{
+		{"daily_first_day", provider.WeatherSnapshot{Current: provider.WeatherCurrent{PrecipProbMax: 55}, Daily: []provider.WeatherDaily{{PrecipProbMax: 70}}}, 70},
+		{"no_daily_falls_back_to_current", provider.WeatherSnapshot{Current: provider.WeatherCurrent{PrecipProbMax: 55}}, 55},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.snap.TodayPrecipProbMax(); got != tc.want {
+				t.Errorf("TodayPrecipProbMax = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
