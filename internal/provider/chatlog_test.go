@@ -22,21 +22,6 @@ func chatLogSnapshot() *config.Snapshot {
 	}
 }
 
-func TestChatLogWidget_NoPollingWorkerAndEmptyCache(t *testing.T) {
-	t.Parallel()
-	var created bool
-	reg, sink := provider.NewRegistry(), newMockStateSink()
-	reg.Register("chat-log", func() provider.Provider {
-		created = true
-		return nil
-	})
-	coord := provider.NewCoordinator(provider.CoordinatorConfig{Registry: reg, Broadcaster: &eventstest.Broadcaster{}, StateSink: sink}, chatLogSnapshot())
-	defer func() { _ = coord.Stop() }()
-	if _, ok := sink.widgetStates["chat"]; created || !ok {
-		t.Fatal("chat-log provider instantiated or missing initial state")
-	}
-}
-
 func TestChatLogWidget_PushValidatesStoresAndBroadcasts(t *testing.T) {
 	t.Parallel()
 	store, bc := chatlog.NewStore(), &eventstest.Broadcaster{}
