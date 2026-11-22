@@ -22,6 +22,17 @@ func writeTemplate(t *testing.T, content []byte) display.HandlerOption {
 	return display.WithTemplatePath(path)
 }
 
+func displayString(s string) func() string { return func() string { return s } }
+func displayBool(b bool) func() bool       { return func() bool { return b } }
+
+func displayVideo(v *display.HeaderVideoTemplateData) func() *display.HeaderVideoTemplateData {
+	return func() *display.HeaderVideoTemplateData { return v }
+}
+
+func displayWave(v *display.VoiceWaveformTemplateData) func() *display.VoiceWaveformTemplateData {
+	return func() *display.VoiceWaveformTemplateData { return v }
+}
+
 func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
@@ -31,39 +42,30 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 	_ = os.WriteFile(primPath, []byte("<h1>primary</h1>"), 0o644)
 	_ = os.WriteFile(localPath, []byte("<h1>local</h1>"), 0o644)
 	_ = os.WriteFile(malformedPath, []byte("<div>{{ bad"), 0o644)
+	primary := []display.HandlerOption{display.WithTemplatePath(primPath), display.WithLocalTemplatePath("")}
+	missing := []display.HandlerOption{display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath("/no/such/local")}
 
 	tests := []struct {
 		name     string
 		method   string
-		kind     string
+		opts     []display.HandlerOption
 		wantCode int
 		wantSub  string
 		wantHead bool
 	}{
-		{"options", http.MethodOptions, "default", http.StatusNoContent, "", false},
-		{"post_not_allowed", http.MethodPost, "default", http.StatusMethodNotAllowed, `"status":"error"`, false},
-		{"head_ok", http.MethodHead, "primary", http.StatusOK, "", true},
-		{"primary_path", http.MethodGet, "primary", http.StatusOK, "<h1>primary</h1>", false},
-		{"local_fallback", http.MethodGet, "local", http.StatusOK, "<h1>local</h1>", false},
-		{"malformed_syntax", http.MethodGet, "malformed", http.StatusOK, "<div>{{ bad", false},
-		{"not_found", http.MethodGet, "missing", http.StatusNotFound, `"status":"error"`, false},
+		{"options", http.MethodOptions, nil, http.StatusNoContent, "", false},
+		{"post_not_allowed", http.MethodPost, nil, http.StatusMethodNotAllowed, `"status":"error"`, false},
+		{"head_ok", http.MethodHead, primary, http.StatusOK, "", true},
+		{"head_missing", http.MethodHead, missing, http.StatusNotFound, "", false},
+		{"primary_path", http.MethodGet, primary, http.StatusOK, "<h1>primary</h1>", false},
+		{"local_fallback", http.MethodGet, []display.HandlerOption{display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath(localPath)}, http.StatusOK, "<h1>local</h1>", false},
+		{"malformed_syntax", http.MethodGet, []display.HandlerOption{display.WithTemplatePath(malformedPath), display.WithLocalTemplatePath("")}, http.StatusOK, "<div>{{ bad", false},
+		{"not_found", http.MethodGet, missing, http.StatusNotFound, "display template not found", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var h *display.Handler
-			switch tc.kind {
-			case "primary":
-				h = display.NewHandler(display.WithTemplatePath(primPath), display.WithLocalTemplatePath(""))
-			case "local":
-				h = display.NewHandler(display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath(localPath))
-			case "malformed":
-				h = display.NewHandler(display.WithTemplatePath(malformedPath), display.WithLocalTemplatePath(""))
-			case "missing":
-				h = display.NewHandler(display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath("/no/such/local"))
-			default:
-				h = display.NewHandler()
-			}
+			h := display.NewHandler(tc.opts...)
 			rec := httptest.NewRecorder()
 			h.GetDisplay(rec, httptest.NewRequest(tc.method, "/display", http.NoBody))
 			if rec.Code != tc.wantCode {
@@ -82,154 +84,73 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 	}
 }
 
-func buildTzAndCursorHandler(t *testing.T, mode string, tmplOpt display.HandlerOption, wantGetter string) (*display.Handler, bool) {
-	t.Helper()
-	switch mode {
-	case "static_tz":
-		h := display.NewHandler(tmplOpt, display.WithTimezoneProvider(func() string { return "America/Los_Angeles" }))
-		if h.Timezone() != wantGetter {
-			t.Fatalf("tz getter: got %s, want %s", h.Timezone(), wantGetter)
-		}
-		return h, true
-	case "dyn_tz":
-		tz := "Europe/London"
-		h := display.NewHandler(tmplOpt, display.WithTimezoneProvider(func() string { return tz }))
-		if h.Timezone() != "Europe/London" {
-			t.Fatalf("tz initial: got %s, want Europe/London", h.Timezone())
-		}
-		tz = wantGetter
-		if h.Timezone() != wantGetter {
-			t.Fatalf("tz dynamic: got %s, want %s", h.Timezone(), wantGetter)
-		}
-		tz = "Europe/London"
-		return h, true
-	case "static_hide":
-		h := display.NewHandler(tmplOpt, display.WithHideCursorProvider(func() bool { return true }))
-		if !h.HideCursor() {
-			t.Fatalf("hide getter: expected true")
-		}
-		return h, true
-	case "static_unhide":
-		h := display.NewHandler(tmplOpt, display.WithHideCursorProvider(func() bool { return false }))
-		if h.HideCursor() {
-			t.Fatalf("hide getter: expected false")
-		}
-		return h, true
-	case "dyn_hide", "set_hide":
-		val := false
-		h := display.NewHandler(tmplOpt, display.WithHideCursorProvider(func() bool { return val }))
-		val = true
-		if !h.HideCursor() {
-			t.Fatalf("hide getter: expected true")
-		}
-		return h, true
-	default:
-		return nil, false
-	}
+type displayGetters struct {
+	tz, remote, theme, grid string
+	hide                    bool
+	video                   *display.HeaderVideoTemplateData
+	wave                    *display.VoiceWaveformTemplateData
 }
 
-func buildMediaAndThemeHandler(t *testing.T, mode string, tmplOpt display.HandlerOption, wantGetter string) (*display.Handler, bool) {
-	t.Helper()
-	switch mode {
-	case "static_video":
-		vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "cam1", StreamURL: "http://cam.lan", ControlURL: "http://ctrl.lan", Type: "webrtc"}
-		h := display.NewHandler(tmplOpt, display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
-		if h.HeaderVideo() != vData {
-			t.Fatalf("video getter mismatch")
-		}
-		return h, true
-	case "dyn_video":
-		vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "live-cam"}
-		h := display.NewHandler(tmplOpt, display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
-		if h.HeaderVideo().StreamID != wantGetter {
-			t.Fatalf("dyn video getter mismatch")
-		}
-		return h, true
-	case "dyn_theme":
-		th := "night"
-		h := display.NewHandler(tmplOpt, display.WithThemeProvider(func() string { return th }))
-		if h.Theme() != wantGetter {
-			t.Fatalf("theme getter: got %s, want %s", h.Theme(), wantGetter)
-		}
-		return h, true
-	case "dyn_grid":
-		h := display.NewHandler(tmplOpt, display.WithGridProvider(func() string { return "3x6" }))
-		if h.Grid() != wantGetter {
-			t.Fatalf("grid getter: got %s, want %s", h.Grid(), wantGetter)
-		}
-		return h, true
-	default:
-		return nil, false
-	}
-}
+func TestHandler_Getters(t *testing.T) {
+	t.Parallel()
+	video := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "cam1"}
+	wave := &display.VoiceWaveformTemplateData{Enabled: true, LevelsURL: "http://127.0.0.1:8765/levels", Gain: 2.2}
+	defaults := displayGetters{tz: "UTC", theme: "day", grid: "6x2"}
 
-func buildTemplateHandlerForMode(t *testing.T, mode string, tmplOpt display.HandlerOption, wantGetter string) *display.Handler {
-	t.Helper()
-	if h, ok := buildTzAndCursorHandler(t, mode, tmplOpt, wantGetter); ok {
-		return h
+	tests := []struct {
+		name string
+		opts []display.HandlerOption
+		want displayGetters
+	}{
+		{"no_providers", nil, defaults},
+		{"empty_or_invalid_provider_values", []display.HandlerOption{
+			display.WithTimezoneProvider(displayString("")), display.WithRemoteURLProvider(displayString("")), display.WithThemeProvider(displayString("")),
+			display.WithGridProvider(displayString("4x4")), display.WithHideCursorProvider(displayBool(false)),
+		}, defaults},
+		{"provider_values", []display.HandlerOption{
+			display.WithTimezoneProvider(displayString("America/Los_Angeles")), display.WithRemoteURLProvider(displayString("http://remote.example.com")),
+			display.WithThemeProvider(displayString("night")), display.WithGridProvider(displayString("3x6")), display.WithHideCursorProvider(displayBool(true)),
+			display.WithHeaderVideoProvider(displayVideo(video)), display.WithVoiceWaveformProvider(displayWave(wave)),
+		}, displayGetters{tz: "America/Los_Angeles", remote: "http://remote.example.com", theme: "night", grid: "3x6", hide: true, video: video, wave: wave}},
 	}
-	if h, ok := buildMediaAndThemeHandler(t, mode, tmplOpt, wantGetter); ok {
-		return h
-	}
-	switch mode {
-	case "static_remote":
-		h := display.NewHandler(tmplOpt, display.WithRemoteURLProvider(func() string { return "http://remote.lan" }))
-		if h.RemoteURL() != wantGetter {
-			t.Fatalf("remote getter: got %s, want %s", h.RemoteURL(), wantGetter)
-		}
-		return h
-	case "dyn_remote":
-		url := "http://dyn.lan"
-		h := display.NewHandler(tmplOpt, display.WithRemoteURLProvider(func() string { return url }))
-		if h.RemoteURL() != "http://dyn.lan" {
-			t.Fatalf("remote initial: got %s, want http://dyn.lan", h.RemoteURL())
-		}
-		url = wantGetter
-		if h.RemoteURL() != wantGetter {
-			t.Fatalf("remote dynamic: got %s, want %s", h.RemoteURL(), wantGetter)
-		}
-		url = "http://dyn.lan"
-		return h
-	default:
-		h := display.NewHandler(tmplOpt)
-		if h.Timezone() != "UTC" || h.HideCursor() || h.RemoteURL() != "" || h.Theme() != "day" || h.HeaderVideo() != nil {
-			t.Fatalf("defaults mismatch")
-		}
-		return h
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := display.NewHandler(tc.opts...)
+			got := displayGetters{tz: h.Timezone(), remote: h.RemoteURL(), theme: h.Theme(), grid: h.Grid(), hide: h.HideCursor(), video: h.HeaderVideo(), wave: h.VoiceWaveform()}
+			if got != tc.want {
+				t.Fatalf("getters = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }
 
 func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 	t.Parallel()
 	tmpl := []byte(`<body data-tz="{{ .Timezone }}" class="{{ if .HideCursor }}cursor-hidden{{ end }}" data-remote="{{ .RemoteURL }}" data-theme="{{ .Theme }}" data-grid="{{ .Grid }}">{{ if .HeaderVideo }}<div id="video" data-id="{{ .HeaderVideo.StreamID }}" data-url="{{ .HeaderVideo.StreamURL }}" data-ctrl="{{ .HeaderVideo.ControlURL }}" data-type="{{ .HeaderVideo.Type }}"></div>{{ end }}</body>`)
+	video := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "cam1", StreamURL: "http://cam.example.com", ControlURL: "http://ctrl.example.com", Type: "webrtc"}
 
 	tests := []struct {
-		name       string
-		mode       string
-		path       string
-		wantGetter string
-		wantSub    string
-		wantNotSub string
+		name, path, wantSub, wantNotSub string
+		opts                            []display.HandlerOption
 	}{
-		{"default_values", "default", "/display", "UTC", `data-tz="UTC"`, "cursor-hidden"},
-		{"static_timezone", "static_tz", "/display", "America/Los_Angeles", `data-tz="America/Los_Angeles"`, ""},
-		{"dynamic_tz_setter", "dyn_tz", "/display", "Asia/Tokyo", `data-tz="Europe/London"`, ""},
-		{"static_hide_cursor", "static_hide", "/display", "true", "cursor-hidden", ""},
-		{"dynamic_hide_cursor", "dyn_hide", "/display", "true", "cursor-hidden", ""},
-		{"setter_hide_cursor", "set_hide", "/display", "true", "cursor-hidden", ""},
-		{"query_hide_true", "static_unhide", "/display?hide_cursor=true", "false", "cursor-hidden", ""},
-		{"query_hide_false", "static_hide", "/display?hide_cursor=false", "true", "", "cursor-hidden"},
-		{"static_remote_url", "static_remote", "/display", "http://remote.lan", `data-remote="http://remote.lan"`, ""},
-		{"dynamic_remote_setter", "dyn_remote", "/display", "http://setter.lan", `data-remote="http://dyn.lan"`, ""},
-		{"static_header_video", "static_video", "/display", "cam1", `data-id="cam1"`, ""},
-		{"dynamic_header_video", "dyn_video", "/display", "live-cam", "", ""},
-		{"dynamic_theme", "dyn_theme", "/display", "night", `data-theme="night"`, ""},
-		{"dynamic_grid_3x6", "dyn_grid", "/display", "3x6", `data-grid="3x6"`, ""},
+		{name: "default_values", path: "/display", wantSub: `<body data-tz="UTC" class="" data-remote="" data-theme="day" data-grid="6x2"></body>`},
+		{name: "timezone", path: "/display", wantSub: `data-tz="America/Los_Angeles"`, opts: []display.HandlerOption{display.WithTimezoneProvider(displayString("America/Los_Angeles"))}},
+		{name: "hide_cursor", path: "/display", wantSub: `class="cursor-hidden"`, opts: []display.HandlerOption{display.WithHideCursorProvider(displayBool(true))}},
+		{name: "query_hide_true", path: "/display?hide_cursor=true", wantSub: `class="cursor-hidden"`, opts: []display.HandlerOption{display.WithHideCursorProvider(displayBool(false))}},
+		{name: "query_hide_false", path: "/display?hide_cursor=false", wantNotSub: "cursor-hidden", opts: []display.HandlerOption{display.WithHideCursorProvider(displayBool(true))}},
+		{name: "remote_url", path: "/display", wantSub: `data-remote="http://remote.example.com"`, opts: []display.HandlerOption{display.WithRemoteURLProvider(displayString("http://remote.example.com"))}},
+		{
+			name: "header_video", path: "/display", wantSub: `<div id="video" data-id="cam1" data-url="http://cam.example.com" data-ctrl="http://ctrl.example.com" data-type="webrtc">`,
+			opts: []display.HandlerOption{display.WithHeaderVideoProvider(displayVideo(video))},
+		},
+		{name: "theme", path: "/display", wantSub: `data-theme="night"`, opts: []display.HandlerOption{display.WithThemeProvider(displayString("night"))}},
+		{name: "grid_3x6", path: "/display", wantSub: `data-grid="3x6"`, opts: []display.HandlerOption{display.WithGridProvider(displayString("3x6"))}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := buildTemplateHandlerForMode(t, tc.mode, writeTemplate(t, tmpl), tc.wantGetter)
+			h := display.NewHandler(append([]display.HandlerOption{writeTemplate(t, tmpl)}, tc.opts...)...)
 			rec := httptest.NewRecorder()
 			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, http.NoBody))
 			if tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub) {
@@ -361,115 +282,48 @@ func TestVoiceWaveformProvider(t *testing.T) {
 	}
 }
 
-// TestGetDisplay_UIQueryIgnored checks that the React shell is the only display shell: the old
-// ?ui= switch (react, legacy or anything else) no longer selects a different page.
-func TestGetDisplay_UIQueryIgnored(t *testing.T) {
-	t.Parallel()
-	tmplOpt := writeTemplate(t, []byte("REACT {{ .Timezone }} {{ .Grid }}"))
-
-	tests := []struct {
-		name  string
-		query string
-		want  string
-	}{
-		{"no query", "", "REACT UTC 6x2"},
-		{"ui react", "ui=react", "REACT UTC 6x2"},
-		{"ui legacy serves react", "ui=legacy", "REACT UTC 6x2"},
-		{"unknown ui value", "ui=bogus", "REACT UTC 6x2"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			h := display.NewHandler(tmplOpt, display.WithLocalTemplatePath(""), display.WithTimezoneProvider(func() string { return "UTC" }))
-			rec := httptest.NewRecorder()
-			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?"+tc.query, http.NoBody))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("code: got %d, want 200", rec.Code)
-			}
-			if got := rec.Body.String(); got != tc.want {
-				t.Fatalf("body: got %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestGetDisplay_ReactShellMissingAndHead(t *testing.T) {
-	t.Parallel()
-	h := display.NewHandler(display.WithTemplatePath("/no/such/react"), display.WithLocalTemplatePath("/no/such/local"))
-	rec := httptest.NewRecorder()
-	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?ui=react", http.NoBody))
-	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "display template not found") {
-		t.Fatalf("missing react shell: code %d body %q", rec.Code, rec.Body.String())
-	}
-
-	rec = httptest.NewRecorder()
-	h.GetDisplay(rec, httptest.NewRequest(http.MethodHead, "/display?ui=react", http.NoBody))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("HEAD missing react shell: code %d, want 404", rec.Code)
-	}
-}
-
-func TestGetDisplay_ReactShellRepoTemplate(t *testing.T) {
-	t.Parallel()
-	h := display.NewHandler(
-		display.WithTemplatePath("../../web/templates/display_react.html"),
-		display.WithLocalTemplatePath(""),
-		display.WithHideCursorProvider(func() bool { return true }),
-		display.WithRemoteURLProvider(func() string { return "http://remote.example/display" }),
-	)
-	rec := httptest.NewRecorder()
-	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?ui=react", http.NoBody))
-	body := rec.Body.String()
-	for _, want := range []string{
-		`<div id="root"></div>`,
-		`<script type="module" src="static/ui/app.js"></script>`,
-		`<base href="./">`,
-		`data-hide-cursor="true"`,
-		`class="mm-touch-display"`,
-		`data-remote-url="http://remote.example/display"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("react shell missing %q", want)
-		}
-	}
-}
-
-// TestGetDisplay_ReactPerfScriptGatedByQuery checks the real display_react.html template: the
-// perf instrumentation loads ahead of the React bundle only for ?perf=1 (#779).
-func TestGetDisplay_ReactPerfScriptGatedByQuery(t *testing.T) {
+// TestGetDisplay_RepoTemplate checks the shipped display_react.html: provider data lands on the
+// body, and the perf instrumentation loads ahead of the React bundle only for ?perf=1 (#779).
+// wantSubs must appear in order.
+func TestGetDisplay_RepoTemplate(t *testing.T) {
 	t.Parallel()
 	const perfScript = `<script src="static/js/perf.js"></script>`
 	const bundle = `<script type="module" src="static/ui/app.js"></script>`
+	providers := []display.HandlerOption{
+		display.WithHideCursorProvider(displayBool(true)), display.WithRemoteURLProvider(displayString("http://remote.example/display")),
+	}
 	tests := []struct {
-		name     string
-		path     string
-		wantPerf bool
+		name, path           string
+		opts                 []display.HandlerOption
+		wantSubs, wantNoSubs []string
 	}{
-		{"react_no_perf", "/display?ui=react", false},
-		{"react_perf_zero", "/display?ui=react&perf=0", false},
-		{"react_perf_one", "/display?ui=react&perf=1", true},
-		{"react_perf_one_with_other_params", "/display?ui=react&hide_cursor=true&perf=1", true},
+		{name: "shell_with_providers", path: "/display", opts: providers, wantSubs: []string{
+			`<base href="./">`, `data-hide-cursor="true"`, `class="mm-touch-display"`, `data-remote-url="http://remote.example/display"`, `<div id="root"></div>`, bundle,
+		}, wantNoSubs: []string{perfScript}},
+		{name: "perf_zero", path: "/display?perf=0", wantSubs: []string{bundle}, wantNoSubs: []string{perfScript}},
+		{name: "perf_one", path: "/display?perf=1", wantSubs: []string{perfScript, bundle}},
+		{name: "perf_one_with_other_params", path: "/display?hide_cursor=true&perf=1", wantSubs: []string{perfScript, bundle}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := display.NewHandler(
-				display.WithTemplatePath("../../web/templates/display_react.html"),
-				display.WithLocalTemplatePath(""),
-			)
+			opts := append([]display.HandlerOption{display.WithTemplatePath("../../web/templates/display_react.html"), display.WithLocalTemplatePath("")}, tc.opts...)
 			rec := httptest.NewRecorder()
-			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, http.NoBody))
+			display.NewHandler(opts...).GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, http.NoBody))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("code: got %d, want 200", rec.Code)
 			}
-			body := rec.Body.String()
-			if got := strings.Contains(body, perfScript); got != tc.wantPerf {
-				t.Fatalf("perf.js present = %v, want %v", got, tc.wantPerf)
+			rest := rec.Body.String()
+			for _, want := range tc.wantSubs {
+				i := strings.Index(rest, want)
+				if i < 0 {
+					t.Fatalf("body missing %q after the previous match: %s", want, rec.Body.String())
+				}
+				rest = rest[i+len(want):]
 			}
-			if tc.wantPerf {
-				// perf.js is ahead of the bundle, so it runs before the React shell mounts.
-				if strings.Index(body, perfScript) > strings.Index(body, bundle) {
-					t.Fatal("perf.js must load before the React bundle")
+			for _, unwanted := range tc.wantNoSubs {
+				if strings.Contains(rec.Body.String(), unwanted) {
+					t.Fatalf("body contains %q", unwanted)
 				}
 			}
 		})

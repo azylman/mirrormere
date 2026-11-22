@@ -33,23 +33,22 @@ import (
 	"github.com/azylman/mirrormere/internal/widget"
 )
 
-var (
-	exitFunc = os.Exit
-	argsHook []string
-)
-
 func main() {
-	args := os.Args[1:]
-	if argsHook != nil {
-		args = argsHook
+	if run(os.Args[1:]) != nil {
+		os.Exit(1)
 	}
+}
+
+// run binds Run to the process signals and stdio, reporting a failure on stderr.
+func run(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	if err := Run(ctx, args, os.Stdout, os.Stderr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		_, _ = fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		exitFunc(1)
+		return err
 	}
+	return nil
 }
 
 type (
