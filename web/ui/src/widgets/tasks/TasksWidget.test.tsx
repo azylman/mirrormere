@@ -2,168 +2,183 @@ import { act, fireEvent, render } from '@testing-library/react';
 import { Profiler } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
+import { renderWidget, seedWidget, widgetMeta } from '../../test-utils/widget';
 import { TASK_UNDO_GRACE_MS, TasksWidget } from './TasksWidget';
+
+/** Seeds tasks widget `id` (healthy, 3x2); `timestamp` overrides seedWidget's fixed entry timestamp. */
+function seedTasks(id: string, data: unknown, config: Record<string, unknown> = {}, timestamp?: string, state = 'healthy') {
+  seedWidget(id, widgetMeta('tasks', config, [3, 2]), data, state);
+  if (timestamp !== undefined) {
+    useDisplayStore.setState((s) => ({ widgets: { [id]: { ...s.widgets[id]!, timestamp } } }));
+  }
+}
 
 describe('TasksWidget', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
 
-  it('renders loading state when data is unhydrated ({}) and omits header when unnamed', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-1': {
-          meta: {
-            type: 'tasks',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {},
-          timestamp: '2026-10-31T12:00:00Z',
-        },
+  // wantText: [selector, exact textContent]; wantCount: [selector, match count]; wantAbsent: selectors that must not match.
+  const tests: {
+    name: string;
+    data: unknown;
+    config?: Record<string, unknown>;
+    state?: string;
+    wantText: [string, string][];
+    wantCount: [string, number][];
+    wantAbsent: string[];
+  }[] = [
+    {
+      name: 'renders loading state when data is unhydrated ({}) and omits header when unnamed',
+      data: {},
+      wantText: [['.widget-tasks .tasks-loading', 'Loading checklist...']],
+      wantCount: [['.widget-tasks', 1]],
+      wantAbsent: ['.tasks-header'],
+    },
+    {
+      name: 'renders loading state when data is undefined',
+      data: undefined,
+      wantText: [['.widget-tasks .tasks-loading', 'Loading checklist...']],
+      wantCount: [],
+      wantAbsent: ['.tasks-header'],
+    },
+    {
+      name: 'renders loading state with custom title header from config.list_name',
+      data: {},
+      config: { list_name: 'Chores Manifest' },
+      wantText: [['.tasks-title', 'Chores Manifest']],
+      wantCount: [],
+      wantAbsent: [],
+    },
+    {
+      name: 'renders loading state with custom title header from config.todoist.project_name',
+      data: {},
+      config: { todoist: { project_name: 'Work Tasks' } },
+      wantText: [['.tasks-title', 'Work Tasks']],
+      wantCount: [],
+      wantAbsent: [],
+    },
+    {
+      name: 'renders loading state with custom title header from config.title',
+      data: {},
+      config: { title: 'Groceries' },
+      wantText: [['.widget-tasks .tasks-title', 'Groceries'], ['.widget-tasks .tasks-loading', 'Loading checklist...']],
+      wantCount: [['.widget-tasks .tasks-header', 1]],
+      wantAbsent: [],
+    },
+    {
+      name: 'renders empty state when hydrated with empty items array ([])',
+      data: { list: { name: 'Weekend Chores' }, items: [] },
+      wantText: [
+        ['.tasks-title', 'Weekend Chores'],
+        ['.tasks-summary', '0 left'],
+        ['.empty-title', 'All tasks completed!'],
+        ['.empty-subtitle', 'Time to put your feet up'],
+      ],
+      wantCount: [['.widget-tasks .tasks-header', 1], ['.widget-tasks .tasks-empty', 1]],
+      wantAbsent: [],
+    },
+    {
+      name: 'renders error banner when widget state is error',
+      data: {},
+      state: 'error',
+      wantText: [['.widget-error-banner', '⚠Widget Error']],
+      wantCount: [],
+      wantAbsent: [],
+    },
+    {
+      name: 'renders individual tags (section only, assignee only, dueDate only) cleanly',
+      data: {
+        items: [
+          { id: 'tag-1', title: 'Only Section', done: false, section: 'Errands' },
+          { id: 'tag-2', title: 'Only Assignee', done: false, assignee: 'beta' },
+          { id: 'tag-3', title: 'Only Due Date', done: false, due_date: 'Tomorrow' },
+        ],
       },
+      wantText: [
+        ['[data-item-id="tag-1"] .task-tag-section', '#Errands'],
+        ['[data-item-id="tag-2"] .task-tag-assignee', '@beta'],
+        ['[data-item-id="tag-3"] .task-tag-due', 'Tomorrow'],
+      ],
+      wantCount: [],
+      wantAbsent: [
+        '[data-item-id="tag-1"] .task-tag-assignee',
+        '[data-item-id="tag-1"] .task-tag-due',
+        '[data-item-id="tag-2"] .task-tag-section',
+        '[data-item-id="tag-2"] .task-tag-due',
+        '[data-item-id="tag-3"] .task-tag-section',
+        '[data-item-id="tag-3"] .task-tag-assignee',
+      ],
+    },
+    {
+      name: 'handles PascalCase Items with ID/Title/Done, config.ListName and the item-${idx} fallback id',
+      data: { Items: [{ ID: 'p-1', Title: 'Pascal Item 1', Done: false }, { Title: 'No ID Item', Done: true }] },
+      config: { ListName: 'Chores' },
+      wantText: [
+        ['.tasks-title', 'Chores'],
+        ['[data-item-id="p-1"] .task-title', 'Pascal Item 1'],
+        ['[data-item-id="item-1"] .task-title', 'No ID Item'],
+      ],
+      wantCount: [],
+      wantAbsent: [],
+    },
+    {
+      name: 'handles data.list.items with config.name',
+      data: { list: { items: [{ id: 'n-1', title: 'Nested Item 1', done: false }] } },
+      config: { name: 'Nested List' },
+      wantText: [['.tasks-title', 'Nested List'], ['[data-item-id="n-1"] .task-title', 'Nested Item 1']],
+      wantCount: [],
+      wantAbsent: [],
+    },
+    {
+      name: 'handles data.List.Items and data.List.Name',
+      data: { List: { Name: 'Pascal Nested', Items: [{ ID: 'pn-1', Title: 'Pascal Nested Item', Done: false }] } },
+      wantText: [['.tasks-title', 'Pascal Nested'], ['[data-item-id="pn-1"] .task-title', 'Pascal Nested Item']],
+      wantCount: [],
+      wantAbsent: [],
+    },
+    {
+      name: 'handles data.list.name as the title',
+      data: { list: { name: 'Data Title List', items: [{ id: 'dt-1', title: 'Item DT', done: false }] } },
+      wantText: [['.tasks-title', 'Data Title List']],
+      wantCount: [],
+      wantAbsent: [],
+    },
+  ];
+
+  for (const tc of tests) {
+    it(tc.name, () => {
+      seedTasks('tasks-1', tc.data, tc.config, undefined, tc.state);
+      const { container } = renderWidget(TasksWidget, 'tasks-1', 'tasks');
+      for (const [selector, text] of tc.wantText) {
+        expect(container.querySelector(selector)?.textContent, selector).toBe(text);
+      }
+      for (const [selector, count] of tc.wantCount) {
+        expect(container.querySelectorAll(selector).length, selector).toBe(count);
+      }
+      for (const selector of tc.wantAbsent) {
+        expect(container.querySelector(selector), selector).toBeNull();
+      }
     });
-
-    const { container } = render(<TasksWidget id="tasks-1" type="tasks" />);
-    const root = container.querySelector('.widget-tasks');
-    expect(root).not.toBeNull();
-    expect(root?.querySelector('.tasks-loading')?.textContent).toContain('Loading checklist...');
-    expect(root?.querySelector('.tasks-header')).toBeNull();
-  });
-
-  it('renders loading state with custom title header when config.list_name or todoist.project_name is present', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-listname': {
-          meta: {
-            type: 'tasks',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: { list_name: 'Chores Manifest' },
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {},
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-        'tasks-todoist': {
-          meta: {
-            type: 'tasks',
-            origin: [3, 0],
-            dimensions: [3, 2],
-            config: { todoist: { project_name: 'Work Tasks' } },
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {},
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
-
-    const { container: c1 } = render(<TasksWidget id="tasks-listname" type="tasks" />);
-    expect(c1.querySelector('.tasks-title')?.textContent).toBe('Chores Manifest');
-
-    const { container: c2 } = render(<TasksWidget id="tasks-todoist" type="tasks" />);
-    expect(c2.querySelector('.tasks-title')?.textContent).toBe('Work Tasks');
-  });
-
-  it('renders loading state with custom title header when config.title or config.name is present', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-named': {
-          meta: {
-            type: 'tasks',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: { title: 'Groceries' },
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {},
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
-
-    const { container } = render(<TasksWidget id="tasks-named" type="tasks" />);
-    const root = container.querySelector('.widget-tasks');
-    expect(root?.querySelector('.tasks-header')).not.toBeNull();
-    expect(root?.querySelector('.tasks-title')?.textContent).toBe('Groceries');
-    expect(root?.querySelector('.tasks-loading')?.textContent).toContain('Loading checklist...');
-  });
-
-  it('renders empty state when hydrated with empty items array ([])', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-empty': {
-          meta: {
-            type: 'tasks',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {
-            list: { name: 'Weekend Chores' },
-            items: [],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
-
-    const { container } = render(<TasksWidget id="tasks-empty" type="tasks" />);
-    const root = container.querySelector('.widget-tasks');
-    expect(root?.querySelector('.tasks-header')).not.toBeNull();
-    expect(root?.querySelector('.tasks-title')?.textContent).toBe('Weekend Chores');
-    expect(root?.querySelector('.tasks-summary')?.textContent).toContain('0 left');
-    expect(root?.querySelector('.tasks-empty')).not.toBeNull();
-    expect(root?.querySelector('.empty-title')?.textContent).toBe('All tasks completed!');
-    expect(root?.querySelector('.empty-subtitle')?.textContent).toBe('Time to put your feet up');
-  });
+  }
 
   it('renders populated task items with assignees, sections, due dates, and summary', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-pop': {
-          meta: {
-            type: 'tasks',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {
-            items: [
-              {
-                id: 'item-1',
-                list_id: 'list-123',
-                title: 'Clean kitchen counter',
-                done: false,
-                section: 'Kitchen',
-                assignee: 'Alex',
-                due_date: '2026-11-01',
-              },
-              {
-                id: 'item-2',
-                list_id: 'list-123',
-                title: 'Water plants',
-                done: true,
-              },
-            ],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
+    seedTasks('tasks-pop', {
+      items: [
+        {
+          id: 'item-1',
+          list_id: 'list-123',
+          title: 'Clean kitchen counter',
+          done: false,
+          section: 'Kitchen',
+          assignee: 'alpha',
+          due_date: '2026-11-01',
         },
-      },
+        { id: 'item-2', list_id: 'list-123', title: 'Water plants', done: true },
+      ],
     });
 
-    const { container } = render(<TasksWidget id="tasks-pop" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-pop', 'tasks');
     const root = container.querySelector('.widget-tasks');
     expect(root?.querySelector('.tasks-title')?.textContent).toBe('Tasks');
     expect(root?.querySelector('.tasks-summary')?.textContent).toContain('1 left');
@@ -178,7 +193,7 @@ describe('TasksWidget', () => {
     expect(item1.dataset.listId).toBe('list-123');
     expect(item1.querySelector('.task-title')?.textContent).toBe('Clean kitchen counter');
     expect(item1.querySelector('.task-tag-section')?.textContent).toBe('#Kitchen');
-    expect(item1.querySelector('.task-tag-assignee')?.textContent).toBe('@Alex');
+    expect(item1.querySelector('.task-tag-assignee')?.textContent).toBe('@alpha');
     expect(item1.querySelector('.task-tag-due')?.textContent).toBe('2026-11-01');
     expect(item1.querySelector('.task-checkbox-ring')).not.toBeNull();
 
@@ -196,30 +211,15 @@ describe('TasksWidget', () => {
     const fetchMock = vi.fn().mockImplementation(() => fetchPromise);
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-opt': {
-          meta: {
-            type: 'tasks',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {
-            list: { id: 'list-99' },
-            items: [
-              { id: 't-1', title: 'Sweep floor', done: false },
-              { id: 't-2', title: 'Take out trash', done: true },
-            ],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
+    seedTasks('tasks-opt', {
+      list: { id: 'list-99' },
+      items: [
+        { id: 't-1', title: 'Sweep floor', done: false },
+        { id: 't-2', title: 'Take out trash', done: true },
+      ],
     });
 
-    const { container } = render(<TasksWidget id="tasks-opt" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-opt', 'tasks');
     const item1 = container.querySelector('[data-item-id="t-1"]') as HTMLElement;
     const item2 = container.querySelector('[data-item-id="t-2"]') as HTMLElement;
     const summary = container.querySelector('.tasks-summary');
@@ -277,26 +277,9 @@ describe('TasksWidget', () => {
     });
     vi.stubGlobal('fetch', vi.fn().mockImplementation(() => fetchPromise));
 
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-sse': {
-          meta: {
-            type: 'tasks',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {
-            items: [{ id: 'task-concurrent', title: 'Buy milk', done: false }],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedTasks('tasks-sse', { items: [{ id: 'task-concurrent', title: 'Buy milk', done: false }] });
 
-    const { container } = render(<TasksWidget id="tasks-sse" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-sse', 'tasks');
     const item = container.querySelector('[data-item-id="task-concurrent"]') as HTMLElement;
 
     // Trigger completion
@@ -345,26 +328,9 @@ describe('TasksWidget', () => {
     });
     vi.stubGlobal('fetch', vi.fn().mockImplementation(() => fetchPromise));
 
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-reopen': {
-          meta: {
-            type: 'tasks',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {
-            items: [{ id: 'task-recur', title: 'Daily vitamins', done: false }],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedTasks('tasks-reopen', { items: [{ id: 'task-recur', title: 'Daily vitamins', done: false }] });
 
-    const { container } = render(<TasksWidget id="tasks-reopen" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-reopen', 'tasks');
     const item = container.querySelector('[data-item-id="task-recur"]') as HTMLElement;
 
     // Complete the task
@@ -429,26 +395,9 @@ describe('TasksWidget', () => {
     });
     vi.stubGlobal('fetch', vi.fn().mockImplementation(() => fetchPromise));
 
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-rollback': {
-          meta: {
-            type: 'tasks',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {
-            items: [{ id: 'item-fail', title: 'Mow lawn', done: false }],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedTasks('tasks-rollback', { items: [{ id: 'item-fail', title: 'Mow lawn', done: false }] });
 
-    const { container } = render(<TasksWidget id="tasks-rollback" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-rollback', 'tasks');
     const item = container.querySelector('[data-item-id="item-fail"]') as HTMLElement;
     const summary = container.querySelector('.tasks-summary');
 
@@ -476,26 +425,9 @@ describe('TasksWidget', () => {
   it('rolls back optimistic state on non-200 HTTP response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('Server Error', { status: 500 })));
 
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-500': {
-          meta: {
-            type: 'tasks',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {
-            items: [{ id: 'item-500', title: 'Fix bug', done: false }],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedTasks('tasks-500', { items: [{ id: 'item-500', title: 'Fix bug', done: false }] });
 
-    const { container } = render(<TasksWidget id="tasks-500" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-500', 'tasks');
     const item = container.querySelector('[data-item-id="item-500"]') as HTMLElement;
 
     fireEvent.click(item);
@@ -511,18 +443,9 @@ describe('TasksWidget', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-undo-1': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: { items: [{ id: 'task-1', title: 'Buy groceries', done: false }] },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedTasks('tasks-undo-1', { items: [{ id: 'task-1', title: 'Buy groceries', done: false }] });
 
-    const { container } = render(<TasksWidget id="tasks-undo-1" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-undo-1', 'tasks');
     const item = container.querySelector('[data-item-id="task-1"]') as HTMLElement;
     const summary = container.querySelector('.tasks-summary');
 
@@ -567,18 +490,9 @@ describe('TasksWidget', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-undo-cancel': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: { items: [{ id: 'task-cancel', title: 'Call dentist', done: false }] },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedTasks('tasks-undo-cancel', { items: [{ id: 'task-cancel', title: 'Call dentist', done: false }] });
 
-    const { container } = render(<TasksWidget id="tasks-undo-cancel" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-undo-cancel', 'tasks');
     const item = container.querySelector('[data-item-id="task-cancel"]') as HTMLElement;
     const summary = container.querySelector('.tasks-summary');
 
@@ -617,18 +531,9 @@ describe('TasksWidget', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-unmount': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: { items: [{ id: 'task-unmount', title: 'Unmount test', done: false }] },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedTasks('tasks-unmount', { items: [{ id: 'task-unmount', title: 'Unmount test', done: false }] });
 
-    const { container, unmount } = render(<TasksWidget id="tasks-unmount" type="tasks" />);
+    const { container, unmount } = renderWidget(TasksWidget, 'tasks-unmount', 'tasks');
     const item = container.querySelector('[data-item-id="task-unmount"]') as HTMLElement;
 
     // First tap starts grace timer
@@ -648,34 +553,17 @@ describe('TasksWidget', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('renders error banner when widget state is error', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-err': {
-          state: 'error',
-          data: {},
-          timestamp: '',
-        },
-      },
-    });
-
-    const { container } = render(<TasksWidget id="tasks-err" type="tasks" />);
-    const banner = container.querySelector('.widget-error-banner');
-    expect(banner).not.toBeNull();
-    expect(banner?.textContent).toContain('Widget Error');
-  });
-
   it('memoizes store updates: React Profiler verifies widget.update for tasks-1 commits ONLY tasks-1', () => {
     useDisplayStore.setState({
       widgets: {
         'tasks-1': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 1], config: {}, assets_base: '' },
+          meta: widgetMeta('tasks', {}, [3, 1]),
           state: 'healthy',
           data: { items: [{ id: 't1', title: 'Task 1', done: false }] },
           timestamp: '2026-10-31T12:00:00Z',
         },
         'tasks-2': {
-          meta: { type: 'tasks', origin: [3, 0], dimensions: [3, 1], config: {}, assets_base: '' },
+          meta: { ...widgetMeta('tasks', {}, [3, 1]), origin: [3, 0] },
           state: 'healthy',
           data: { items: [{ id: 't2', title: 'Task 2', done: false }] },
           timestamp: '2026-10-31T12:00:00Z',
@@ -726,184 +614,26 @@ describe('TasksWidget', () => {
     expect(onRender2).toHaveBeenCalledTimes(1);
   });
 
-  it('renders individual tags (section only, assignee only, dueDate only) cleanly', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-tags': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
-            items: [
-              { id: 'tag-1', title: 'Only Section', done: false, section: 'Errands' },
-              { id: 'tag-2', title: 'Only Assignee', done: false, assignee: 'Sam' },
-              { id: 'tag-3', title: 'Only Due Date', done: false, due_date: 'Tomorrow' },
-            ],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
-
-    const { container } = render(<TasksWidget id="tasks-tags" type="tasks" />);
-    const item1 = container.querySelector('[data-item-id="tag-1"]');
-    expect(item1?.querySelector('.task-tag-section')?.textContent).toBe('#Errands');
-    expect(item1?.querySelector('.task-tag-assignee')).toBeNull();
-    expect(item1?.querySelector('.task-tag-due')).toBeNull();
-
-    const item2 = container.querySelector('[data-item-id="tag-2"]');
-    expect(item2?.querySelector('.task-tag-section')).toBeNull();
-    expect(item2?.querySelector('.task-tag-assignee')?.textContent).toBe('@Sam');
-    expect(item2?.querySelector('.task-tag-due')).toBeNull();
-
-    const item3 = container.querySelector('[data-item-id="tag-3"]');
-    expect(item3?.querySelector('.task-tag-section')).toBeNull();
-    expect(item3?.querySelector('.task-tag-assignee')).toBeNull();
-    expect(item3?.querySelector('.task-tag-due')?.textContent).toBe('Tomorrow');
-  });
-
-  it('handles PascalCase Items, list.items, List.Items, and fallback item indices', () => {
-    // 1. data.Items (PascalCase) and items with ID, Title, Done
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-pascal-items': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: { ListName: 'Chores' }, assets_base: '' },
-          state: 'healthy',
-          data: {
-            Items: [
-              { ID: 'p-1', Title: 'Pascal Item 1', Done: false },
-              { Title: 'No ID Item', Done: true }, // exercises item-${idx} and Title fallback
-            ],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
-
-    const { container: c1 } = render(<TasksWidget id="tasks-pascal-items" type="tasks" />);
-    expect(c1.querySelector('.tasks-title')?.textContent).toBe('Chores');
-    expect(c1.querySelector('[data-item-id="p-1"]')?.textContent).toContain('Pascal Item 1');
-    expect(c1.querySelector('[data-item-id="item-1"]')?.textContent).toContain('No ID Item');
-
-    // 2. data.list.items
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-nested-list': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: { name: 'Nested List' }, assets_base: '' },
-          state: 'healthy',
-          data: {
-            list: {
-              items: [{ id: 'n-1', title: 'Nested Item 1', done: false }],
-            },
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
-
-    const { container: c2 } = render(<TasksWidget id="tasks-nested-list" type="tasks" />);
-    expect(c2.querySelector('.tasks-title')?.textContent).toBe('Nested List');
-    expect(c2.querySelector('[data-item-id="n-1"]')?.textContent).toContain('Nested Item 1');
-
-    // 3. data.List.Items and data.List.Name
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-pascal-nested': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
-            List: {
-              Name: 'Pascal Nested',
-              Items: [{ ID: 'pn-1', Title: 'Pascal Nested Item', Done: false }],
-            },
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
-
-    const { container: c3 } = render(<TasksWidget id="tasks-pascal-nested" type="tasks" />);
-    expect(c3.querySelector('.tasks-title')?.textContent).toBe('Pascal Nested');
-    expect(c3.querySelector('[data-item-id="pn-1"]')?.textContent).toContain('Pascal Nested Item');
-
-    // 4. data.list.name
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-data-title': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
-            list: {
-              name: 'Data Title List',
-              items: [{ id: 'dt-1', title: 'Item DT', done: false }],
-            },
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
-
-    const { container: c4 } = render(<TasksWidget id="tasks-data-title" type="tasks" />);
-    expect(c4.querySelector('.tasks-title')?.textContent).toBe('Data Title List');
-  });
-
   it('handles item without any title string and reconciles optimistic done when server marks item done', () => {
-    vi.useFakeTimers();
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-empty-title': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
-            items: [
-              { id: 'et-1', done: false },
-            ],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedTasks('tasks-empty-title', { items: [{ id: 'et-1', done: false }] });
 
-    const { container } = render(<TasksWidget id="tasks-empty-title" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-empty-title', 'tasks');
     expect(container.querySelector('.task-title')?.textContent).toBe('');
 
     const item = container.querySelector('[data-item-id="et-1"]')!;
     fireEvent.click(item);
 
     act(() => {
-      useDisplayStore.setState({
-        widgets: {
-          'tasks-empty-title': {
-            meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-            state: 'healthy',
-            data: {
-              items: [{ id: 'et-1', done: true }],
-            },
-            timestamp: '2026-10-31T12:01:00Z',
-          },
-        },
-      });
+      seedTasks('tasks-empty-title', { items: [{ id: 'et-1', done: true }] }, {}, '2026-10-31T12:01:00Z');
     });
 
     expect(container.querySelector('.task-item-done')).not.toBeNull();
-    vi.useRealTimers();
   });
 
   it('clears optimistic state when item is removed from server list during update', () => {
-    vi.useFakeTimers();
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-rem': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
-            items: [{ id: 'rem-1', done: false }],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedTasks('tasks-rem', { items: [{ id: 'rem-1', done: false }] });
 
-    const { container } = render(<TasksWidget id="tasks-rem" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-rem', 'tasks');
     const item = container.querySelector('[data-item-id="rem-1"]')!;
     fireEvent.click(item);
 
@@ -912,40 +642,16 @@ describe('TasksWidget', () => {
     });
 
     act(() => {
-      useDisplayStore.setState({
-        widgets: {
-          'tasks-rem': {
-            meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-            state: 'healthy',
-            data: {
-              items: [],
-            },
-            timestamp: '2026-10-31T12:02:00Z',
-          },
-        },
-      });
+      seedTasks('tasks-rem', { items: [] }, {}, '2026-10-31T12:02:00Z');
     });
 
     expect(container.querySelector('[data-item-id="rem-1"]')).toBeNull();
-    vi.useRealTimers();
   });
 
   it('handles keyboard navigation on task items with Enter and Space', () => {
-    vi.useFakeTimers();
-    useDisplayStore.setState({
-      widgets: {
-        'tasks-kb': {
-          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
-            items: [{ id: 'kb-1', title: 'Keyboard task', done: false }],
-          },
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedTasks('tasks-kb', { items: [{ id: 'kb-1', title: 'Keyboard task', done: false }] });
 
-    const { container } = render(<TasksWidget id="tasks-kb" type="tasks" />);
+    const { container } = renderWidget(TasksWidget, 'tasks-kb', 'tasks');
     const item = container.querySelector('[data-item-id="kb-1"]') as HTMLElement;
     expect(item.getAttribute('role')).toBe('button');
     expect(item.getAttribute('tabindex')).toBe('0');
@@ -960,6 +666,5 @@ describe('TasksWidget', () => {
 
     // Trigger other key (no-op)
     fireEvent.keyDown(item, { key: 'Escape' });
-    vi.useRealTimers();
   });
 });
