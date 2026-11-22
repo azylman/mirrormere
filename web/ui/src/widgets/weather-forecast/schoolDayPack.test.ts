@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type ClothingConditionState,
   type DailyWeatherManifest,
+  type DaypartSlot,
   type SchoolDayThresholds,
   resolveBirthdayOverride,
   resolveBirthdayPackSpriteUrl,
@@ -13,186 +15,98 @@ import {
 
 describe('schoolDayPack utilities', () => {
   describe('resolveClothingConditionState', () => {
-    it('returns morning_rain or rainy_boots when precipProbPct >= rainThresholdPct', () => {
-      // morning slot
-      expect(resolveClothingConditionState(60, 35, 'weather-partly-cloudy', 'morning')).toBe(
-        'morning_rain',
-      );
-      expect(resolveClothingConditionState(70, 80, 'weather-sunny', 'morning')).toBe(
-        'morning_rain',
-      );
-
-      // afternoon slot
-      expect(resolveClothingConditionState(60, 35, 'weather-partly-cloudy', 'afternoon')).toBe(
-        'rainy_boots',
-      );
-      expect(resolveClothingConditionState(80, 50, 'weather-sunny', 'afternoon')).toBe(
-        'rainy_boots',
-      );
-
-      // evening slot
-      expect(resolveClothingConditionState(55, 40, 'weather-partly-cloudy', 'evening')).toBe(
-        'rainy_boots',
-      );
-    });
-
-    it('returns rain states when iconToken contains rain, pouring, or lightning even with low precipProbPct', () => {
-      expect(resolveClothingConditionState(65, 0, 'weather-rainy', 'morning')).toBe('morning_rain');
-      expect(resolveClothingConditionState(65, 10, 'weather-pouring', 'morning')).toBe(
-        'morning_rain',
-      );
-      expect(resolveClothingConditionState(65, 5, 'weather-lightning', 'morning')).toBe(
-        'morning_rain',
-      );
-      expect(resolveClothingConditionState(65, 0, 'weather-lightning-rainy', 'morning')).toBe(
-        'morning_rain',
-      );
-
-      expect(resolveClothingConditionState(65, 0, 'weather-rainy', 'afternoon')).toBe(
-        'rainy_boots',
-      );
-      expect(resolveClothingConditionState(65, 0, 'weather-pouring', 'evening')).toBe('rainy_boots');
-      expect(resolveClothingConditionState(65, 0, 'weather-lightning', 'afternoon')).toBe(
-        'rainy_boots',
-      );
-    });
-
-    it('returns cold_puffer when tempF <= coldMaxF for all slots', () => {
-      expect(resolveClothingConditionState(49, 10, 'weather-sunny', 'morning')).toBe('cold_puffer');
-      expect(resolveClothingConditionState(32, 0, 'weather-cloudy', 'afternoon')).toBe(
-        'cold_puffer',
-      );
-      expect(resolveClothingConditionState(45, 20, 'weather-partly-cloudy', 'evening')).toBe(
-        'cold_puffer',
-      );
-    });
-
-    it('returns morning_mild for morning slot when tempF > coldMaxF and dry', () => {
-      expect(resolveClothingConditionState(50, 0, 'weather-sunny', 'morning')).toBe('morning_mild');
-      expect(resolveClothingConditionState(64, 10, 'weather-sunny', 'morning')).toBe(
-        'morning_mild',
-      );
-      expect(resolveClothingConditionState(75, 20, 'weather-sunny', 'morning')).toBe(
-        'morning_mild',
-      );
-      expect(resolveClothingConditionState(90, 0, 'weather-sunny', 'morning')).toBe('morning_mild');
-    });
-
-    it('returns cool_evening for afternoon/evening when coldMaxF < tempF <= coolMaxF', () => {
-      expect(resolveClothingConditionState(50, 0, 'weather-sunny', 'afternoon')).toBe(
-        'cool_evening',
-      );
-      expect(resolveClothingConditionState(64, 15, 'weather-sunny', 'afternoon')).toBe(
-        'cool_evening',
-      );
-      expect(resolveClothingConditionState(58, 0, 'weather-partly-cloudy', 'evening')).toBe(
-        'cool_evening',
-      );
-    });
-
-    it('returns warm_pants for afternoon/evening when coolMaxF < tempF <= warmMaxF', () => {
-      expect(resolveClothingConditionState(65, 0, 'weather-sunny', 'afternoon')).toBe('warm_pants');
-      expect(resolveClothingConditionState(77, 20, 'weather-sunny', 'afternoon')).toBe(
-        'warm_pants',
-      );
-      expect(resolveClothingConditionState(70, 0, 'weather-partly-cloudy', 'evening')).toBe(
-        'warm_pants',
-      );
-    });
-
-    it('returns hot_dress for afternoon/evening when tempF > warmMaxF', () => {
-      expect(resolveClothingConditionState(78, 0, 'weather-sunny', 'afternoon')).toBe('hot_dress');
-      expect(resolveClothingConditionState(95, 10, 'weather-sunny', 'afternoon')).toBe('hot_dress');
-      expect(resolveClothingConditionState(82, 0, 'weather-clear-night', 'evening')).toBe(
-        'hot_dress',
-      );
-    });
-
-    it('respects custom SchoolDayThresholds', () => {
-      const custom: SchoolDayThresholds = {
-        rainThresholdPct: 20,
-        coldMaxF: 40,
-        coolMaxF: 55,
-        warmMaxF: 70,
-      };
-
-      // Rain trigger at lower threshold
-      expect(resolveClothingConditionState(60, 22, 'weather-cloudy', 'morning', custom)).toBe(
-        'morning_rain',
-      );
-
-      // Cold puffer at custom 40F
-      expect(resolveClothingConditionState(40, 10, 'weather-sunny', 'afternoon', custom)).toBe(
-        'cold_puffer',
-      );
-
-      // Cool evening at 41-55F
-      expect(resolveClothingConditionState(52, 0, 'weather-sunny', 'afternoon', custom)).toBe(
-        'cool_evening',
-      );
-
-      // Warm pants at 56-70F
-      expect(resolveClothingConditionState(68, 0, 'weather-sunny', 'afternoon', custom)).toBe(
-        'warm_pants',
-      );
-
-      // Hot dress at > 70F
-      expect(resolveClothingConditionState(72, 0, 'weather-sunny', 'afternoon', custom)).toBe(
-        'hot_dress',
-      );
-    });
-
-    it('uses the default thresholds when thresholds parameter is omitted', () => {
-      expect(resolveClothingConditionState(49, 0, 'weather-sunny', 'morning')).toBe('cold_puffer');
-      expect(resolveClothingConditionState(50, 0, 'weather-sunny', 'morning')).toBe('morning_mild');
-      expect(resolveClothingConditionState(64, 0, 'weather-sunny', 'afternoon')).toBe(
-        'cool_evening',
-      );
-      expect(resolveClothingConditionState(77, 0, 'weather-sunny', 'afternoon')).toBe('warm_pants');
-      expect(resolveClothingConditionState(78, 0, 'weather-sunny', 'afternoon')).toBe('hot_dress');
-    });
+    const custom: SchoolDayThresholds = { rainThresholdPct: 20, coldMaxF: 40, coolMaxF: 55, warmMaxF: 70 };
+    const tests: {
+      name: string;
+      tempF: number;
+      precip: number;
+      icon: string;
+      slot: DaypartSlot;
+      thresholds?: SchoolDayThresholds;
+      want: ClothingConditionState;
+    }[] = [
+      { name: 'precip >= threshold: morning partly cloudy', tempF: 60, precip: 35, icon: 'weather-partly-cloudy', slot: 'morning', want: 'morning_rain' },
+      { name: 'precip >= threshold: morning sunny', tempF: 70, precip: 80, icon: 'weather-sunny', slot: 'morning', want: 'morning_rain' },
+      { name: 'precip >= threshold: afternoon partly cloudy', tempF: 60, precip: 35, icon: 'weather-partly-cloudy', slot: 'afternoon', want: 'rainy_boots' },
+      { name: 'precip >= threshold: afternoon sunny', tempF: 80, precip: 50, icon: 'weather-sunny', slot: 'afternoon', want: 'rainy_boots' },
+      { name: 'precip >= threshold: evening', tempF: 55, precip: 40, icon: 'weather-partly-cloudy', slot: 'evening', want: 'rainy_boots' },
+      { name: 'rain icon: morning rainy', tempF: 65, precip: 0, icon: 'weather-rainy', slot: 'morning', want: 'morning_rain' },
+      { name: 'rain icon: morning pouring', tempF: 65, precip: 10, icon: 'weather-pouring', slot: 'morning', want: 'morning_rain' },
+      { name: 'rain icon: morning lightning', tempF: 65, precip: 5, icon: 'weather-lightning', slot: 'morning', want: 'morning_rain' },
+      { name: 'rain icon: morning lightning-rainy', tempF: 65, precip: 0, icon: 'weather-lightning-rainy', slot: 'morning', want: 'morning_rain' },
+      { name: 'rain icon: afternoon rainy', tempF: 65, precip: 0, icon: 'weather-rainy', slot: 'afternoon', want: 'rainy_boots' },
+      { name: 'rain icon: evening pouring', tempF: 65, precip: 0, icon: 'weather-pouring', slot: 'evening', want: 'rainy_boots' },
+      { name: 'rain icon: afternoon lightning', tempF: 65, precip: 0, icon: 'weather-lightning', slot: 'afternoon', want: 'rainy_boots' },
+      { name: 'cold: morning 49F', tempF: 49, precip: 10, icon: 'weather-sunny', slot: 'morning', want: 'cold_puffer' },
+      { name: 'cold: afternoon 32F', tempF: 32, precip: 0, icon: 'weather-cloudy', slot: 'afternoon', want: 'cold_puffer' },
+      { name: 'cold: evening 45F', tempF: 45, precip: 20, icon: 'weather-partly-cloudy', slot: 'evening', want: 'cold_puffer' },
+      { name: 'morning mild: 50F', tempF: 50, precip: 0, icon: 'weather-sunny', slot: 'morning', want: 'morning_mild' },
+      { name: 'morning mild: 64F', tempF: 64, precip: 10, icon: 'weather-sunny', slot: 'morning', want: 'morning_mild' },
+      { name: 'morning mild: 75F', tempF: 75, precip: 20, icon: 'weather-sunny', slot: 'morning', want: 'morning_mild' },
+      { name: 'morning mild: 90F', tempF: 90, precip: 0, icon: 'weather-sunny', slot: 'morning', want: 'morning_mild' },
+      { name: 'cool: afternoon 50F', tempF: 50, precip: 0, icon: 'weather-sunny', slot: 'afternoon', want: 'cool_evening' },
+      { name: 'cool: afternoon 64F', tempF: 64, precip: 15, icon: 'weather-sunny', slot: 'afternoon', want: 'cool_evening' },
+      { name: 'cool: evening 58F', tempF: 58, precip: 0, icon: 'weather-partly-cloudy', slot: 'evening', want: 'cool_evening' },
+      { name: 'warm: afternoon 65F', tempF: 65, precip: 0, icon: 'weather-sunny', slot: 'afternoon', want: 'warm_pants' },
+      { name: 'warm: afternoon 77F', tempF: 77, precip: 20, icon: 'weather-sunny', slot: 'afternoon', want: 'warm_pants' },
+      { name: 'warm: evening 70F', tempF: 70, precip: 0, icon: 'weather-partly-cloudy', slot: 'evening', want: 'warm_pants' },
+      { name: 'hot: afternoon 78F', tempF: 78, precip: 0, icon: 'weather-sunny', slot: 'afternoon', want: 'hot_dress' },
+      { name: 'hot: afternoon 95F', tempF: 95, precip: 10, icon: 'weather-sunny', slot: 'afternoon', want: 'hot_dress' },
+      { name: 'hot: evening clear night 82F', tempF: 82, precip: 0, icon: 'weather-clear-night', slot: 'evening', want: 'hot_dress' },
+      { name: 'custom thresholds: rain at 22%', tempF: 60, precip: 22, icon: 'weather-cloudy', slot: 'morning', thresholds: custom, want: 'morning_rain' },
+      { name: 'custom thresholds: cold at 40F', tempF: 40, precip: 10, icon: 'weather-sunny', slot: 'afternoon', thresholds: custom, want: 'cold_puffer' },
+      { name: 'custom thresholds: cool at 52F', tempF: 52, precip: 0, icon: 'weather-sunny', slot: 'afternoon', thresholds: custom, want: 'cool_evening' },
+      { name: 'custom thresholds: warm at 68F', tempF: 68, precip: 0, icon: 'weather-sunny', slot: 'afternoon', thresholds: custom, want: 'warm_pants' },
+      { name: 'custom thresholds: hot at 72F', tempF: 72, precip: 0, icon: 'weather-sunny', slot: 'afternoon', thresholds: custom, want: 'hot_dress' },
+      { name: 'default thresholds: cold edge 49F', tempF: 49, precip: 0, icon: 'weather-sunny', slot: 'morning', want: 'cold_puffer' },
+      { name: 'default thresholds: mild edge 50F', tempF: 50, precip: 0, icon: 'weather-sunny', slot: 'morning', want: 'morning_mild' },
+      { name: 'default thresholds: cool edge 64F', tempF: 64, precip: 0, icon: 'weather-sunny', slot: 'afternoon', want: 'cool_evening' },
+      { name: 'default thresholds: warm edge 77F', tempF: 77, precip: 0, icon: 'weather-sunny', slot: 'afternoon', want: 'warm_pants' },
+      { name: 'default thresholds: hot edge 78F', tempF: 78, precip: 0, icon: 'weather-sunny', slot: 'afternoon', want: 'hot_dress' },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(resolveClothingConditionState(tc.tempF, tc.precip, tc.icon, tc.slot, tc.thresholds)).toBe(tc.want);
+      });
+    }
   });
 
   describe('selectDailyVariantIndex', () => {
-    it('returns deterministic variant indices within [1, variantsCount]', () => {
-      const v1 = selectDailyVariantIndex('2026-10-31', 'morning', 5);
-      const v2 = selectDailyVariantIndex('2026-10-31', 'morning', 5);
-      expect(v1).toBe(v2);
-      expect(v1).toBeGreaterThanOrEqual(1);
-      expect(v1).toBeLessThanOrEqual(5);
-
-      const vAfternoon = selectDailyVariantIndex('2026-10-31', 'afternoon', 5);
-      expect(vAfternoon).toBeGreaterThanOrEqual(1);
-      expect(vAfternoon).toBeLessThanOrEqual(5);
-
-      const vEvening = selectDailyVariantIndex('2026-10-31', 'evening', 5);
-      expect(vEvening).toBeGreaterThanOrEqual(1);
-      expect(vEvening).toBeLessThanOrEqual(5);
-    });
-
-    it('respects custom variantsCount and handles non-positive counts safely', () => {
-      for (let i = 0; i < 10; i++) {
-        const v = selectDailyVariantIndex(`2026-11-0${i}`, 'morning', 3);
-        expect(v).toBeGreaterThanOrEqual(1);
-        expect(v).toBeLessThanOrEqual(3);
-      }
-
-      // Edge case: variantsCount <= 0 clamps to count 1
-      const clamped = selectDailyVariantIndex('2026-10-31', 'morning', 0);
-      expect(clamped).toBe(1);
-      const clampedNeg = selectDailyVariantIndex('2026-10-31', 'morning', -5);
-      expect(clampedNeg).toBe(1);
-    });
-
-    it('assigns distinct round-robin variant indices across morning, afternoon, and evening when variantsCount >= 3', () => {
-      const dates = ['2026-11-07', '2026-11-08', '2026-12-25', '2026-01-01'];
-      for (const dateStr of dates) {
-        const morning = selectDailyVariantIndex(dateStr, 'morning', 5);
-        const afternoon = selectDailyVariantIndex(dateStr, 'afternoon', 5);
-        const evening = selectDailyVariantIndex(dateStr, 'evening', 5);
-        expect(new Set([morning, afternoon, evening]).size).toBe(3);
-      }
-    });
+    // Same-date slots are consecutive (mod count), so counts >= 3 give distinct morning/afternoon/evening variants.
+    const tests: { name: string; date: string; slot: DaypartSlot; count: number; want: number }[] = [
+      { name: 'morning 2026-10-31', date: '2026-10-31', slot: 'morning', count: 5, want: 4 },
+      { name: 'afternoon 2026-10-31', date: '2026-10-31', slot: 'afternoon', count: 5, want: 5 },
+      { name: 'evening 2026-10-31 wraps to 1', date: '2026-10-31', slot: 'evening', count: 5, want: 1 },
+      { name: 'count 3: 2026-11-00', date: '2026-11-00', slot: 'morning', count: 3, want: 1 },
+      { name: 'count 3: 2026-11-01', date: '2026-11-01', slot: 'morning', count: 3, want: 2 },
+      { name: 'count 3: 2026-11-02', date: '2026-11-02', slot: 'morning', count: 3, want: 3 },
+      { name: 'count 3: 2026-11-03', date: '2026-11-03', slot: 'morning', count: 3, want: 1 },
+      { name: 'count 3: 2026-11-04', date: '2026-11-04', slot: 'morning', count: 3, want: 2 },
+      { name: 'count 3: 2026-11-05', date: '2026-11-05', slot: 'morning', count: 3, want: 3 },
+      { name: 'count 3: 2026-11-06', date: '2026-11-06', slot: 'morning', count: 3, want: 1 },
+      { name: 'count 3: 2026-11-07', date: '2026-11-07', slot: 'morning', count: 3, want: 2 },
+      { name: 'count 3: 2026-11-08', date: '2026-11-08', slot: 'morning', count: 3, want: 3 },
+      { name: 'count 3: 2026-11-09', date: '2026-11-09', slot: 'morning', count: 3, want: 1 },
+      { name: 'count 0 clamps to 1', date: '2026-10-31', slot: 'morning', count: 0, want: 1 },
+      { name: 'negative count clamps to 1', date: '2026-10-31', slot: 'morning', count: -5, want: 1 },
+      { name: 'distinct slots 2026-11-07: morning', date: '2026-11-07', slot: 'morning', count: 5, want: 3 },
+      { name: 'distinct slots 2026-11-07: afternoon', date: '2026-11-07', slot: 'afternoon', count: 5, want: 4 },
+      { name: 'distinct slots 2026-11-07: evening', date: '2026-11-07', slot: 'evening', count: 5, want: 5 },
+      { name: 'distinct slots 2026-11-08: morning', date: '2026-11-08', slot: 'morning', count: 5, want: 4 },
+      { name: 'distinct slots 2026-11-08: afternoon', date: '2026-11-08', slot: 'afternoon', count: 5, want: 5 },
+      { name: 'distinct slots 2026-11-08: evening', date: '2026-11-08', slot: 'evening', count: 5, want: 1 },
+      { name: 'distinct slots 2026-12-25: morning', date: '2026-12-25', slot: 'morning', count: 5, want: 4 },
+      { name: 'distinct slots 2026-12-25: afternoon', date: '2026-12-25', slot: 'afternoon', count: 5, want: 5 },
+      { name: 'distinct slots 2026-12-25: evening', date: '2026-12-25', slot: 'evening', count: 5, want: 1 },
+      { name: 'distinct slots 2026-01-01: morning', date: '2026-01-01', slot: 'morning', count: 5, want: 1 },
+      { name: 'distinct slots 2026-01-01: afternoon', date: '2026-01-01', slot: 'afternoon', count: 5, want: 2 },
+      { name: 'distinct slots 2026-01-01: evening', date: '2026-01-01', slot: 'evening', count: 5, want: 3 },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(selectDailyVariantIndex(tc.date, tc.slot, tc.count)).toBe(tc.want);
+      });
+    }
   });
 
   describe('resolveBirthdayOverride and resolveBirthdayPackSpriteUrl', () => {
@@ -372,30 +286,22 @@ describe('schoolDayPack utilities', () => {
   });
 
   describe('resolveUSHolidaySpriteUrl', () => {
-    it('returns holiday sprite URL when holiday matches date and state is supported', () => {
-      expect(resolveUSHolidaySpriteUrl('ghibli', 'hot_dress', '2026-07-04')).toBe(
-        '/static/ui/assets/weather-packs/ghibli/holiday_july_4th_hot_dress.jpg',
-      );
-    });
-
-    it('returns undefined when state is not supported on that holiday', () => {
-      expect(resolveUSHolidaySpriteUrl('ghibli', 'hot_dress', '2026-12-25')).toBeUndefined();
-    });
-
-    it('returns undefined when date is not a US holiday or undefined', () => {
-      expect(resolveUSHolidaySpriteUrl('ghibli', 'cold_puffer', '2026-10-15')).toBeUndefined();
-      expect(resolveUSHolidaySpriteUrl('ghibli', 'cold_puffer', undefined)).toBeUndefined();
-    });
-
-    it('supports custom assetsBase', () => {
-      expect(
-        resolveUSHolidaySpriteUrl('ghibli', 'hot_dress', '2026-07-04', '/custom/base'),
-      ).toBe('/custom/base/ghibli/holiday_july_4th_hot_dress.jpg');
-    });
+    const tests: { name: string; state: ClothingConditionState; date: string | undefined; base?: string; want: string | undefined }[] = [
+      { name: 'holiday with supported state', state: 'hot_dress', date: '2026-07-04', want: '/static/ui/assets/weather-packs/ghibli/holiday_july_4th_hot_dress.jpg' },
+      { name: 'holiday with unsupported state', state: 'hot_dress', date: '2026-12-25', want: undefined },
+      { name: 'not a US holiday', state: 'cold_puffer', date: '2026-10-15', want: undefined },
+      { name: 'undefined date', state: 'cold_puffer', date: undefined, want: undefined },
+      { name: 'custom assetsBase', state: 'hot_dress', date: '2026-07-04', base: '/custom/base', want: '/custom/base/ghibli/holiday_july_4th_hot_dress.jpg' },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(resolveUSHolidaySpriteUrl('ghibli', tc.state, tc.date, tc.base)).toBe(tc.want);
+      });
+    }
   });
 
   describe('resolveDailyManifestSpriteUrl', () => {
-    const validManifest: DailyWeatherManifest = {
+    const valid: DailyWeatherManifest = {
       target_date: '2026-11-17',
       theme_title: 'Studio Ghibli Autumn',
       style_label: 'Watercolor Storybook',
@@ -405,95 +311,44 @@ describe('schoolDayPack utilities', () => {
         evening: '/custom/path/evening.jpg',
       },
     };
-
-    it('resolves relative filename under assetsBase and packName when target_date matches', () => {
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, '2026-11-17', 'morning'),
-      ).toBe('/static/ui/assets/weather-packs/ghibli_pack/daily_2026-11-17_morning.jpg');
-    });
-
-    it('strips leading ./ from relative filenames', () => {
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, '2026-11-17', 'afternoon'),
-      ).toBe('/static/ui/assets/weather-packs/ghibli_pack/daily_2026-11-17_afternoon.jpg');
-    });
-
-    it('passes through absolute paths directly', () => {
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, '2026-11-17', 'evening'),
-      ).toBe('/custom/path/evening.jpg');
-    });
-
-    it('passes through http and https URLs directly', () => {
-      const httpManifest: DailyWeatherManifest = {
-        target_date: '2026-11-17',
-        slots: {
-          morning: 'http://example.com/morning.jpg',
-          afternoon: 'https://cdn.example.com/afternoon.png',
-        },
-      };
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', httpManifest, '2026-11-17', 'morning'),
-      ).toBe('http://example.com/morning.jpg');
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', httpManifest, '2026-11-17', 'afternoon'),
-      ).toBe('https://cdn.example.com/afternoon.png');
-    });
-
-    it('supports custom assetsBase', () => {
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, '2026-11-17', 'morning', '/custom/assets'),
-      ).toBe('/custom/assets/ghibli_pack/daily_2026-11-17_morning.jpg');
-    });
-
-    it('returns undefined when target_date does not match dateStr (stale manifest)', () => {
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, '2026-11-18', 'morning'),
-      ).toBeUndefined();
-    });
-
-    it('rejects path traversal containing .. and returns undefined', () => {
-      const traversalManifest: DailyWeatherManifest = {
-        target_date: '2026-11-17',
-        slots: {
-          morning: '../escape/secret.jpg',
-          afternoon: 'sub/../../secret.jpg',
-          evening: '..',
-        },
-      };
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', traversalManifest, '2026-11-17', 'morning'),
-      ).toBeUndefined();
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', traversalManifest, '2026-11-17', 'afternoon'),
-      ).toBeUndefined();
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', traversalManifest, '2026-11-17', 'evening'),
-      ).toBeUndefined();
-    });
-
-    it('returns undefined when slot is missing or empty/whitespace', () => {
-      const sparseManifest: DailyWeatherManifest = {
-        target_date: '2026-11-17',
-        slots: {
-          morning: '   ',
-        },
-      };
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', sparseManifest, '2026-11-17', 'morning'),
-      ).toBeUndefined();
-      expect(
-        resolveDailyManifestSpriteUrl('ghibli_pack', sparseManifest, '2026-11-17', 'afternoon'),
-      ).toBeUndefined();
-    });
-
-    it('returns undefined when manifest, target_date, or dateStr is missing', () => {
-      expect(resolveDailyManifestSpriteUrl('ghibli_pack', undefined, '2026-11-17', 'morning')).toBeUndefined();
-      expect(resolveDailyManifestSpriteUrl('ghibli_pack', null, '2026-11-17', 'morning')).toBeUndefined();
-      expect(resolveDailyManifestSpriteUrl('ghibli_pack', {}, '2026-11-17', 'morning')).toBeUndefined();
-      expect(resolveDailyManifestSpriteUrl('ghibli_pack', validManifest, undefined, 'morning')).toBeUndefined();
-    });
+    const remote: DailyWeatherManifest = {
+      target_date: '2026-11-17',
+      slots: { morning: 'http://example.com/morning.jpg', afternoon: 'https://cdn.example.com/afternoon.png' },
+    };
+    const traversal: DailyWeatherManifest = {
+      target_date: '2026-11-17',
+      slots: { morning: '../escape/secret.jpg', afternoon: 'sub/../../secret.jpg', evening: '..' },
+    };
+    const sparse: DailyWeatherManifest = { target_date: '2026-11-17', slots: { morning: '   ' } };
+    const tests: {
+      name: string;
+      manifest: DailyWeatherManifest | undefined | null;
+      date: string | undefined;
+      slot: DaypartSlot;
+      base?: string;
+      want: string | undefined;
+    }[] = [
+      { name: 'relative filename under assetsBase/pack', manifest: valid, date: '2026-11-17', slot: 'morning', want: '/static/ui/assets/weather-packs/ghibli_pack/daily_2026-11-17_morning.jpg' },
+      { name: 'strips leading ./', manifest: valid, date: '2026-11-17', slot: 'afternoon', want: '/static/ui/assets/weather-packs/ghibli_pack/daily_2026-11-17_afternoon.jpg' },
+      { name: 'absolute path passes through', manifest: valid, date: '2026-11-17', slot: 'evening', want: '/custom/path/evening.jpg' },
+      { name: 'http URL passes through', manifest: remote, date: '2026-11-17', slot: 'morning', want: 'http://example.com/morning.jpg' },
+      { name: 'https URL passes through', manifest: remote, date: '2026-11-17', slot: 'afternoon', want: 'https://cdn.example.com/afternoon.png' },
+      { name: 'custom assetsBase', manifest: valid, date: '2026-11-17', slot: 'morning', base: '/custom/assets', want: '/custom/assets/ghibli_pack/daily_2026-11-17_morning.jpg' },
+      { name: 'stale manifest target_date', manifest: valid, date: '2026-11-18', slot: 'morning', want: undefined },
+      { name: 'rejects leading .. traversal', manifest: traversal, date: '2026-11-17', slot: 'morning', want: undefined },
+      { name: 'rejects nested .. traversal', manifest: traversal, date: '2026-11-17', slot: 'afternoon', want: undefined },
+      { name: 'rejects bare ..', manifest: traversal, date: '2026-11-17', slot: 'evening', want: undefined },
+      { name: 'whitespace-only slot', manifest: sparse, date: '2026-11-17', slot: 'morning', want: undefined },
+      { name: 'missing slot', manifest: sparse, date: '2026-11-17', slot: 'afternoon', want: undefined },
+      { name: 'undefined manifest', manifest: undefined, date: '2026-11-17', slot: 'morning', want: undefined },
+      { name: 'null manifest', manifest: null, date: '2026-11-17', slot: 'morning', want: undefined },
+      { name: 'manifest without target_date', manifest: {}, date: '2026-11-17', slot: 'morning', want: undefined },
+      { name: 'undefined dateStr', manifest: valid, date: undefined, slot: 'morning', want: undefined },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(resolveDailyManifestSpriteUrl('ghibli_pack', tc.manifest, tc.date, tc.slot, tc.base)).toBe(tc.want);
+      });
+    }
   });
 });
-
-
