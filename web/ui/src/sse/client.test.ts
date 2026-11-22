@@ -69,24 +69,34 @@ describe('EventStreamClient', () => {
       expect(client.getLastEventId()).toBe('evt_42');
     });
 
-    it('appends to an existing query string', () => {
-      const client = makeClient({ lastEventId: 'evt_7', createEventSource: (url) => new FakeEventSource(url) });
-      const withQuery = new EventStreamClient('api/events?node=kitchen', { lastEventId: 'evt_7' });
-      expect(withQuery.getConnectionURL()).toBe('api/events?node=kitchen&lastEventId=evt_7');
-      expect(client.getConnectionURL()).toBe('api/events?lastEventId=evt_7');
-    });
-
-    it('preserves hash fragments with query and path URLs', () => {
-      const withHash = new EventStreamClient('api/events#section1', { lastEventId: 'evt_99' });
-      expect(withHash.getConnectionURL()).toBe('api/events?lastEventId=evt_99#section1');
-
-      const withQueryAndHash = new EventStreamClient('api/events?filter=all#summary', {
+    const urls: { name: string; url: string; lastEventId: string | null; want: string }[] = [
+      { name: 'omits the parameter when no event id is known', url: 'api/events', lastEventId: null, want: 'api/events' },
+      { name: 'adds the parameter to a bare path', url: 'api/events', lastEventId: 'evt_7', want: 'api/events?lastEventId=evt_7' },
+      {
+        name: 'appends to an existing query string',
+        url: 'api/events?node=kitchen',
+        lastEventId: 'evt_7',
+        want: 'api/events?node=kitchen&lastEventId=evt_7',
+      },
+      {
+        name: 'keeps a hash fragment after the parameter',
+        url: 'api/events#section1',
         lastEventId: 'evt_99',
+        want: 'api/events?lastEventId=evt_99#section1',
+      },
+      {
+        name: 'keeps a hash fragment after an existing query',
+        url: 'api/events?filter=all#summary',
+        lastEventId: 'evt_99',
+        want: 'api/events?filter=all&lastEventId=evt_99#summary',
+      },
+    ];
+    for (const tc of urls) {
+      it(`connection URL: ${tc.name}`, () => {
+        const client = new EventStreamClient(tc.url, { lastEventId: tc.lastEventId });
+        expect(client.getConnectionURL()).toBe(tc.want);
       });
-      expect(withQueryAndHash.getConnectionURL()).toBe(
-        'api/events?filter=all&lastEventId=evt_99#summary',
-      );
-    });
+    }
 
     it('allows mutating lastEventId via setLastEventId with whitespace normalization', () => {
       const client = makeClient();
@@ -101,12 +111,6 @@ describe('EventStreamClient', () => {
 
       client.setLastEventId(null);
       expect(client.getLastEventId()).toBeNull();
-    });
-
-    it('omits the parameter when no event id is known', () => {
-      const client = makeClient();
-      client.connect();
-      expect(itemAt(FakeEventSource.instances, 0).url).toBe('api/events');
     });
 
     it('reset forgets the resume point', () => {
