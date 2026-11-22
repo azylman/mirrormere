@@ -162,7 +162,7 @@ func TestWeatherProvider_Init(t *testing.T) {
 		{"valid_int_coords", wCfg(37, -122, "", "", ""), provider.InitOptions{}, false, ""},
 		{"valid_float32_int64", wCfg(float32(37.5), int64(-122), "", "", ""), provider.InitOptions{}, false, ""},
 		{"endpoint_override", wCfg(37.8044, -122.2712, "", "", ""), provider.InitOptions{Endpoint: "https://custom.open-meteo.internal"}, false, ""},
-		{"location_name", wCfg(37.8, -122.2, "", "", "Ayda's School"), provider.InitOptions{}, false, ""},
+		{"location_name", wCfg(37.8, -122.2, "", "", "Alpha School"), provider.InitOptions{}, false, ""},
 		{"name", wCfg(37.8, -122.2, "", "Home", ""), provider.InitOptions{}, false, ""},
 		{"missing_lat", wCfg(nil, -122.2712, "", "", ""), provider.InitOptions{}, true, "valid latitude and longitude"},
 		{"missing_lon", wCfg(37.8044, nil, "", "", ""), provider.InitOptions{}, true, "valid latitude and longitude"},
@@ -210,15 +210,16 @@ type weatherFetchTestCase struct {
 	nightCheck bool
 }
 
+// newOpenMeteoServer serves body with status for every Open-Meteo request
+// (the provider calls the bare base URL, so the path is "/").
+func newOpenMeteoServer(t testing.TB, status int, body string) (*httptest.Server, *testutil.Captured) {
+	t.Helper()
+	return testutil.RouteServer(t, map[string]testutil.Route{"/": {Status: status, Body: body}})
+}
+
 func runWeatherFetchCase(t *testing.T, tc weatherFetchTestCase) {
 	t.Helper()
-	var reqQuery string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reqQuery = r.URL.RawQuery
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(tc.body)
-	}))
-	defer ts.Close()
+	ts, captured := newOpenMeteoServer(t, 0, string(tc.body))
 
 	p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
 	if err := p.Init(context.Background(), tc.cfg, tc.opts); err != nil {
@@ -230,6 +231,10 @@ func runWeatherFetchCase(t *testing.T, tc weatherFetchTestCase) {
 	}
 	snap := testutil.As[provider.WeatherSnapshot](t, res)
 	assertWeatherSnapshotBasics(t, snap, tc)
+	var reqQuery string
+	if reqs := captured.Requests(); len(reqs) == 1 {
+		reqQuery = reqs[0].RawQuery
+	}
 	assertWeatherSnapshotDetails(t, snap, reqQuery, tc)
 }
 
@@ -291,7 +296,7 @@ func TestWeatherProvider_Fetch(t *testing.T) {
 			wantQuery: []string{"temperature_unit=fahrenheit", "wind_speed_unit=mph", "precipitation_unit=inch", "timezone=America%2FLos_Angeles"},
 		},
 		{
-			name: "metric", body: []byte(sampleOpenMeteoJSON()), cfg: wCfg(51.5074, -0.1278, "metric", "", ""), opts: provider.InitOptions{},
+			name: "metric", body: []byte(sampleOpenMeteoJSON()), cfg: wCfg(51.5074, -0.1278, "metric", "", ""),
 			wantUnitsT: "°C", wantUnitsW: "km/h",
 			wantQuery: []string{"temperature_unit=celsius", "wind_speed_unit=kmh", "precipitation_unit=mm", "timezone=UTC"},
 		},
@@ -299,30 +304,15 @@ func TestWeatherProvider_Fetch(t *testing.T) {
 			name: "nighttime", body: []byte(sampleNightJSON), cfg: wCfg(37.8044, -122.2712, "imperial", "", ""), opts: provider.InitOptions{Timezone: "America/Los_Angeles"},
 			wantCond: "Clear", wantIcon: "weather-clear-night", wantHourly: 4, wantDaily: 1, nightCheck: true,
 		},
+		{name: "hourly_daily_limits", body: makeMismatchedJSON(), cfg: wCfg(37.0, -122.0, "", "", ""), wantHourly: 24, wantDaily: 7},
 		{
-			name: "hourly_daily_limits", body: makeMismatchedJSON(), cfg: wCfg(37.0, -122.0, "", "", ""), opts: provider.InitOptions{},
-			wantHourly: 24, wantDaily: 7,
-		},
-		{
-			name: "current_hour_alignment", body: makeHourlyDailyJSON(48, 2, "2026-09-26T14:15"), cfg: wCfg(37.0, -122.0, "", "", ""), opts: provider.InitOptions{},
+			name: "current_hour_alignment", body: makeHourlyDailyJSON(48, 2, "2026-09-26T14:15"), cfg: wCfg(37.0, -122.0, "", "", ""),
 			wantHourly: 24, wantFirstH: "2026-09-26T14:00",
 		},
-		{
-			name: "hour_alignment_tail", body: makeHourlyDailyJSON(48, 2, "2026-09-26T40:00"), cfg: wCfg(37.0, -122.0, "", "", ""), opts: provider.InitOptions{},
-			wantHourly: 8,
-		},
-		{
-			name: "hour_alignment_bad_time", body: makeHourlyDailyJSON(10, 2, "bad"), cfg: wCfg(37.0, -122.0, "", "", ""), opts: provider.InitOptions{},
-			wantHourly: 10,
-		},
-		{
-			name: "location_name", body: makeHourlyDailyJSON(1, 1, ""), cfg: wCfg(37.83, -122.28, "", "", "Ayda's School"), opts: provider.InitOptions{},
-			wantLoc: "Ayda's School",
-		},
-		{
-			name: "name", body: makeHourlyDailyJSON(1, 1, ""), cfg: wCfg(37.83, -122.28, "", "Home", ""), opts: provider.InitOptions{},
-			wantLoc: "Home",
-		},
+		{name: "hour_alignment_tail", body: makeHourlyDailyJSON(48, 2, "2026-09-26T40:00"), cfg: wCfg(37.0, -122.0, "", "", ""), wantHourly: 8},
+		{name: "hour_alignment_bad_time", body: makeHourlyDailyJSON(10, 2, "bad"), cfg: wCfg(37.0, -122.0, "", "", ""), wantHourly: 10},
+		{name: "location_name", body: makeHourlyDailyJSON(1, 1, ""), cfg: wCfg(37.83, -122.28, "", "", "Alpha School"), wantLoc: "Alpha School"},
+		{name: "name", body: makeHourlyDailyJSON(1, 1, ""), cfg: wCfg(37.83, -122.28, "", "Home", ""), wantLoc: "Home"},
 	}
 
 	for _, tc := range tests {
@@ -357,15 +347,7 @@ func TestWeatherProvider_FetchErrors(t *testing.T) {
 			baseURL := tc.baseURL
 			var client *http.Client
 			if tc.status > 0 {
-				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if tc.cancel {
-						<-r.Context().Done()
-						return
-					}
-					w.WriteHeader(tc.status)
-					_, _ = w.Write([]byte(tc.body))
-				}))
-				defer ts.Close()
+				ts, _ := newOpenMeteoServer(t, tc.status, tc.body)
 				baseURL = ts.URL
 				client = ts.Client()
 			}

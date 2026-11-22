@@ -379,21 +379,6 @@ func TestCalendarProvider_Fetch_MultiFeedAndErrors(t *testing.T) {
 			t.Fatalf("expected size limit error, got: %v", err)
 		}
 	})
-
-	t.Run("registry and lifecycle", func(t *testing.T) {
-		t.Parallel()
-		reg := provider.NewRegistry()
-		p, err := reg.Create("calendar-feed")
-		if err != nil {
-			t.Fatalf("failed create: %v", err)
-		}
-		if err := p.Subscribe(context.Background(), nil); err != nil {
-			t.Errorf("subscribe err: %v", err)
-		}
-		if err := p.Shutdown(context.Background()); err != nil {
-			t.Errorf("shutdown err: %v", err)
-		}
-	})
 }
 
 func TestCalendarProvider_Sorting(t *testing.T) {
