@@ -262,7 +262,7 @@ func newCoord(r provider.Registry, b *eventstest.Broadcaster, s *mockStateSink, 
 
 func TestProviderCoordinator_ZeroPollingOptimizations(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ id, typ string }{{"spacer-tile", "spacer"}, {"chromecast-tile", "live-view"}} {
+	for _, tc := range []struct{ id, typ string }{{"spacer-tile", "spacer"}, {"chromecast-tile", "live-view"}, {"chat", "chat-log"}} {
 		b, s := &eventstest.Broadcaster{}, newMockStateSink()
 		coord := newCoord(nil, b, s, mkSnap("", map[string]*domain.Package{tc.typ: mkPkg(tc.typ, tc.typ, 0, nil)}, mkWidget(tc.id, tc.typ, 30, nil)))
 		p, ok := coord.Cache().Get(tc.id)
@@ -274,15 +274,8 @@ func TestProviderCoordinator_ZeroPollingOptimizations(t *testing.T) {
 	}
 }
 
-func TestProviderCoordinator_LifecycleAndSWR(t *testing.T) {
+func TestProviderCoordinator_HealthyFetchAndManualRefresh(t *testing.T) {
 	t.Parallel()
-	assertCoordinatorHealthyWeatherAndRefresh(t)
-	assertCoordinatorStockDegradedAndRecovery(t)
-	assertCoordinatorFailuresAndPushUpdate(t)
-}
-
-func assertCoordinatorHealthyWeatherAndRefresh(t *testing.T) {
-	t.Helper()
 	mockP1, b1, s1 := newControllableMockProvider(), &eventstest.Broadcaster{}, newMockStateSink()
 	coord1 := newCoord(regOne("mock-weather", mockP1), b1, s1, mkSnap("", nil, config.WidgetConfig{
 		ID: "weather-tile", Type: "mock-weather", Dimensions: []int{2, 1}, RefreshIntervalSeconds: new(60),
@@ -301,8 +294,8 @@ func assertCoordinatorHealthyWeatherAndRefresh(t *testing.T) {
 	}
 }
 
-func assertCoordinatorStockDegradedAndRecovery(t *testing.T) {
-	t.Helper()
+func TestProviderCoordinator_DegradedKeepsLastGoodAndRecovers(t *testing.T) {
+	t.Parallel()
 	mockStocks := newControllableMockProvider()
 	mockStocks.fetchFunc = func(ctx context.Context) (any, error) { return map[string]any{"price": 150.0}, nil }
 	bStocks, sStocks := &eventstest.Broadcaster{}, newMockStateSink()
@@ -342,8 +335,8 @@ func assertCoordinatorStockDegradedAndRecovery(t *testing.T) {
 	}
 }
 
-func assertCoordinatorFailuresAndPushUpdate(t *testing.T) {
-	t.Helper()
+func TestProviderCoordinator_ColdBootErrorsRecoverOnPushUpdate(t *testing.T) {
+	t.Parallel()
 	regFail := provider.NewRegistry()
 	mockFail, mockInitFail := newControllableMockProvider(), newControllableMockProvider()
 	mockFail.fetchFunc = func(ctx context.Context) (any, error) { return nil, errors.New("upstream unreachable") }
@@ -369,16 +362,8 @@ func assertCoordinatorFailuresAndPushUpdate(t *testing.T) {
 	}
 }
 
-func TestProviderCoordinator_PushSubscriptionAndAtomicity(t *testing.T) {
+func TestProviderCoordinator_SubscribedPushUpdatesCache(t *testing.T) {
 	t.Parallel()
-	assertCoordinatorStreamingProvider(t)
-	assertCoordinatorDynamicProviderUpdate(t)
-	assertCoordinatorAtomicUpdateInterleaving(t)
-	assertCoordinatorTimezoneUpdates(t)
-}
-
-func assertCoordinatorStreamingProvider(t *testing.T) {
-	t.Helper()
 	mockStream, bStream, sStream := newControllableMockProvider(), &eventstest.Broadcaster{}, newMockStateSink()
 	coordStream := newCoord(regOne("streaming-provider", mockStream), bStream, sStream, mkSnap("", nil, mkWidget("streaming-tile", "streaming-provider", 0, nil)))
 	defer coordStream.Stop()
@@ -396,8 +381,8 @@ func assertCoordinatorStreamingProvider(t *testing.T) {
 	}
 }
 
-func assertCoordinatorDynamicProviderUpdate(t *testing.T) {
-	t.Helper()
+func TestProviderCoordinator_UpdateConfigDropsStalePushes(t *testing.T) {
+	t.Parallel()
 	mockP1, mockP2, mockRem := newControllableMockProvider(), newControllableMockProvider(), newControllableMockProvider()
 	regDyn := regSeq("dynamic-provider", mockP1, mockP2)
 	regDyn.Register("removable-provider", func() provider.Provider { return mockRem })
@@ -433,8 +418,8 @@ func assertCoordinatorDynamicProviderUpdate(t *testing.T) {
 	}
 }
 
-func assertCoordinatorAtomicUpdateInterleaving(t *testing.T) {
-	t.Helper()
+func TestProviderCoordinator_UpdateConfigWaitsForInFlightPush(t *testing.T) {
+	t.Parallel()
 	mockA1, mockA2 := newControllableMockProvider(), newControllableMockProvider()
 	hookCalled, releaseHook := make(chan struct{}, 1), make(chan struct{})
 	coordAtom := provider.NewCoordinator(provider.CoordinatorConfig{
@@ -502,8 +487,8 @@ func TestProviderCoordinator_LiveConfigReload(t *testing.T) {
 	}
 }
 
-func assertCoordinatorTimezoneUpdates(t *testing.T) {
-	t.Helper()
+func TestProviderCoordinator_TimezoneUpdateReinitializesProvider(t *testing.T) {
+	t.Parallel()
 	var (
 		instances []*controllableMockProvider
 		mu        sync.Mutex

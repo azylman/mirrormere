@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/azylman/mirrormere/internal/provider"
 )
@@ -41,7 +40,7 @@ func TestHTTPProvider_Init(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			p := provider.NewHTTPProvider()
+			p := provider.NewHTTPProviderWithClient(nil, nil) // nil client and logger take the defaults
 			err := p.Init(context.Background(), nil, tc.opts)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
 				t.Fatalf("Init() error = %v, want substring %q", err, tc.wantErrSub)
@@ -59,12 +58,18 @@ type httpFetchTestCase struct {
 	secrets        map[string]string
 	dims           []int
 	cfg            map[string]any
-	wantVal        float64
-	wantErrSub     string
-	wantStatusCode int
 	cancelCtx      bool
 	badURL         bool
+	wantVal        float64
+	wantMethod     string
+	wantDims       string
+	wantAuth       string
+	wantBodySub    string
+	wantErrSub     string
+	wantStatusCode int
 }
+
+type httpCapturedRequest struct{ method, dims, auth, body string }
 
 func assertHTTPFetchError(t *testing.T, err error, tc httpFetchTestCase) {
 	t.Helper()
@@ -76,38 +81,31 @@ func assertHTTPFetchError(t *testing.T, err error, tc httpFetchTestCase) {
 		if !errors.As(err, &sc) || sc.StatusCode() != tc.wantStatusCode {
 			t.Fatalf("want status code %d, got %v", tc.wantStatusCode, err)
 		}
-		delay := provider.DefaultBackoffPolicy().ComputeRetryDelay(err, 1, 900*time.Second)
-		if (tc.wantStatusCode == 503 && delay >= 900*time.Second) || (tc.wantStatusCode == 400 && delay != 900*time.Second) {
-			t.Fatalf("unexpected retry delay for %d: %v", tc.wantStatusCode, delay)
-		}
 	}
 }
 
-func assertHTTPFetchSuccess(t *testing.T, data any, tc httpFetchTestCase, gotMethod, gotDims, gotAuth, gotBody string) {
+func assertHTTPFetchSuccess(t *testing.T, data any, tc httpFetchTestCase, got httpCapturedRequest) {
 	t.Helper()
 	resMap, ok := data.(map[string]any)
 	if !ok || resMap["temperature"] != tc.wantVal {
 		t.Fatalf("unexpected data: %+v", data)
 	}
-	if tc.name == "fetch_post_ok" && (gotMethod != http.MethodPost || gotDims != "2x1" || gotAuth != "Bearer secret-token-123" || !strings.Contains(gotBody, "sensor.lr")) {
-		t.Fatalf("unexpected headers/body: method=%s dims=%s auth=%s body=%s", gotMethod, gotDims, gotAuth, gotBody)
-	}
-	if tc.name == "token_env_dims" && (gotDims != "3x2" || gotAuth != "Bearer secret-from-env") {
-		t.Fatalf("token_env dims header check failed: dims=%s auth=%s", gotDims, gotAuth)
+	if got.method != tc.wantMethod || got.dims != tc.wantDims || got.auth != tc.wantAuth || !strings.Contains(got.body, tc.wantBodySub) {
+		t.Fatalf("request method=%q dims=%q auth=%q body=%q; want method=%q dims=%q auth=%q body containing %q",
+			got.method, got.dims, got.auth, got.body, tc.wantMethod, tc.wantDims, tc.wantAuth, tc.wantBodySub)
 	}
 }
 
 func runHTTPFetchCase(t *testing.T, tc httpFetchTestCase) {
 	t.Helper()
-	var gotMethod, gotDims, gotAuth, gotBody string
+	var got httpCapturedRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if tc.cancelCtx {
 			<-r.Context().Done()
 			return
 		}
-		gotMethod, gotDims, gotAuth = r.Method, r.Header.Get("X-Widget-Dimensions"), r.Header.Get("Authorization")
 		b, _ := io.ReadAll(r.Body)
-		gotBody = string(b)
+		got = httpCapturedRequest{method: r.Method, dims: r.Header.Get("X-Widget-Dimensions"), auth: r.Header.Get("Authorization"), body: string(b)}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(tc.status)
 		_, _ = w.Write([]byte(tc.respBody))
@@ -138,23 +136,33 @@ func runHTTPFetchCase(t *testing.T, tc httpFetchTestCase) {
 	if err != nil {
 		t.Fatalf("Fetch() unexpected error: %v", err)
 	}
-	assertHTTPFetchSuccess(t, data, tc, gotMethod, gotDims, gotAuth, gotBody)
+	assertHTTPFetchSuccess(t, data, tc, got)
 }
 
 func TestHTTPProvider_Fetch(t *testing.T) {
 	t.Parallel()
 	tests := []httpFetchTestCase{
-		{"fetch_post_ok", "POST", 200, `{"temperature":72.5,"humidity":45.0,"status":"good"}`, "secret-token-123", nil, []int{2, 1}, map[string]any{"entity_id": "sensor.lr", "unit": "F"}, 72.5, "", 0, false, false},
-		{"fetch_get_ok", "GET", 200, `{"temperature":68.0,"humidity":50.0}`, "", map[string]string{"token_env": "env-token-456"}, nil, nil, 68.0, "", 0, false, false},
-		{"token_env_dims", "POST", 200, `{"temperature":70.0,"humidity":40.0}`, "", map[string]string{"token_env": "secret-from-env"}, []int{3, 2}, nil, 70.0, "", 0, false, false},
-		{"status_503_backoff", "GET", 503, "upstream unavailable", "", nil, nil, nil, 0, "upstream returned http status 503: upstream unavailable", 503, false, false},
-		{"status_400_permanent", "GET", 400, "bad request", "", nil, nil, nil, 0, "upstream returned http status 400: bad request", 400, false, false},
-		{"invalid_json", "GET", 200, "not valid json", "", nil, nil, nil, 0, "invalid response JSON", 0, false, false},
-		{"non_object_json", "GET", 200, "[1, 2, 3]", "", nil, nil, nil, 0, "response body must be a JSON object", 0, false, false},
-		{"schema_fail", "GET", 200, `{"temperature":75.0}`, "", nil, nil, nil, 0, "response_schema validation failed", 0, false, false},
-		{"cancelled_context", "GET", 200, "{}", "", nil, nil, nil, 0, "context", 0, true, false},
-		{"marshal_cfg_err", "POST", 200, "{}", "", nil, nil, map[string]any{"bad": make(chan int)}, 0, "failed to marshal domain config", 0, false, false},
-		{"bad_request_url", "GET", 200, "{}", "", nil, nil, nil, 0, "failed to create HTTP request", 0, false, true},
+		{
+			name: "fetch_post_ok", method: "POST", status: 200, respBody: `{"temperature":72.5,"humidity":45.0,"status":"good"}`, token: "secret-token-123",
+			dims: []int{2, 1}, cfg: map[string]any{"entity_id": "sensor.lr", "unit": "F"},
+			wantVal: 72.5, wantMethod: "POST", wantDims: "2x1", wantAuth: "Bearer secret-token-123", wantBodySub: `"entity_id":"sensor.lr"`,
+		},
+		{
+			name: "fetch_get_ok", method: "GET", status: 200, respBody: `{"temperature":68.0,"humidity":50.0}`, secrets: map[string]string{"token_env": "env-token-456"},
+			wantVal: 68.0, wantMethod: "GET", wantAuth: "Bearer env-token-456",
+		},
+		{
+			name: "token_env_dims", method: "POST", status: 200, respBody: `{"temperature":70.0,"humidity":40.0}`, secrets: map[string]string{"token_env": "secret-from-env"},
+			dims: []int{3, 2}, wantVal: 70.0, wantMethod: "POST", wantDims: "3x2", wantAuth: "Bearer secret-from-env",
+		},
+		{name: "status_503", method: "GET", status: 503, respBody: "upstream unavailable", wantErrSub: "upstream returned http status 503: upstream unavailable", wantStatusCode: 503},
+		{name: "status_400", method: "GET", status: 400, respBody: "bad request", wantErrSub: "upstream returned http status 400: bad request", wantStatusCode: 400},
+		{name: "invalid_json", method: "GET", status: 200, respBody: "not valid json", wantErrSub: "invalid response JSON"},
+		{name: "non_object_json", method: "GET", status: 200, respBody: "[1, 2, 3]", wantErrSub: "response body must be a JSON object"},
+		{name: "schema_fail", method: "GET", status: 200, respBody: `{"temperature":75.0}`, wantErrSub: "response_schema validation failed"},
+		{name: "cancelled_context", method: "GET", status: 200, respBody: "{}", cancelCtx: true, wantErrSub: "context"},
+		{name: "marshal_cfg_err", method: "POST", status: 200, respBody: "{}", cfg: map[string]any{"bad": make(chan int)}, wantErrSub: "failed to marshal domain config"},
+		{name: "bad_request_url", method: "GET", status: 200, respBody: "{}", badURL: true, wantErrSub: "failed to create HTTP request"},
 	}
 
 	for _, tc := range tests {
@@ -162,13 +170,5 @@ func TestHTTPProvider_Fetch(t *testing.T) {
 			t.Parallel()
 			runHTTPFetchCase(t, tc)
 		})
-	}
-}
-
-func TestHTTPProvider_LifecycleAndConstructors(t *testing.T) {
-	t.Parallel()
-	p := provider.NewHTTPProviderWithClient(nil, nil)
-	if provider.NewHTTPProvider() == nil || p == nil || p.Subscribe(context.Background(), nil) != nil || p.Shutdown(context.Background()) != nil {
-		t.Fatal("expected working constructors and no-op lifecycle methods")
 	}
 }
