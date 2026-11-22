@@ -1,22 +1,13 @@
-import { cleanup, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { render } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 import sampleData from '../../../../../widgets/chat-log/testdata/sample.json';
 import { useDisplayStore } from '../../store';
 import { ChatLogWidget } from './ChatLogWidget';
 import { itemAt } from '../../test-utils/lookup';
 
-const initialStore = useDisplayStore.getState();
-
 describe('ChatLogWidget', () => {
-  beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
-  });
 
-  afterEach(() => {
-    cleanup();
-  });
-
-  it('renders messages with sample.json data matching legacy widget.html', () => {
+  it('renders messages from the sample data', () => {
     useDisplayStore.setState({
       widgets: {
         'chat-1': {

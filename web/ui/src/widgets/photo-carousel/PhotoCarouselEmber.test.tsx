@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render, fireEvent, act } from '@testing-library/react';
+import { render, fireEvent, act } from '@testing-library/react';
 import { PhotoCarouselWidget } from './PhotoCarouselWidget';
 import type { PhotoAlbumConfig } from './photoCarouselHelpers';
 import { useDisplayStore } from '../../store';
@@ -18,21 +18,17 @@ function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
 
 describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
   const widgetId = 'w-photo-1';
-  const initialStore = useDisplayStore.getState();
   const originalEmberBridge = window.EmberBridge;
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    useDisplayStore.setState(initialStore, true);
     fetchMock = vi.fn().mockResolvedValue({ ok: true });
     window.fetch = fetchMock as unknown as typeof fetch;
   });
 
   afterEach(() => {
-    cleanup();
     vi.clearAllTimers();
-    vi.useRealTimers();
     window.EmberBridge = originalEmberBridge;
     delete window.onEmberPhotosSynced;
   });

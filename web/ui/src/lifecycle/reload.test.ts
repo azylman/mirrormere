@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyStyleReload,
   createReloadController,
@@ -37,10 +37,6 @@ function makeEnv(overrides: Partial<ReloadEnvironment> = {}) {
 describe('boot_id deployment reload', () => {
   beforeEach(() => {
     vi.useFakeTimers({ now: new Date('2026-10-31T12:00:00Z') });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
   });
 
   it('records the first boot_id without reloading', () => {
@@ -114,11 +110,6 @@ describe('system.reload debounce', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(console, 'info').mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
   });
 
   it('reloads once after a burst of events', () => {

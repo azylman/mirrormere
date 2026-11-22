@@ -1,4 +1,4 @@
-import { act, cleanup, render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { Profiler, useContext, useLayoutEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
@@ -154,9 +154,6 @@ describe('Carousel', () => {
   });
 
   afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
     useDisplayStore.setState(initial, true);
     document.body.innerHTML = '';
     document.body.removeAttribute('data-animating');

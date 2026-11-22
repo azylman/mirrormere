@@ -1,5 +1,5 @@
-import { act, cleanup, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Carousel } from '../carousel/Carousel';
 import { WidgetHost } from './WidgetHost';
 import { useDisplayStore } from '../store';
@@ -120,12 +120,6 @@ describe('WidgetHost widget.reload', () => {
     useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 1, totalScreens: 3 } });
   });
 
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
   it('re-hydrates each mounted widget of the reloaded type exactly once, on every pane', async () => {
     const fetchMock = stubApi();
     render(<Carousel />);
@@ -173,11 +167,6 @@ describe('WidgetHost widget.reload', () => {
 describe('WidgetHost reload during the first hydrate', () => {
   beforeEach(() => {
     useDisplayStore.setState(initial, true);
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
   });
 
   const cell = () => <WidgetHost id="a-0" origin={[0, 0]} dimensions={[1, 1]} />;
@@ -236,11 +225,6 @@ describe('WidgetHost remount', () => {
     useDisplayStore.setState(initial, true);
   });
 
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-  });
-
   const cell = () => <WidgetHost id="a-0" origin={[0, 0]} dimensions={[1, 1]} />;
 
   it('re-hydrates on remount when a reload of its type arrived while it was unmounted', async () => {
@@ -271,12 +255,6 @@ describe('WidgetHost remount', () => {
 describe('WidgetHost hydrate rejection', () => {
   beforeEach(() => {
     useDisplayStore.setState(initial, true);
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
   });
 
   const cell = () => <WidgetHost id="a-0" origin={[0, 0]} dimensions={[1, 1]} />;
@@ -326,12 +304,6 @@ describe('WidgetHost dimension change', () => {
     useDisplayStore.setState(initial, true);
   });
 
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
   it('re-hydrates with fresh fetch when dimensions prop changes', async () => {
     const fetchMock = stubApi();
     const { rerender } = render(<WidgetHost id="a-0" origin={[0, 0]} dimensions={[1, 1]} />);
@@ -348,5 +320,4 @@ describe('WidgetHost dimension change', () => {
     expect(hydrations(fetchMock, 'a-0')).toBe(2);
   });
 });
-
 

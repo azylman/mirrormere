@@ -3,38 +3,21 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useDisplayStore } from '../store';
 import {
   AudioController,
-  DUCK_MULTIPLIER,
-  DUCK_VOICE_STATES,
-  MAX_GAIN,
   computeEffectiveVolume,
   useAudioController,
 } from './useAudio';
 
 describe('useAudio & AudioController', () => {
-  const initialStore = useDisplayStore.getState();
 
   beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
     delete window.audioManager;
   });
 
   afterEach(() => {
-    useDisplayStore.setState(initialStore, true);
     delete window.audioManager;
   });
 
   describe('constants & computeEffectiveVolume', () => {
-    it('exports expected constants', () => {
-      expect(MAX_GAIN).toBe(0.80);
-      expect(DUCK_MULTIPLIER).toBe(0.20);
-      expect(DUCK_VOICE_STATES.has('listening')).toBe(true);
-      expect(DUCK_VOICE_STATES.has('transcribing')).toBe(true);
-      expect(DUCK_VOICE_STATES.has('thinking')).toBe(true);
-      expect(DUCK_VOICE_STATES.has('synthesizing')).toBe(true);
-      expect(DUCK_VOICE_STATES.has('speaking')).toBe(true);
-      expect(DUCK_VOICE_STATES.has('idle')).toBe(false);
-    });
-
     it('computes effective volume correctly under normal conditions', () => {
       expect(computeEffectiveVolume(75)).toBe(0.60);
       expect(computeEffectiveVolume(100)).toBe(0.80);
@@ -96,8 +79,6 @@ describe('useAudio & AudioController', () => {
       expect(ctrl.isDucked).toBe(true);
       expect(ctrl.ducked).toBe(true);
     });
-
-
 
     it('registers media elements and applies volume immediately', () => {
       const ctrl = new AudioController({ initialVolume: 75 });
@@ -192,8 +173,6 @@ describe('useAudio & AudioController', () => {
       unmount();
       expect(window.audioManager).toBeUndefined();
     });
-
-
 
     it('reacts to store audio updates', () => {
       const { result } = renderHook(() => useAudioController());

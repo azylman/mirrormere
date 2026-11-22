@@ -1,6 +1,6 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from './store';
 import { App } from './App';
 
@@ -30,10 +30,6 @@ function ParentWithUnrelatedState() {
 }
 
 describe('App', () => {
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-  });
 
   it('renders the display shell with Header and the carousel grid canvas', async () => {
     vi.stubGlobal(

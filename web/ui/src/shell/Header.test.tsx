@@ -1,5 +1,5 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
 import { Header } from './Header';
 
@@ -43,12 +43,6 @@ describe('Header component', () => {
         return new Response(JSON.stringify({}), { status: 200 });
       }),
     );
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
   });
 
   it('renders all canonical header zones and elements', () => {

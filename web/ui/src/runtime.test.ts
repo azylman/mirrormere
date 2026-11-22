@@ -1,7 +1,7 @@
 import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startRuntime, type Runtime } from './runtime';
-import { FakeEventSource } from './sse/fake-event-source';
+import { FakeEventSource } from './test-utils/fake-event-source';
 import { useDisplayStore } from './store';
 import { entryAt, itemAt } from './test-utils/lookup';
 
@@ -19,7 +19,6 @@ describe('startRuntime', () => {
   afterEach(() => {
     runtime?.dispose();
     runtime = null;
-    vi.restoreAllMocks();
   });
 
   it('opens exactly one EventSource, even when called twice', () => {

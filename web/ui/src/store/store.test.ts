@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BufferedEvent } from '../sse/batch';
 import type { WidgetDetailResponse } from '../sse/types';
 import { needsHydrate, reduceEvents, useDisplayStore } from './index';
@@ -37,11 +37,6 @@ function stubFetch(body: WidgetDetailResponse | ((url: string) => WidgetDetailRe
 describe('display store', () => {
   beforeEach(() => {
     useDisplayStore.setState(initial, true);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
   });
 
   describe('widget.update', () => {

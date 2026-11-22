@@ -26,12 +26,15 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     css: true,
+    setupFiles: ['src/test-utils/setup.ts'],
+    restoreMocks: true,
+    unstubGlobals: true,
     include: ['src/**/*.test.{ts,tsx}'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'json-summary'],
       include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/types.ts', 'src/sse/fake-event-source.ts'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/types.ts', 'src/test-utils/**'],
       thresholds: {
         statements: 95,
         branches: 90,

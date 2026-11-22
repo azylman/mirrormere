@@ -1,8 +1,8 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VideoSource } from '../sse/types';
 import { useDisplayStore } from '../store';
-import { HUD_ICONS, Hud, VideoHUDController } from './Hud';
+import { Hud, VideoHUDController } from './Hud';
 import {
   HudMuteIcon,
   HudNextIcon,
@@ -17,34 +17,19 @@ import { formatStreamTitle } from './api';
 import { formatDuration } from './useStreamProgress';
 
 describe('Hud component and declarative decomposition', () => {
-  const initialStore = useDisplayStore.getState();
 
   beforeEach(() => {
-    cleanup();
     document.body.innerHTML = '';
-    useDisplayStore.setState(initialStore, true);
     delete window.videoHUD;
     vi.useFakeTimers();
   });
 
   afterEach(() => {
-    vi.useRealTimers();
-    cleanup();
     document.body.innerHTML = '';
-    useDisplayStore.setState(initialStore, true);
     delete window.videoHUD;
   });
 
-  describe('HUD_ICONS export', () => {
-    it('contains all required svg icons', () => {
-      expect(HUD_ICONS.play).toContain('<svg');
-      expect(HUD_ICONS.pause).toContain('<svg');
-      expect(HUD_ICONS.mute).toContain('<svg');
-      expect(HUD_ICONS.unmute).toContain('<svg');
-      expect(HUD_ICONS.prev).toContain('<svg');
-      expect(HUD_ICONS.next).toContain('<svg');
-    });
-
+  describe('HudIcon components', () => {
     it('renders all dedicated HudIcon components as valid SVGs and hits memoization cache', () => {
       function IconWrapper({ count }: { count: number }) {
         return (
@@ -70,7 +55,7 @@ describe('Hud component and declarative decomposition', () => {
   });
 
   describe('<Hud /> DOM rendering & hierarchy', () => {
-    it('renders the complete HUD overlay hierarchy matching display.html lines 107-149', () => {
+    it('renders the complete HUD overlay hierarchy', () => {
       const { container } = render(
         <div id="video-stage">
           <Hud />

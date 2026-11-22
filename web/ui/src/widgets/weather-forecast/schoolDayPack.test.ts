@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_SCHOOL_DAY_THRESHOLDS,
   type DailyWeatherManifest,
   type SchoolDayThresholds,
   resolveBirthdayOverride,
@@ -143,12 +142,7 @@ describe('schoolDayPack utilities', () => {
       );
     });
 
-    it('uses DEFAULT_SCHOOL_DAY_THRESHOLDS when thresholds parameter is omitted', () => {
-      expect(DEFAULT_SCHOOL_DAY_THRESHOLDS.rainThresholdPct).toBe(35);
-      expect(DEFAULT_SCHOOL_DAY_THRESHOLDS.coldMaxF).toBe(49);
-      expect(DEFAULT_SCHOOL_DAY_THRESHOLDS.coolMaxF).toBe(64);
-      expect(DEFAULT_SCHOOL_DAY_THRESHOLDS.warmMaxF).toBe(77);
-
+    it('uses the default thresholds when thresholds parameter is omitted', () => {
       expect(resolveClothingConditionState(49, 0, 'weather-sunny', 'morning')).toBe('cold_puffer');
       expect(resolveClothingConditionState(50, 0, 'weather-sunny', 'morning')).toBe('morning_mild');
       expect(resolveClothingConditionState(64, 0, 'weather-sunny', 'afternoon')).toBe(

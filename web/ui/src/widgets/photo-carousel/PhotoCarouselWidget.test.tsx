@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render, fireEvent, act } from '@testing-library/react';
+import { render, fireEvent, act } from '@testing-library/react';
 import {
   PhotoCarouselWidget,
   getSizedPhotoURL,
@@ -268,17 +268,14 @@ describe('PhotoCarouselWidget helpers', () => {
 
 describe('PhotoCarouselWidget component', () => {
   const widgetId = 'w-photo-1';
-  const initialStore = useDisplayStore.getState();
 
   beforeEach(() => {
     vi.useFakeTimers();
-    useDisplayStore.setState(initialStore, true);
+    delete document.body.dataset.animating;
   });
 
   afterEach(() => {
-    cleanup();
     vi.clearAllTimers();
-    vi.useRealTimers();
     while (document.body.dataset.animating === '1') {
       endAnimation();
     }

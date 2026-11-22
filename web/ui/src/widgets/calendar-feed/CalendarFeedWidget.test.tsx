@@ -1,20 +1,10 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
 import { CalendarFeedWidget } from './CalendarFeedWidget';
 import { itemAt } from '../../test-utils/lookup';
 
-const initialStore = useDisplayStore.getState();
-
 describe('CalendarFeedWidget', () => {
-  beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    cleanup();
-  });
 
   it('renders loading state when entry.data is undefined, null, or unhydrated empty object', () => {
     // 1. undefined

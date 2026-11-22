@@ -1,11 +1,9 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LayoutEditorResponse } from '../sse/types';
 import { useDisplayStore } from '../store';
 import { LayoutEditor } from './LayoutEditor';
 import { itemAt } from '../test-utils/lookup';
-
-const initialStore = useDisplayStore.getState();
 
 const mockEditorData: LayoutEditorResponse = {
   allow_layout_edit: true,
@@ -90,15 +88,11 @@ function stubEditorFetch(
 
 describe('LayoutEditor component', () => {
   beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
     (document as unknown as { elementFromPoint?: unknown }).elementFromPoint = () => null;
   });
 
   afterEach(() => {
-    cleanup();
     delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
   });
 
   async function settle() {

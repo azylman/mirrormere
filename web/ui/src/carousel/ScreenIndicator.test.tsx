@@ -1,11 +1,8 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { ScreenIndicator } from './ScreenIndicator';
 
 describe('ScreenIndicator', () => {
-  afterEach(() => {
-    cleanup();
-  });
 
   it('renders dots according to total and marks active screen', () => {
     const onSelect = vi.fn();

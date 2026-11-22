@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render, fireEvent, act } from '@testing-library/react';
+import { render, fireEvent, act } from '@testing-library/react';
 import {
   PhotoCarouselWidget,
   PHOTO_CONTROLS_HIDE_MS,
@@ -42,17 +42,13 @@ function setWidgetPhotos(
 
 describe('PhotoCarouselWidget transport controls', () => {
   const widgetId = 'w-photo-1';
-  const initialStore = useDisplayStore.getState();
 
   beforeEach(() => {
     vi.useFakeTimers();
-    useDisplayStore.setState(initialStore, true);
   });
 
   afterEach(() => {
-    cleanup();
     vi.clearAllTimers();
-    vi.useRealTimers();
   });
 
   it('pauses automatic cycling when photo-pause-pill is clicked and auto-resumes after PHOTO_PAUSE_INACTIVITY_MS', async () => {

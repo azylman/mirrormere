@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render, fireEvent, createEvent, act } from '@testing-library/react';
+import { render, fireEvent, createEvent, act } from '@testing-library/react';
 import { LiveViewWidget, parseLiveViewConfig, computeStaggerDelayMs, activeAutoLiveStreams } from './LiveViewWidget';
 import { resolveCamerasStatusUrl } from './liveViewHelpers';
 import { useDisplayStore } from '../../store';
@@ -162,7 +162,6 @@ describe('LiveViewWidget helpers', () => {
 
 describe('LiveViewWidget component', () => {
   const widgetId = 'w-live-1';
-  const initialStore = useDisplayStore.getState();
   const seedWidget = (config: Record<string, unknown> = {}) => {
     useDisplayStore.setState({
       widgets: { [widgetId]: { meta: makeWidgetMeta(config), data: {}, state: 'ready', timestamp: '2026-10-31T12:00:00Z' } },
@@ -242,15 +241,11 @@ describe('LiveViewWidget component', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    useDisplayStore.setState(initialStore, true);
 
     originalPeerConnection = window.RTCPeerConnection;
     originalFetch = globalThis.fetch;
     originalPlay = HTMLMediaElement.prototype.play;
     originalPause = HTMLMediaElement.prototype.pause;
-
-    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
-    HTMLMediaElement.prototype.pause = vi.fn();
 
     lastPeerConnection = null;
     // @ts-expect-error mock RTCPeerConnection
@@ -279,9 +274,7 @@ describe('LiveViewWidget component', () => {
   });
 
   afterEach(() => {
-    cleanup();
     vi.clearAllTimers();
-    vi.useRealTimers();
     window.RTCPeerConnection = originalPeerConnection;
     globalThis.fetch = originalFetch;
     HTMLMediaElement.prototype.play = originalPlay;

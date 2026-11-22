@@ -1,6 +1,6 @@
 /* eslint-disable max-lines */
-import { cleanup, render, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import * as formatModule from '../format';
 import { useDisplayStore } from '../../store';
 import { WeatherForecastWidget } from './WeatherForecastWidget';
@@ -14,17 +14,7 @@ import {
   resolveSchoolDayTargetDate,
 } from './schoolDayPack';
 
-const initialStore = useDisplayStore.getState();
-
 describe('WeatherForecastWidget', () => {
-  beforeEach(() => {
-    useDisplayStore.setState(initialStore, true);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    cleanup();
-  });
 
   it('renders unnamed loading state without a header when data is {}', () => {
     useDisplayStore.setState({
@@ -807,9 +797,6 @@ describe('WeatherForecastWidget', () => {
 });
 
 describe('WeatherIcon component', () => {
-  afterEach(() => {
-    cleanup();
-  });
 
   const tokens = [
     'weather-sunny',
@@ -895,9 +882,6 @@ describe('WeatherIcon component', () => {
 });
 
 describe('WeatherHourlyGraph component', () => {
-  afterEach(() => {
-    cleanup();
-  });
 
   it('renders nothing when hourly data is empty or invalid', () => {
     const { container: emptyContainer } = render(<WeatherHourlyGraph hourly={[]} />);
