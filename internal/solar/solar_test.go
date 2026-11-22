@@ -29,36 +29,10 @@ func TestCalculateSunriseSunset(t *testing.T) {
 		wantSetH   int
 		wantErrSub string
 	}{
-		{
-			name:      "Oakland_EarlyOctober",
-			lat:       37.8044,
-			lon:       -122.2712,
-			date:      time.Date(2026, 10, 10, 12, 0, 0, 0, laLoc),
-			wantRiseH: 7,
-			wantSetH:  18,
-		},
-		{
-			name:      "Sydney_October",
-			lat:       -33.8688,
-			lon:       151.2093,
-			date:      time.Date(2026, 10, 10, 12, 0, 0, 0, sydLoc),
-			wantRiseH: 6,
-			wantSetH:  19,
-		},
-		{
-			name:       "HighArctic_WinterPolarNight",
-			lat:        85.0,
-			lon:        0.0,
-			date:       time.Date(2026, 12, 21, 12, 0, 0, 0, time.UTC),
-			wantErrSub: "sun never rises",
-		},
-		{
-			name:       "HighArctic_SummerPolarDay",
-			lat:        85.0,
-			lon:        0.0,
-			date:       time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC),
-			wantErrSub: "sun never sets",
-		},
+		{name: "NorthMidlatitude_October", lat: 37.8044, lon: -122.2712, date: time.Date(2026, 10, 10, 12, 0, 0, 0, laLoc), wantRiseH: 7, wantSetH: 18},
+		{name: "SouthMidlatitude_October", lat: -33.8688, lon: 151.2093, date: time.Date(2026, 10, 10, 12, 0, 0, 0, sydLoc), wantRiseH: 6, wantSetH: 19},
+		{name: "HighArctic_WinterPolarNight", lat: 85.0, lon: 0.0, date: time.Date(2026, 12, 21, 12, 0, 0, 0, time.UTC), wantErrSub: "sun never rises"},
+		{name: "HighArctic_SummerPolarDay", lat: 85.0, lon: 0.0, date: time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC), wantErrSub: "sun never sets"},
 	}
 
 	for _, tc := range tests {

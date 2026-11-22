@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -152,13 +153,17 @@ func TestHandler_GetScreens(t *testing.T) {
 		layout   ScreenLayoutSnapshot
 		wantCode int
 		wantSub  string
+		wantResp *api.ScreensResponse
 	}{
-		{"get_layout", http.MethodGet, true, layoutSnap, http.StatusOK, `"widget_id":"weather"`},
-		{"head_layout", http.MethodHead, true, layoutSnap, http.StatusOK, ""},
-		{"empty_layout", http.MethodGet, true, ScreenLayoutSnapshot{IntervalSeconds: 30}, http.StatusOK, `"screens":[]`},
-		{"options", http.MethodOptions, true, layoutSnap, http.StatusNoContent, ""},
-		{"post_not_allowed", http.MethodPost, true, layoutSnap, http.StatusMethodNotAllowed, "method not allowed"},
-		{"nil_controller", http.MethodGet, false, layoutSnap, http.StatusInternalServerError, "not configured"},
+		{"get_layout", http.MethodGet, true, layoutSnap, http.StatusOK, "", &api.ScreensResponse{CurrentScreen: 1, IntervalSeconds: 60, Screens: []api.ScreenLayout{
+			{Index: 0, Widgets: []api.WidgetPlacement{{WidgetID: "clock", Type: "clock", Origin: []int{0, 0}, Dimensions: []int{2, 1}}}},
+			{Index: 1, Widgets: []api.WidgetPlacement{{WidgetID: "weather", Origin: []int{2, 1}, Dimensions: []int{3, 2}}}},
+		}}},
+		{"head_layout", http.MethodHead, true, layoutSnap, http.StatusOK, "", nil},
+		{"empty_layout", http.MethodGet, true, ScreenLayoutSnapshot{IntervalSeconds: 30}, http.StatusOK, `"screens":[]`, nil},
+		{"options", http.MethodOptions, true, layoutSnap, http.StatusNoContent, "", nil},
+		{"post_not_allowed", http.MethodPost, true, layoutSnap, http.StatusMethodNotAllowed, "method not allowed", nil},
+		{"nil_controller", http.MethodGet, false, layoutSnap, http.StatusInternalServerError, "not configured", nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -172,24 +177,16 @@ func TestHandler_GetScreens(t *testing.T) {
 			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
 				t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
 			}
+			if tc.wantResp == nil {
+				return
+			}
+			var got api.ScreensResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if !reflect.DeepEqual(&got, tc.wantResp) {
+				t.Fatalf("response = %+v, want %+v", got, *tc.wantResp)
+			}
 		})
-	}
-}
-
-func TestHandler_GetScreensResponseShape(t *testing.T) {
-	t.Parallel()
-	h := NewHandler(&mockController{layout: ScreenLayoutSnapshot{CurrentScreen: 1, IntervalSeconds: 60, Screens: []layout.Screen{
-		{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "clock", Type: "clock", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(2, 1)}}},
-	}}})
-	rec := doReq(http.HandlerFunc(h.GetScreens), http.MethodGet, "/api/screens", "<nil>")
-	var resp api.ScreensResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.CurrentScreen != 1 || resp.IntervalSeconds != 60 || len(resp.Screens) != 1 || resp.Screens[0].Index != 0 {
-		t.Fatalf("unexpected response: %+v", resp)
-	}
-	if w := resp.Screens[0].Widgets[0]; w.WidgetID != "clock" || w.Type != "clock" || w.Origin[0] != 0 || w.Dimensions[0] != 2 || w.Dimensions[1] != 1 {
-		t.Errorf("unexpected widget placement: %+v", w)
 	}
 }

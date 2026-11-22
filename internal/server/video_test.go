@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -51,6 +52,27 @@ type videoTC struct {
 	wantCode           int
 }
 
+// videoStreamTC is videoTC plus the stream the coordinator must receive (nil: not asserted).
+type videoStreamTC struct {
+	name, method, body string
+	nilCoord           bool
+	coordErr           error
+	wantCode           int
+	wantStream         *video.VideoStream
+}
+
+func runVideoStreamCase(t *testing.T, tc videoStreamTC, pick func(*server.DefaultVideoHandler) http.HandlerFunc, path string) {
+	t.Helper()
+	h, mock := videoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
+	rec := doVideoReq(pick(h), tc.method, path, tc.body)
+	if rec.Code != tc.wantCode {
+		t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
+	}
+	if tc.wantStream != nil && !reflect.DeepEqual(mock.lastStream, *tc.wantStream) {
+		t.Fatalf("coordinator stream = %+v, want %+v", mock.lastStream, *tc.wantStream)
+	}
+}
+
 func doVideoReq(h http.HandlerFunc, m, p, b string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h(rec, httptest.NewRequest(m, p, strings.NewReader(b)))
@@ -68,15 +90,16 @@ func videoHandler(nilCoord bool, err error, state video.VideoState) (*server.Def
 func TestDefaultVideoHandler_GetVideoState(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name, method string
-		nilCoord     bool
-		wantCode     int
+		name, method  string
+		nilCoord      bool
+		wantCode      int
+		wantPrimaryID string
 	}{
-		{"ok_get", http.MethodGet, false, http.StatusOK},
-		{"ok_head", http.MethodHead, false, http.StatusOK},
-		{"options_cors", http.MethodOptions, false, http.StatusNoContent},
-		{"method_not_allowed", http.MethodPost, false, http.StatusMethodNotAllowed},
-		{"nil_coord", http.MethodGet, true, http.StatusInternalServerError},
+		{"ok_get", http.MethodGet, false, http.StatusOK, "cast"},
+		{"ok_head", http.MethodHead, false, http.StatusOK, ""},
+		{"options_cors", http.MethodOptions, false, http.StatusNoContent, ""},
+		{"method_not_allowed", http.MethodPost, false, http.StatusMethodNotAllowed, ""},
+		{"nil_coord", http.MethodGet, true, http.StatusInternalServerError, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,11 +114,12 @@ func TestDefaultVideoHandler_GetVideoState(t *testing.T) {
 			if rec.Code != tc.wantCode {
 				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
 			}
-			if tc.wantCode == http.StatusOK && tc.method == http.MethodGet {
-				var resp api.VideoStateResponse
-				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp.Primary == nil || resp.Primary.ID != "cast" {
-					t.Fatalf("unexpected resp: %v, %+v", err, resp)
-				}
+			if tc.wantPrimaryID == "" {
+				return
+			}
+			var resp api.VideoStateResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp.Primary == nil || resp.Primary.ID != tc.wantPrimaryID {
+				t.Fatalf("unexpected resp: %v, %+v", err, resp)
 			}
 		})
 	}
@@ -104,29 +128,27 @@ func TestDefaultVideoHandler_GetVideoState(t *testing.T) {
 func TestDefaultVideoHandler_PostVideoTrigger(t *testing.T) {
 	t.Parallel()
 	bodyValid := `{"id":"cast","stream_url":"http://stream","type":"webrtc","priority":"persistent","title":"Show","series":"S1","position":10,"duration":100}`
-	tests := []videoTC{
-		{"ok_trigger", http.MethodPost, bodyValid, false, nil, http.StatusOK},
-		{"default_priority", http.MethodPost, `{"id":"c2","stream_url":"http://stream"}`, false, nil, http.StatusOK},
-		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent},
-		{"method_not_allowed", http.MethodGet, "", false, nil, http.StatusMethodNotAllowed},
-		{"bad_json", http.MethodPost, "{invalid", false, nil, http.StatusBadRequest},
-		{"missing_id", http.MethodPost, `{"id":"","stream_url":"http://s"}`, false, nil, http.StatusBadRequest},
-		{"sentinel_all", http.MethodPost, `{"id":"all","stream_url":"http://s"}`, false, nil, http.StatusBadRequest},
-		{"sentinel_wildcard", http.MethodPost, `{"id":"*","stream_url":"http://s"}`, false, nil, http.StatusBadRequest},
-		{"coord_err", http.MethodPost, bodyValid, false, video.ErrInvalidPlayerState, http.StatusBadRequest},
-		{"nil_coord", http.MethodPost, bodyValid, true, nil, http.StatusInternalServerError},
+	triggered := &video.VideoStream{
+		ID: "cast", StreamURL: "http://stream", Type: "webrtc", Priority: "persistent", PlayerState: "playing",
+		Title: "Show", Series: "S1", Position: 10, Duration: 100,
+	}
+	defaulted := &video.VideoStream{ID: "c2", StreamURL: "http://stream", Type: "webrtc", Priority: "persistent", PlayerState: "playing"}
+	tests := []videoStreamTC{
+		{"ok_trigger", http.MethodPost, bodyValid, false, nil, http.StatusOK, triggered},
+		{"default_priority", http.MethodPost, `{"id":"c2","stream_url":"http://stream"}`, false, nil, http.StatusOK, defaulted},
+		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent, nil},
+		{"method_not_allowed", http.MethodGet, "", false, nil, http.StatusMethodNotAllowed, nil},
+		{"bad_json", http.MethodPost, "{invalid", false, nil, http.StatusBadRequest, nil},
+		{"missing_id", http.MethodPost, `{"id":"","stream_url":"http://s"}`, false, nil, http.StatusBadRequest, nil},
+		{"sentinel_all", http.MethodPost, `{"id":"all","stream_url":"http://s"}`, false, nil, http.StatusBadRequest, nil},
+		{"sentinel_wildcard", http.MethodPost, `{"id":"*","stream_url":"http://s"}`, false, nil, http.StatusBadRequest, nil},
+		{"coord_err", http.MethodPost, bodyValid, false, video.ErrInvalidPlayerState, http.StatusBadRequest, nil},
+		{"nil_coord", http.MethodPost, bodyValid, true, nil, http.StatusInternalServerError, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h, mock := videoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
-			rec := doVideoReq(h.PostVideoTrigger, tc.method, "/api/video/trigger", tc.body)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
-			}
-			if tc.name == "ok_trigger" && (mock.lastStream.Title != "Show" || mock.lastStream.Series != "S1" || mock.lastStream.Position != 10) {
-				t.Fatalf("unexpected stream metadata: %+v", mock.lastStream)
-			}
+			runVideoStreamCase(t, tc, func(h *server.DefaultVideoHandler) http.HandlerFunc { return h.PostVideoTrigger }, "/api/video/trigger")
 		})
 	}
 }
@@ -186,28 +208,22 @@ func TestDefaultVideoHandler_PostVideoAction(t *testing.T) {
 
 func TestDefaultVideoHandler_PostVideoState(t *testing.T) {
 	t.Parallel()
-	tests := []videoTC{
-		{"ok_state", http.MethodPost, `{"id":"cast","player_state":"playing","title":"Ep1","position":25.0}`, false, nil, http.StatusOK},
-		{"ok_idle", http.MethodPost, `{"id":"cast","player_state":"idle"}`, false, nil, http.StatusOK},
-		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent},
-		{"method_not_allowed", http.MethodDelete, "", false, nil, http.StatusMethodNotAllowed},
-		{"not_found", http.MethodPost, `{"id":"cast","player_state":"paused"}`, false, video.ErrStreamNotFound, http.StatusNotFound},
-		{"coord_err", http.MethodPost, `{"id":"cast","player_state":"paused"}`, false, video.ErrInvalidPlayerState, http.StatusBadRequest},
-		{"bad_json", http.MethodPost, "{bad", false, nil, http.StatusBadRequest},
-		{"missing_fields", http.MethodPost, `{"id":""}`, false, nil, http.StatusBadRequest},
-		{"nil_coord", http.MethodPost, `{"id":"cast","player_state":"paused"}`, true, nil, http.StatusInternalServerError},
+	playing := &video.VideoStream{ID: "cast", PlayerState: "playing", Title: "Ep1", Position: 25}
+	tests := []videoStreamTC{
+		{"ok_state", http.MethodPost, `{"id":"cast","player_state":"playing","title":"Ep1","position":25.0}`, false, nil, http.StatusOK, playing},
+		{"ok_idle", http.MethodPost, `{"id":"cast","player_state":"idle"}`, false, nil, http.StatusOK, &video.VideoStream{ID: "cast", PlayerState: "idle"}},
+		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent, nil},
+		{"method_not_allowed", http.MethodDelete, "", false, nil, http.StatusMethodNotAllowed, nil},
+		{"not_found", http.MethodPost, `{"id":"cast","player_state":"paused"}`, false, video.ErrStreamNotFound, http.StatusNotFound, nil},
+		{"coord_err", http.MethodPost, `{"id":"cast","player_state":"paused"}`, false, video.ErrInvalidPlayerState, http.StatusBadRequest, nil},
+		{"bad_json", http.MethodPost, "{bad", false, nil, http.StatusBadRequest, nil},
+		{"missing_fields", http.MethodPost, `{"id":""}`, false, nil, http.StatusBadRequest, nil},
+		{"nil_coord", http.MethodPost, `{"id":"cast","player_state":"paused"}`, true, nil, http.StatusInternalServerError, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h, mock := videoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
-			rec := doVideoReq(h.PostVideoState, tc.method, "/api/video/state", tc.body)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
-			}
-			if tc.name == "ok_state" && (mock.lastStream.Title != "Ep1" || mock.lastStream.Position != 25.0) {
-				t.Fatalf("unexpected state metadata: %+v", mock.lastStream)
-			}
+			runVideoStreamCase(t, tc, func(h *server.DefaultVideoHandler) http.HandlerFunc { return h.PostVideoState }, "/api/video/state")
 		})
 	}
 }
