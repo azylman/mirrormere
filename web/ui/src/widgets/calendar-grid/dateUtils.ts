@@ -1,3 +1,4 @@
+import { normalizeMonthDay } from '../formatDate';
 import type {
   CollapsedHoursGap,
   FamilyDay,
@@ -329,20 +330,6 @@ interface CustomBirthdayEntry {
   banner_label?: string;
 }
 
-function normalizeCustomMonthDay(raw: unknown): string | undefined {
-  if (typeof raw !== 'string') return undefined;
-  const trimmed = raw.trim();
-  const [, , fullMonth, fullDay] = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed) ?? [];
-  if (fullMonth && fullDay) {
-    return `${fullMonth.padStart(2, '0')}-${fullDay.padStart(2, '0')}`;
-  }
-  const [, month, day] = /^(\d{1,2})[-/](\d{1,2})$/.exec(trimmed) ?? [];
-  if (month && day) {
-    return `${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-  }
-  return undefined;
-}
-
 function formatCustomSpecialDayBadge(nameRaw?: string, labelRaw?: string): string | null {
   if (typeof labelRaw === 'string' && labelRaw.trim()) {
     const cleanLabel = labelRaw.trim().replace(/^🎂\s*/, '');
@@ -363,7 +350,7 @@ function matchCustomEntryObject(
   targetMonthDay: string,
   fallbackKey?: string,
 ): string | null {
-  let entryMonthDay = normalizeCustomMonthDay(entry.date ?? entry.month_day);
+  let entryMonthDay = normalizeMonthDay(entry.date ?? entry.month_day);
   if (
     !entryMonthDay &&
     typeof entry.month === 'number' &&
@@ -372,7 +359,7 @@ function matchCustomEntryObject(
     entryMonthDay = `${String(entry.month).padStart(2, '0')}-${String(entry.day).padStart(2, '0')}`;
   }
   if (!entryMonthDay && fallbackKey) {
-    entryMonthDay = normalizeCustomMonthDay(fallbackKey);
+    entryMonthDay = normalizeMonthDay(fallbackKey);
   }
   if (entryMonthDay !== targetMonthDay) return null;
 
@@ -383,7 +370,7 @@ function matchCustomEntryObject(
         ? entry.key
         : typeof entry.id === 'string'
           ? entry.id
-          : fallbackKey && !normalizeCustomMonthDay(fallbackKey)
+          : fallbackKey && !normalizeMonthDay(fallbackKey)
             ? fallbackKey
             : '';
   const rawLabel =
@@ -413,8 +400,8 @@ function computeSpecialFromSource(targetMonthDay: string, source: object): strin
     const map = source as Record<string, unknown>;
     for (const [k, v] of Object.entries(map)) {
       if (typeof v === 'string') {
-        const kAsDate = normalizeCustomMonthDay(k);
-        const vAsDate = normalizeCustomMonthDay(v);
+        const kAsDate = normalizeMonthDay(k);
+        const vAsDate = normalizeMonthDay(v);
         if (vAsDate === targetMonthDay) {
           const match = formatCustomSpecialDayBadge(k);
           if (match) return match;
@@ -437,7 +424,7 @@ function computeSpecialFromSource(targetMonthDay: string, source: object): strin
  */
 function resolveSingleSpecialSource(dateStr: string, source: unknown): string | null {
   if (!source || typeof source !== 'object') return null;
-  const targetMonthDay = normalizeCustomMonthDay(dateStr);
+  const targetMonthDay = normalizeMonthDay(dateStr);
   if (!targetMonthDay) return null;
   let byDate = specialSourceCache.get(source);
   if (!byDate) {

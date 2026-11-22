@@ -11,6 +11,7 @@ import {
   tasksStats,
   todayPrecipProb,
 } from './format';
+import { normalizeMonthDay } from './formatDate';
 import { itemAt } from '../test-utils/lookup';
 
 describe('format helpers', () => {
@@ -166,6 +167,24 @@ describe('format helpers', () => {
       expect(formatTime('3 PM', 'not-a-date')).toBe('');
       expect(formatTime(null)).toBe('');
     });
+  });
+
+  describe('normalizeMonthDay', () => {
+    const tests: { name: string; raw: unknown; want: string | undefined }[] = [
+      { name: 'full ISO date', raw: '2026-03-07', want: '03-07' },
+      { name: 'full date with single digits', raw: '2026-3-7', want: '03-07' },
+      { name: 'month-day with dash', raw: '3-7', want: '03-07' },
+      { name: 'month/day with slash and padding', raw: ' 12/25 ', want: '12-25' },
+      { name: 'already padded', raw: '01-02', want: '01-02' },
+      { name: 'unrecognized string', raw: 'March 7', want: undefined },
+      { name: 'empty string', raw: '', want: undefined },
+      { name: 'non-string', raw: 307, want: undefined },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(normalizeMonthDay(tc.raw)).toBe(tc.want);
+      });
+    }
   });
 
   describe('formatDate', () => {
