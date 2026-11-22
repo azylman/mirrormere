@@ -19,11 +19,11 @@ func baseFamilyConfig() map[string]any {
 		"shared_color": "#3D405B",
 		"week_starts":  "sunday",
 		"members": []any{
-			map[string]any{"name": "Alex", "color": "#E07A5F", "pattern": "solid", "calendars": []any{"alex-personal"}},
+			map[string]any{"name": "Alpha", "color": "#E07A5F", "pattern": "solid", "calendars": []any{"alpha-personal"}},
 			map[string]any{"name": "Kid", "color": "#81B29A", "pattern": "hatch", "calendars": []any{"school", "soccer"}},
 		},
 		"calendars": []any{
-			map[string]any{"name": "alex-personal"},
+			map[string]any{"name": "alpha-personal"},
 			map[string]any{"name": "school"},
 			map[string]any{"name": "soccer"},
 			map[string]any{"name": "holidays"},
@@ -139,7 +139,7 @@ func buildFamilyViewBasicCases() []buildFamilyViewTestCase {
 		{
 			name: "member resolution, unclaimed color, contrast text color, today/weekend flags, and range label",
 			data: snap(
-				mkCalEv("evt_1", "alex-personal", "Dentist", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false),
+				mkCalEv("evt_1", "alpha-personal", "Dentist", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false),
 				mkCalEv("evt_2", "holidays", "Rosh Hashanah", "2026-09-27", "2026-09-27", true),
 				mkCalEv("evt_light", "school", "Light bg", "2026-09-27T15:00:00Z", "2026-09-27T16:00:00Z", false),
 			),
@@ -150,7 +150,7 @@ func buildFamilyViewBasicCases() []buildFamilyViewTestCase {
 				dayAllDayCount:  map[int]int{0: 1},
 				dayIsToday:      map[int]bool{0: true, 3: false},
 				dayIsWeekend:    map[int]bool{0: true, 3: false, 6: true},
-				eventOwners:     map[string][]string{"evt_1": {"Alex"}},
+				eventOwners:     map[string][]string{"evt_1": {"Alpha"}},
 				eventColors:     map[string]string{"evt_1": "#E07A5F", "evt_2": "#3D405B", "evt_light": "#81B29A"},
 				eventTextColors: map[string]string{"evt_1": "#ffffff", "evt_2": "#ffffff", "evt_light": "#000000"},
 				eventPatterns:   map[string]string{"evt_1": "solid", "evt_2": ""},
@@ -159,10 +159,10 @@ func buildFamilyViewBasicCases() []buildFamilyViewTestCase {
 		{
 			name: "shared event merge by ID",
 			data: snap(
-				mkCalEv("evt_shared_1", "alex-personal", "Shared Soccer", "2026-09-27T14:00:00Z", "2026-09-27T15:00:00Z", false),
+				mkCalEv("evt_shared_1", "alpha-personal", "Shared Soccer", "2026-09-27T14:00:00Z", "2026-09-27T15:00:00Z", false),
 				mkCalEv("evt_shared_1", "soccer", "Shared Soccer", "2026-09-27T14:00:00Z", "2026-09-27T15:00:00Z", false),
 			),
-			exp: buildFamilyViewExpectations{daysCount: 7, dayTimedCount: map[int]int{0: 1}, eventOwners: map[string][]string{"evt_shared_1": {"Alex", "Kid"}}},
+			exp: buildFamilyViewExpectations{daysCount: 7, dayTimedCount: map[int]int{0: 1}, eventOwners: map[string][]string{"evt_shared_1": {"Alpha", "Kid"}}},
 		},
 		{
 			name: "private calendar redaction",
@@ -179,22 +179,22 @@ func buildFamilyViewBasicCases() []buildFamilyViewTestCase {
 			name: "overflow cutoff on 4x2",
 			dims: domain.NewDimension(4, 2),
 			data: snap(
-				mkCalEv("evt_o1", "alex-personal", "Busy 1", "2026-09-27T01:00:00Z", "2026-09-27T09:00:00Z", false),
-				mkCalEv("evt_o2", "alex-personal", "Busy 2", "2026-09-27T02:00:00Z", "2026-09-27T09:00:00Z", false),
-				mkCalEv("evt_o3", "alex-personal", "Busy 3", "2026-09-27T03:00:00Z", "2026-09-27T09:00:00Z", false),
-				mkCalEv("evt_o4", "alex-personal", "Busy 4", "2026-09-27T04:00:00Z", "2026-09-27T09:00:00Z", false),
-				mkCalEv("evt_o5", "alex-personal", "Busy 5", "2026-09-27T05:00:00Z", "2026-09-27T09:00:00Z", false),
-				mkCalEv("evt_o6", "alex-personal", "Busy 6", "2026-09-27T06:00:00Z", "2026-09-27T09:00:00Z", false),
+				mkCalEv("evt_o1", "alpha-personal", "Busy 1", "2026-09-27T01:00:00Z", "2026-09-27T09:00:00Z", false),
+				mkCalEv("evt_o2", "alpha-personal", "Busy 2", "2026-09-27T02:00:00Z", "2026-09-27T09:00:00Z", false),
+				mkCalEv("evt_o3", "alpha-personal", "Busy 3", "2026-09-27T03:00:00Z", "2026-09-27T09:00:00Z", false),
+				mkCalEv("evt_o4", "alpha-personal", "Busy 4", "2026-09-27T04:00:00Z", "2026-09-27T09:00:00Z", false),
+				mkCalEv("evt_o5", "alpha-personal", "Busy 5", "2026-09-27T05:00:00Z", "2026-09-27T09:00:00Z", false),
+				mkCalEv("evt_o6", "alpha-personal", "Busy 6", "2026-09-27T06:00:00Z", "2026-09-27T09:00:00Z", false),
 			),
 			exp: buildFamilyViewExpectations{daysCount: 5, dayTimedCount: map[int]int{0: 3}, dayOverflow: map[int]int{0: 3}},
 		},
-		{name: "missing member color error", cfg: map[string]any{"members": []any{map[string]any{"name": "Alex"}}, "calendars": []any{}}, wantErr: "requires non-empty 'color'"},
+		{name: "missing member color error", cfg: map[string]any{"members": []any{map[string]any{"name": "Alpha"}}, "calendars": []any{}}, wantErr: "requires non-empty 'color'"},
 		{name: "default initial and pattern", cfg: map[string]any{"members": []any{map[string]any{"name": "zoe", "color": "#123456", "calendars": []any{}}}, "calendars": []any{}}, exp: buildFamilyViewExpectations{memberCount: 1, memberInitial: "Z", memberPattern: "solid"}},
-		{name: "pointer snapshot accepted", data: &provider.CalendarSnapshot{Events: []provider.CalendarEvent{mkCalEv("evt_ptr", "alex-personal", "Ptr test", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false)}}, exp: buildFamilyViewExpectations{dayTimedCount: map[int]int{0: 1}}},
+		{name: "pointer snapshot accepted", data: &provider.CalendarSnapshot{Events: []provider.CalendarEvent{mkCalEv("evt_ptr", "alpha-personal", "Ptr test", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false)}}, exp: buildFamilyViewExpectations{dayTimedCount: map[int]int{0: 1}}},
 		{name: "nil data accepted", data: nil, exp: buildFamilyViewExpectations{dayTimedCount: map[int]int{0: 0}}},
 		{name: "members not a list", cfg: map[string]any{"members": "not-a-list", "calendars": []any{}}, exp: buildFamilyViewExpectations{memberCount: 0}},
 		{name: "member entry not a map", cfg: map[string]any{"members": []any{"oops"}, "calendars": []any{}}, wantErr: "is not a mapping"},
-		{name: "member calendars not a list", cfg: map[string]any{"members": []any{map[string]any{"name": "Alex", "color": "#E07A5F", "calendars": "not-a-list"}}, "calendars": []any{}}, exp: buildFamilyViewExpectations{memberCount: 1}},
+		{name: "member calendars not a list", cfg: map[string]any{"members": []any{map[string]any{"name": "Alpha", "color": "#E07A5F", "calendars": "not-a-list"}}, "calendars": []any{}}, exp: buildFamilyViewExpectations{memberCount: 1}},
 	}
 }
 
@@ -203,14 +203,14 @@ func buildFamilyViewAdvancedCases(pdtLoc *time.Location) []buildFamilyViewTestCa
 		{
 			name: "timezone converts to local day",
 			now:  time.Date(2026, 9, 27, 12, 0, 0, 0, pdtLoc),
-			data: snap(mkCalEv("evt_tz", "alex-personal", "Late call", "2026-09-28T05:30:00Z", "2026-09-28T06:00:00Z", false)),
+			data: snap(mkCalEv("evt_tz", "alpha-personal", "Late call", "2026-09-28T05:30:00Z", "2026-09-28T06:00:00Z", false)),
 			exp:  buildFamilyViewExpectations{eventStart: map[string]string{"evt_tz": "22:30"}, eventDay: map[string]string{"evt_tz": "2026-09-27"}},
 		},
 		{
 			name: "multi-day all-day events and cross-window spans",
 			data: snap(
-				mkCalEv("evt_multi", "alex-personal", "Camping trip", "2026-09-28", "2026-09-30", true),
-				mkCalEv("evt_early_start", "alex-personal", "Started earlier", "2026-09-20", "2026-09-28", true),
+				mkCalEv("evt_multi", "alpha-personal", "Camping trip", "2026-09-28", "2026-09-30", true),
+				mkCalEv("evt_early_start", "alpha-personal", "Started earlier", "2026-09-20", "2026-09-28", true),
 			),
 			exp: buildFamilyViewExpectations{
 				eventDates:   map[string][]string{"evt_multi": {"2026-09-28", "2026-09-29", "2026-09-30"}, "evt_early_start": {"2026-09-27", "2026-09-28"}},
@@ -220,11 +220,11 @@ func buildFamilyViewAdvancedCases(pdtLoc *time.Location) []buildFamilyViewTestCa
 		{
 			name: "continuous spanning bars 6x2",
 			data: snap(
-				mkCalEv("e_single", "alex-personal", "Town Hall", "2026-09-30", "2026-09-30", true),
-				mkCalEv("e_multi", "alex-personal", "Camping Trip", "2026-09-28", "2026-09-30", true),
-				mkCalEv("e_cross", "alex-personal", "Cross-Window Trip", "2026-09-26", "2026-09-28", true),
-				mkCalEv("e_future", "alex-personal", "Future Trip", "2026-10-03", "2026-10-05", true),
-				mkCalEv("e_outside", "alex-personal", "Outside Trip", "2026-09-20", "2026-09-25", true),
+				mkCalEv("e_single", "alpha-personal", "Town Hall", "2026-09-30", "2026-09-30", true),
+				mkCalEv("e_multi", "alpha-personal", "Camping Trip", "2026-09-28", "2026-09-30", true),
+				mkCalEv("e_cross", "alpha-personal", "Cross-Window Trip", "2026-09-26", "2026-09-28", true),
+				mkCalEv("e_future", "alpha-personal", "Future Trip", "2026-10-03", "2026-10-05", true),
+				mkCalEv("e_outside", "alpha-personal", "Outside Trip", "2026-09-20", "2026-09-25", true),
 			),
 			exp: buildFamilyViewExpectations{
 				spanEvents: []FamilySpanEvent{
@@ -239,8 +239,8 @@ func buildFamilyViewAdvancedCases(pdtLoc *time.Location) []buildFamilyViewTestCa
 			name: "continuous spanning bars custom day count 4x2",
 			dims: domain.NewDimension(4, 2),
 			data: snap(
-				mkCalEv("e_single", "alex-personal", "Town Hall", "2026-09-30", "2026-09-30", true),
-				mkCalEv("e_multi", "alex-personal", "Camping Trip", "2026-09-28", "2026-09-30", true),
+				mkCalEv("e_single", "alpha-personal", "Town Hall", "2026-09-30", "2026-09-30", true),
+				mkCalEv("e_multi", "alpha-personal", "Camping Trip", "2026-09-28", "2026-09-30", true),
 			),
 			exp: buildFamilyViewExpectations{
 				spanEvents: []FamilySpanEvent{
@@ -253,9 +253,9 @@ func buildFamilyViewAdvancedCases(pdtLoc *time.Location) []buildFamilyViewTestCa
 			name: "week view timeline positioning and edge bands",
 			cfg:  withFamilyCfg(map[string]any{"hours": []any{"07:00", "21:00"}}),
 			data: snap(
-				mkCalEv("evt_pos", "alex-personal", "Dentist", "2026-09-27T09:00:00Z", "2026-09-27T10:30:00Z", false),
-				mkCalEv("e_early", "alex-personal", "Dawn Run", "2026-09-27T05:30:00Z", "2026-09-27T06:30:00Z", false),
-				mkCalEv("e_late", "alex-personal", "Late Movie", "2026-09-27T22:00:00Z", "2026-09-27T23:30:00Z", false),
+				mkCalEv("evt_pos", "alpha-personal", "Dentist", "2026-09-27T09:00:00Z", "2026-09-27T10:30:00Z", false),
+				mkCalEv("e_early", "alpha-personal", "Dawn Run", "2026-09-27T05:30:00Z", "2026-09-27T06:30:00Z", false),
+				mkCalEv("e_late", "alpha-personal", "Late Movie", "2026-09-27T22:00:00Z", "2026-09-27T23:30:00Z", false),
 			),
 			exp: buildFamilyViewExpectations{
 				dayEventPos:      map[string]FamilyDayEvent{"evt_pos": {TopPct: 14.29, HeightPct: 10.71, LeftPct: 0.0, WidthPct: 100.0}},
@@ -266,7 +266,7 @@ func buildFamilyViewAdvancedCases(pdtLoc *time.Location) []buildFamilyViewTestCa
 		{
 			name: "week view overlapping events",
 			data: snap(
-				mkCalEv("e1", "alex-personal", "Event 1", "2026-09-27T09:00:00Z", "2026-09-27T10:30:00Z", false),
+				mkCalEv("e1", "alpha-personal", "Event 1", "2026-09-27T09:00:00Z", "2026-09-27T10:30:00Z", false),
 				mkCalEv("e2", "school", "Event 2", "2026-09-27T09:30:00Z", "2026-09-27T11:00:00Z", false),
 			),
 			exp: buildFamilyViewExpectations{
@@ -275,7 +275,7 @@ func buildFamilyViewAdvancedCases(pdtLoc *time.Location) []buildFamilyViewTestCa
 		},
 		{
 			name: "midnight crossover",
-			data: snap(mkCalEv("e_cross", "alex-personal", "Late Call", "2026-09-27T22:00:00Z", "2026-09-28T02:00:00Z", false)),
+			data: snap(mkCalEv("e_cross", "alpha-personal", "Late Call", "2026-09-27T22:00:00Z", "2026-09-28T02:00:00Z", false)),
 			exp:  buildFamilyViewExpectations{lateEventsCount: map[int]int{0: 1}, earlyEventsCount: map[int]int{1: 1}},
 		},
 		{name: "date override 2026-10-15 Thursday", cfg: withFamilyCfg(map[string]any{"date": "2026-10-15"}), exp: buildFamilyViewExpectations{rangeStart: "2026-10-11", rangeEnd: "2026-10-17", today: "2026-09-27", dayIsToday: map[int]bool{0: false, 3: false, 6: false}}},
@@ -381,17 +381,44 @@ func TestBuildFamilyView(t *testing.T) {
 	}
 }
 
+// assertRange checks the RangeStart/RangeEnd pair shared by the week and month view models; an empty want skips that bound.
+func assertRange(t *testing.T, gotStart, gotEnd, wantStart, wantEnd string) {
+	t.Helper()
+	if wantStart != "" && gotStart != wantStart {
+		t.Errorf("RangeStart = %q, want %q", gotStart, wantStart)
+	}
+	if wantEnd != "" && gotEnd != wantEnd {
+		t.Errorf("RangeEnd = %q, want %q", gotEnd, wantEnd)
+	}
+}
+
+// assertDatePresence checks each event appears on every date in want and on none in notWant; datesOf returns the dates an event lands on.
+func assertDatePresence(t *testing.T, datesOf func(evID string) map[string]bool, want, notWant map[string][]string) {
+	t.Helper()
+	for evID, dates := range want {
+		seen := datesOf(evID)
+		for _, d := range dates {
+			if !seen[d] {
+				t.Errorf("event %q missing on date %q", evID, d)
+			}
+		}
+	}
+	for evID, dates := range notWant {
+		seen := datesOf(evID)
+		for _, d := range dates {
+			if seen[d] {
+				t.Errorf("event %q should NOT appear on date %q", evID, d)
+			}
+		}
+	}
+}
+
 func assertFamilyViewHeader(t *testing.T, view *FamilyViewModel, exp buildFamilyViewExpectations) {
 	t.Helper()
 	if exp.daysCount > 0 && len(view.Days) != exp.daysCount {
 		t.Errorf("len(Days) = %d, want %d", len(view.Days), exp.daysCount)
 	}
-	if exp.rangeStart != "" && view.RangeStart != exp.rangeStart {
-		t.Errorf("RangeStart = %q, want %q", view.RangeStart, exp.rangeStart)
-	}
-	if exp.rangeEnd != "" && view.RangeEnd != exp.rangeEnd {
-		t.Errorf("RangeEnd = %q, want %q", view.RangeEnd, exp.rangeEnd)
-	}
+	assertRange(t, view.RangeStart, view.RangeEnd, exp.rangeStart, exp.rangeEnd)
 	if exp.rangeLabel != "" && view.RangeLabel != exp.rangeLabel {
 		t.Errorf("RangeLabel = %q, want %q", view.RangeLabel, exp.rangeLabel)
 	}
@@ -496,22 +523,7 @@ func assertEventDates(t *testing.T, view *FamilyViewModel, exp buildFamilyViewEx
 			t.Errorf("event %q date = %q, want %q", evID, foundDate, wantDay)
 		}
 	}
-	for evID, wantDates := range exp.eventDates {
-		seen := eventAllDayDates(view, evID)
-		for _, d := range wantDates {
-			if !seen[d] {
-				t.Errorf("event %q expected on date %q", evID, d)
-			}
-		}
-	}
-	for evID, noDates := range exp.eventNoDates {
-		seen := eventAllDayDates(view, evID)
-		for _, badDate := range noDates {
-			if seen[badDate] {
-				t.Errorf("event %q should NOT appear on date %q", evID, badDate)
-			}
-		}
-	}
+	assertDatePresence(t, func(evID string) map[string]bool { return eventAllDayDates(view, evID) }, exp.eventDates, exp.eventNoDates)
 }
 
 func assertEventExpectations(t *testing.T, view *FamilyViewModel, exp buildFamilyViewExpectations) {
