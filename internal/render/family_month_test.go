@@ -38,12 +38,7 @@ func assertMonthViewHeader(t *testing.T, view *FamilyMonthViewModel, exp familyM
 	if exp.daysCount > 0 && len(view.Days) != exp.daysCount {
 		t.Errorf("len(Days) = %d, want %d", len(view.Days), exp.daysCount)
 	}
-	if exp.rangeStart != "" && view.RangeStart != exp.rangeStart {
-		t.Errorf("RangeStart = %q, want %q", view.RangeStart, exp.rangeStart)
-	}
-	if exp.rangeEnd != "" && view.RangeEnd != exp.rangeEnd {
-		t.Errorf("RangeEnd = %q, want %q", view.RangeEnd, exp.rangeEnd)
-	}
+	assertRange(t, view.RangeStart, view.RangeEnd, exp.rangeStart, exp.rangeEnd)
 	if exp.monthLabel != "" && view.MonthLabel != exp.monthLabel {
 		t.Errorf("MonthLabel = %q, want %q", view.MonthLabel, exp.monthLabel)
 	}
@@ -133,22 +128,7 @@ func assertMonthViewEvents(t *testing.T, view *FamilyMonthViewModel, exp familyM
 			t.Errorf("redacted event %q=%q not found", evID, wantTitle)
 		}
 	}
-	for evID, wantDates := range exp.eventDates {
-		seen := monthEventDates(view, evID)
-		for _, date := range wantDates {
-			if !seen[date] {
-				t.Errorf("event %q missing on date %s", evID, date)
-			}
-		}
-	}
-	for evID, noDates := range exp.eventNoDates {
-		seen := monthEventDates(view, evID)
-		for _, date := range noDates {
-			if seen[date] {
-				t.Errorf("event %q should NOT appear on %s", evID, date)
-			}
-		}
-	}
+	assertDatePresence(t, func(evID string) map[string]bool { return monthEventDates(view, evID) }, exp.eventDates, exp.eventNoDates)
 }
 
 func assertFamilyMonthViewExpectations(t *testing.T, view *FamilyMonthViewModel, exp familyMonthViewExpectations) {
@@ -214,12 +194,12 @@ func TestBuildFamilyMonthView(t *testing.T) {
 			name: "density adaptation 6x2, redaction, multi-day and outside window",
 			dims: domain.NewDimension(6, 2),
 			data: snap(
-				mkCalEv("e_timed", "alex-personal", "Later Timed Event", "2026-10-15T15:00:00Z", "2026-10-15T16:00:00Z", false),
-				mkCalEv("e_early", "alex-personal", "Earlier Timed Event", "2026-10-15T09:00:00Z", "2026-10-15T10:00:00Z", false),
-				mkCalEv("e_allday", "alex-personal", "All Day Conference", "2026-10-15", "2026-10-15", true),
+				mkCalEv("e_timed", "alpha-personal", "Later Timed Event", "2026-10-15T15:00:00Z", "2026-10-15T16:00:00Z", false),
+				mkCalEv("e_early", "alpha-personal", "Earlier Timed Event", "2026-10-15T09:00:00Z", "2026-10-15T10:00:00Z", false),
+				mkCalEv("e_allday", "alpha-personal", "All Day Conference", "2026-10-15", "2026-10-15", true),
 				mkCalEv("e_priv", "secret-work", "Confidential Review", "2026-10-16T10:00:00Z", "2026-10-16T11:00:00Z", false),
-				mkCalEv("e_multi_month", "alex-personal", "Long Vacation", "2026-09-25", "2026-10-02", true),
-				mkCalEv("e_outside", "alex-personal", "Outside Event", "2026-11-20T10:00:00Z", "2026-11-20T11:00:00Z", false),
+				mkCalEv("e_multi_month", "alpha-personal", "Long Vacation", "2026-09-25", "2026-10-02", true),
+				mkCalEv("e_outside", "alpha-personal", "Outside Event", "2026-11-20T10:00:00Z", "2026-11-20T11:00:00Z", false),
 			),
 			exp: familyMonthViewExpectations{
 				firstEventTitle: map[string]string{"2026-10-15": "All Day Conference"},
@@ -232,13 +212,13 @@ func TestBuildFamilyMonthView(t *testing.T) {
 		{
 			name: "density adaptation 4x2 resolves event title",
 			dims: domain.NewDimension(4, 2),
-			data: snap(mkCalEv("e_timed", "alex-personal", "Later Timed Event", "2026-10-15T15:00:00Z", "2026-10-15T16:00:00Z", false), mkCalEv("e_allday", "alex-personal", "All Day Conference", "2026-10-15", "2026-10-15", true)),
+			data: snap(mkCalEv("e_timed", "alpha-personal", "Later Timed Event", "2026-10-15T15:00:00Z", "2026-10-15T16:00:00Z", false), mkCalEv("e_allday", "alpha-personal", "All Day Conference", "2026-10-15", "2026-10-15", true)),
 			exp:  familyMonthViewExpectations{firstEventTitle: map[string]string{"2026-10-15": "All Day Conference"}},
 		},
 		{
 			name: "density adaptation narrow 2x2 omits event titles",
 			dims: domain.NewDimension(2, 2),
-			data: snap(mkCalEv("e_allday", "alex-personal", "All Day Conference", "2026-10-15", "2026-10-15", true)),
+			data: snap(mkCalEv("e_allday", "alpha-personal", "All Day Conference", "2026-10-15", "2026-10-15", true)),
 			exp:  familyMonthViewExpectations{emptyEventTitle: map[string]bool{"2026-10-15": true}},
 		},
 		{name: "invalid member config returns error", cfg: map[string]any{"members": []any{"not-a-map"}}, wantErr: "is not a mapping"},
@@ -381,9 +361,9 @@ func calendarFamilyWidgetTestCases() []calendarWidgetTestCase {
 	return []calendarWidgetTestCase{
 		{
 			name:            "calendar-family day view fallback to week on 6x2",
-			data:            snap(mkCalEv("e1", "alex-personal", "Design Review", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false)),
+			data:            snap(mkCalEv("e1", "alpha-personal", "Design Review", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false)),
 			cfg:             withFamilyCfg(map[string]any{"default_view": "day", "date": "2026-09-27"}),
-			wantContains:    []string{"cf-view-week", "--mm-member-0: #E07A5F", ">Alex</span>", ">Kid</span>", "cf-week-grid", "Design Review"},
+			wantContains:    []string{"cf-view-week", "--mm-member-0: #E07A5F", ">Alpha</span>", ">Kid</span>", "cf-week-grid", "Design Review"},
 			wantNotContains: []string{"cf-view-day", `data-view="day"`},
 		},
 		{
@@ -401,10 +381,10 @@ func calendarFamilyWidgetTestCases() []calendarWidgetTestCase {
 		{
 			name: "calendar-family week view template render and switcher",
 			data: snap(
-				mkCalEv("e_week", "alex-personal", "Team Standup", "2026-09-28T09:00:00Z", "2026-09-28T09:30:00Z", false),
-				mkCalEv("e_single", "alex-personal", "Town Hall", "2026-09-30", "2026-09-30", true),
-				mkCalEv("e_multi", "alex-personal", "Camping Trip", "2026-09-28", "2026-09-30", true),
-				mkCalEv("e_soc", "alex-personal", "Soccer Practice", "2026-09-27T16:00:00Z", "2026-09-27T17:00:00Z", false),
+				mkCalEv("e_week", "alpha-personal", "Team Standup", "2026-09-28T09:00:00Z", "2026-09-28T09:30:00Z", false),
+				mkCalEv("e_single", "alpha-personal", "Town Hall", "2026-09-30", "2026-09-30", true),
+				mkCalEv("e_multi", "alpha-personal", "Camping Trip", "2026-09-28", "2026-09-30", true),
+				mkCalEv("e_soc", "alpha-personal", "Soccer Practice", "2026-09-27T16:00:00Z", "2026-09-27T17:00:00Z", false),
 			),
 			cfg: withFamilyCfg(map[string]any{"default_view": "week", "date": "2026-09-27", "hours": []any{"07:00", "21:00"}}),
 			wantContains: []string{
@@ -422,7 +402,7 @@ func calendarFamilyWidgetTestCases() []calendarWidgetTestCase {
 		{
 			name:      "calendar-grid custom title template render",
 			widgetDir: "calendar-grid",
-			data:      snap(mkCalEv("e1", "alex-personal", "Dentist", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false)),
+			data:      snap(mkCalEv("e1", "alpha-personal", "Dentist", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false)),
 			cfg:       withFamilyCfg(map[string]any{"title": "Custom Family Schedule", "date": "2026-09-27"}),
 			wantContains: []string{
 				"Custom Family Schedule",
@@ -434,8 +414,8 @@ func calendarFamilyWidgetTestCases() []calendarWidgetTestCase {
 			name:      "calendar-grid renders event header and title with flex-shrink 0 and cf-event-compact CSS",
 			widgetDir: "calendar-grid",
 			data: snap(
-				mkCalEv("e_short", "alex-personal", "Quick 15m Check-in", "2026-09-27T09:15:00Z", "2026-09-27T09:30:00Z", false),
-				mkCalEv("e_long", "alex-personal", "Full Hour Review", "2026-09-27T11:00:00Z", "2026-09-27T12:00:00Z", false),
+				mkCalEv("e_short", "alpha-personal", "Quick 15m Check-in", "2026-09-27T09:15:00Z", "2026-09-27T09:30:00Z", false),
+				mkCalEv("e_long", "alpha-personal", "Full Hour Review", "2026-09-27T11:00:00Z", "2026-09-27T12:00:00Z", false),
 			),
 			cfg: withFamilyCfg(map[string]any{"date": "2026-09-27", "hours": []any{"07:00", "21:00"}}),
 			wantContains: []string{
@@ -451,9 +431,9 @@ func calendarFamilyWidgetTestCases() []calendarWidgetTestCase {
 			name:      "calendar-grid week view early and late edge bands in week-level grid",
 			widgetDir: "calendar-grid",
 			data: snap(
-				mkCalEv("e_early", "alex-personal", "Early Morning Jog", "2026-09-28T05:30:00Z", "2026-09-28T06:30:00Z", false),
-				mkCalEv("e_mid", "alex-personal", "Midday Sync", "2026-09-28T12:00:00Z", "2026-09-28T13:00:00Z", false),
-				mkCalEv("e_late", "alex-personal", "Late Flight Arrival", "2026-09-28T22:30:00Z", "2026-09-28T23:30:00Z", false),
+				mkCalEv("e_early", "alpha-personal", "Early Morning Jog", "2026-09-28T05:30:00Z", "2026-09-28T06:30:00Z", false),
+				mkCalEv("e_mid", "alpha-personal", "Midday Sync", "2026-09-28T12:00:00Z", "2026-09-28T13:00:00Z", false),
+				mkCalEv("e_late", "alpha-personal", "Late Flight Arrival", "2026-09-28T22:30:00Z", "2026-09-28T23:30:00Z", false),
 			),
 			cfg: withFamilyCfg(map[string]any{"default_view": "week", "date": "2026-09-27", "hours": []any{"07:00", "21:00"}}),
 			wantContains: []string{
@@ -471,7 +451,7 @@ func calendarFamilyWidgetTestCases() []calendarWidgetTestCase {
 		{
 			name: "calendar-family month view template render 6x2 and switcher",
 			data: snap(
-				mkCalEv("e1", "alex-personal", "Parent Teacher Night", "2026-09-27T18:00:00Z", "2026-09-27T19:00:00Z", false),
+				mkCalEv("e1", "alpha-personal", "Parent Teacher Night", "2026-09-27T18:00:00Z", "2026-09-27T19:00:00Z", false),
 				mkCalEv("e2", "holidays", "Public Holiday", "2026-09-27", "2026-09-27", true),
 			),
 			cfg: withFamilyCfg(map[string]any{"default_view": "month", "date": "2026-09-27"}),
@@ -487,14 +467,14 @@ func calendarFamilyWidgetTestCases() []calendarWidgetTestCase {
 		{
 			name:         "calendar-family month view template render 4x2",
 			dims:         domain.NewDimension(4, 2),
-			data:         snap(mkCalEv("e_dentist", "alex-personal", "Dentist Visit", "2026-10-10T14:00:00Z", "2026-10-10T15:00:00Z", false)),
+			data:         snap(mkCalEv("e_dentist", "alpha-personal", "Dentist Visit", "2026-10-10T14:00:00Z", "2026-10-10T15:00:00Z", false)),
 			cfg:          withFamilyCfg(map[string]any{"default_view": "month", "date": "2026-10-10"}),
 			wantContains: []string{"cf-view-month", "cf-month-dot", "cf-month-event-title", "Dentist Visit", `data-event-id="e_dentist"`},
 		},
 		{
 			name:            "calendar-family month view template render narrow dots only",
 			dims:            domain.NewDimension(2, 2),
-			data:            snap(mkCalEv("e1", "alex-personal", "Parent Teacher Night", "2026-09-27T18:00:00Z", "2026-09-27T19:00:00Z", false)),
+			data:            snap(mkCalEv("e1", "alpha-personal", "Parent Teacher Night", "2026-09-27T18:00:00Z", "2026-09-27T19:00:00Z", false)),
 			cfg:             withFamilyCfg(map[string]any{"default_view": "month", "date": "2026-09-27"}),
 			wantContains:    []string{"cf-month-dot"},
 			wantNotContains: []string{"cf-month-event-title"},
@@ -729,7 +709,7 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 		"week_starts":  "sunday",
 		"date":         "2026-09-27",
 		"members": []any{
-			map[string]any{"name": "Alex", "color": "#2563EB", "pattern": "solid", "calendars": []any{"Family", "PrivateShared"}},
+			map[string]any{"name": "Alpha", "color": "#2563EB", "pattern": "solid", "calendars": []any{"Family", "PrivateShared"}},
 			map[string]any{"name": "Kid", "color": "#EC4899", "pattern": "dots", "calendars": []any{"kid-cal", "PrivateShared"}},
 		},
 		"calendars": []any{

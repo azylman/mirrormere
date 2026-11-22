@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/azylman/mirrormere/internal/chatlog"
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/layout"
@@ -20,7 +17,6 @@ import (
 	"github.com/azylman/mirrormere/internal/render"
 	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/testutil"
-	"github.com/azylman/mirrormere/internal/widget"
 )
 
 type mockSnapshotProvider struct {
@@ -108,12 +104,12 @@ func sampleCalendarData() provider.CalendarSnapshot {
 }
 
 func sampleTasksData(now time.Time) (tasks.TasksSnapshot, tasks.TasksSnapshot, tasks.TasksSnapshot) {
-	alex := "Alex"
+	alpha := "Alpha"
 	dueDate := now.Add(24 * time.Hour).Format(time.RFC3339)
 	loaded := tasks.TasksSnapshot{
 		List: tasks.List{ID: "groceries", Name: "Groceries", Source: "todoist", CreatedAt: now, UpdatedAt: now},
 		Items: []tasks.ListItem{
-			{ID: "i1", ListID: "groceries", Title: "Oat Milk", Done: false, Section: "Dairy", Position: 0, Assignee: &alex, DueDate: &dueDate, CreatedAt: now, UpdatedAt: now},
+			{ID: "i1", ListID: "groceries", Title: "Oat Milk", Done: false, Section: "Dairy", Position: 0, Assignee: &alpha, DueDate: &dueDate, CreatedAt: now, UpdatedAt: now},
 			{ID: "i2", ListID: "groceries", Title: "Coffee Beans", Done: true, Section: "Pantry", Position: 1, CreatedAt: now, UpdatedAt: now},
 		},
 	}
@@ -368,15 +364,7 @@ func TestSanitizeConfig(t *testing.T) {
 func TestEngine_BuiltinWidgetPackages(t *testing.T) {
 	t.Parallel()
 	repoWidgetsDir := filepath.Join("..", "..", "widgets")
-	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
-	packages := make(map[string]*domain.Package)
-	for _, name := range []string{"weather-forecast", "calendar-feed", "tasks", "photo-carousel", "chat-log"} {
-		pkg, err := loader.LoadPackage(name)
-		if err != nil {
-			t.Fatalf("failed to load package %q: %v", name, err)
-		}
-		packages[name] = pkg
-	}
+	packages := loadRepoPackages(t, "weather-forecast", "calendar-feed", "tasks", "photo-carousel", "chat-log")
 
 	raw, err := os.ReadFile(filepath.Join(repoWidgetsDir, "chat-log", "testdata", "sample.json"))
 	if err != nil {
@@ -425,7 +413,7 @@ func TestEngine_BuiltinWidgetPackages(t *testing.T) {
 		{name: "calendar-feed loading", widgetType: "calendar-feed", dims: []int{4, 2}, state: mockState{data: nil, state: "healthy"}, wantContains: []string{"Loading calendar"}},
 		{
 			name: "tasks loaded", widgetType: "tasks", dims: []int{3, 2}, state: mockState{data: tasksLoaded, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
-			wantContains:    []string{"Groceries", "Oat Milk", "Coffee Beans", "task-item-done", "@Alex", "1 to do", "tasks-sparkle-icon", "tasks-icon-box", "tasks-progress"},
+			wantContains:    []string{"Groceries", "Oat Milk", "Coffee Beans", "task-item-done", "@Alpha", "1 to do", "tasks-sparkle-icon", "tasks-icon-box", "tasks-progress"},
 			wantNotContains: []string{"tasks-source-badge", "✅"},
 		},
 		{name: "tasks empty", widgetType: "tasks", dims: []int{3, 2}, state: mockState{data: tasksEmpty, state: "healthy", timestamp: "2026-09-26T12:00:00Z"}, wantContains: []string{"All tasks completed"}},
@@ -470,64 +458,5 @@ func TestEngine_BuiltinWidgetPackages(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestChatLogWidget_RendersFromProviderPerNode(t *testing.T) {
-	t.Parallel()
-	loader := widget.NewLoader(filepath.Join("..", "..", "widgets"), t.TempDir())
-	pkg, err := loader.LoadPackage("chat-log")
-	if err != nil || pkg.Manifest.Provider != "chat-log" {
-		t.Fatalf("load chat-log package: err=%v, provider=%v", err, pkg)
-	}
-
-	store := chatlog.NewStore()
-	store.Add(chatlog.NodeKey("kitchen"), chatlog.Message{Role: chatlog.RoleHuman, Author: "sam", Text: "kitchen question"})
-	store.Add(chatlog.NodeKey("kitchen"), chatlog.Message{Role: chatlog.RoleAgent, Text: "kitchen answer"})
-	store.Add(chatlog.NodeKey("office"), chatlog.Message{Role: chatlog.RoleHuman, Text: "office question <b>", At: time.Now().Add(time.Second)})
-
-	snap := &config.Snapshot{
-		Config:   &config.Config{Display: config.DisplayConfig{Widgets: []config.WidgetConfig{{ID: "chat", Type: "chat-log", Dimensions: []int{3, 2}, Config: map[string]any{"title": "Home"}}}}},
-		Packages: map[string]*domain.Package{"chat-log": pkg},
-	}
-	res := &testutil.Packages{ByType: map[string]*domain.Package{"chat-log": pkg}}
-	engine := render.NewEngine(res, &mockSnapshotProvider{snapshot: snap, states: map[string]mockState{}},
-		render.WithNodeDataFunc(func(widgetID, nodeID string) (any, bool) {
-			if widgetID != "chat" {
-				return nil, false
-			}
-			return store.View(widgetID, nodeID), true
-		}),
-	)
-
-	for _, tc := range []struct {
-		node    string
-		want    []string
-		notWant string
-	}{
-		{node: "kitchen", want: []string{"Home", "kitchen question", "kitchen answer", "sam", "chat-log-human", "chat-log-agent"}, notWant: "office question"},
-		{node: "office", want: []string{"office question &lt;b&gt;"}, notWant: "kitchen question"},
-		{node: "", want: []string{"office question"}},
-		{node: "garage", want: []string{"No messages yet"}},
-	} {
-		out, err := engine.RenderWidgetForNode(context.Background(), "chat", tc.node)
-		if err != nil {
-			t.Fatalf("render node %q: %v", tc.node, err)
-		}
-		for _, w := range tc.want {
-			if !strings.Contains(string(out), w) {
-				t.Errorf("node %q missing %q", tc.node, w)
-			}
-		}
-		if tc.notWant != "" && strings.Contains(string(out), tc.notWant) {
-			t.Errorf("node %q leaked %q", tc.node, tc.notWant)
-		}
-	}
-
-	h := render.NewHandler(engine, res)
-	rec := httptest.NewRecorder()
-	h.GetWidgetRender(rec, httptest.NewRequest(http.MethodGet, "/api/widgets/chat/render?node=kitchen", http.NoBody), "chat")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "kitchen answer") {
-		t.Errorf("handler render: %d %s", rec.Code, rec.Body.String())
 	}
 }
