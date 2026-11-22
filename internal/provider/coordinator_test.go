@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -210,7 +211,7 @@ func waitForPayload(t *testing.T, b *mockBroadcaster, id, key, state string) pro
 func hasEvent(b *mockBroadcaster, id, state string) bool {
 	for _, e := range b.getEvents() {
 		var p provider.WidgetPayload
-		if json.Unmarshal(e.Data, &p) == nil && p.WidgetID == id && p.State == state {
+		if e.Type == events.EventWidgetUpdate && json.Unmarshal(e.Data, &p) == nil && p.WidgetID == id && p.State == state {
 			return true
 		}
 	}
@@ -266,6 +267,29 @@ func regTypes(types ...string) provider.Registry {
 	return r
 }
 
+// regPushParked registers mock providers whose Fetch parks until the coordinator
+// stops, so push tests never dial a widget endpoint and only pushes write state.
+// closedServerURL returns the URL of a started-then-closed httptest server, so a
+// dial fails fast with "connection refused" without a fixed port or egress.
+func closedServerURL(t testing.TB) string {
+	t.Helper()
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close()
+	return srv.URL
+}
+
+func regPushParked(types ...string) provider.Registry {
+	r := provider.NewRegistry()
+	for _, typ := range types {
+		r.Register(typ, func() provider.Provider {
+			p := newControllableMockProvider()
+			p.setFetch(func(ctx context.Context) (any, error) { <-ctx.Done(); return nil, ctx.Err() })
+			return p
+		})
+	}
+	return r
+}
+
 func newCoord(r provider.Registry, b *mockBroadcaster, s *mockStateSink, snap *config.Snapshot) *provider.ProviderCoordinator {
 	cfg := provider.CoordinatorConfig{Registry: r}
 	if b != nil {
@@ -303,7 +327,7 @@ func assertCoordinatorHealthyWeatherAndRefresh(t *testing.T) {
 	mockP1, b1, s1 := newControllableMockProvider(), &mockBroadcaster{}, newMockStateSink()
 	coord1 := newCoord(regOne("mock-weather", mockP1), b1, s1, mkSnap("", nil, config.WidgetConfig{
 		ID: "weather-tile", Type: "mock-weather", Dimensions: []int{2, 1}, RefreshIntervalSeconds: new(60),
-		Config: map[string]any{"city": "Oakland"}, Endpoint: "https://api.example.com/weather", Token: "secret123",
+		Config: map[string]any{"city": "Alpha"}, Endpoint: "https://api.example.com/weather", Token: "secret123",
 	}))
 	defer coord1.Stop()
 	if _, ok := b1.waitForPublish(2 * time.Second); !ok {
@@ -533,7 +557,7 @@ func assertCoordinatorTimezoneUpdates(t *testing.T) {
 		instances = append(instances, p)
 		return p
 	})
-	coordTZ := newCoord(regTZ, nil, nil, mkSnap("America/Los_Angeles", nil, mkWidget("weather-tile", "mock-weather", 30, map[string]any{"latitude": 37.8, "longitude": -122.2})))
+	coordTZ := newCoord(regTZ, nil, nil, mkSnap("America/Los_Angeles", nil, mkWidget("weather-tile", "mock-weather", 30, map[string]any{"latitude": 45.5, "longitude": -100.4})))
 	defer coordTZ.Stop()
 	mu.Lock()
 	p1 := instances[0]
@@ -541,7 +565,7 @@ func assertCoordinatorTimezoneUpdates(t *testing.T) {
 	if p1.initOpts.Timezone != "America/Los_Angeles" {
 		t.Errorf("expected initial Timezone == 'America/Los_Angeles', got %q", p1.initOpts.Timezone)
 	}
-	if err := coordTZ.UpdateConfig(mkSnap("America/New_York", nil, mkWidget("weather-tile", "mock-weather", 30, map[string]any{"latitude": 37.8, "longitude": -122.2}))); err != nil {
+	if err := coordTZ.UpdateConfig(mkSnap("America/New_York", nil, mkWidget("weather-tile", "mock-weather", 30, map[string]any{"latitude": 45.5, "longitude": -100.4}))); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
 	}
 	mu.Lock()
@@ -570,12 +594,12 @@ func TestProviderCoordinator_ConfigAndOptionsResolution(t *testing.T) {
 			ID: "sensor-tile-1", Type: "custom-sensor", Dimensions: []int{2, 1}, RefreshIntervalSeconds: new(30),
 			Endpoint: "https://sensor.local/api/metrics", Method: "POST", TokenEnv: "SENSOR_TOKEN", Token: "resolved-bearer-token",
 			Secrets: map[string]string{"token": "resolved-bearer-token", "api_key": "secret-sensor-api-key"},
-			Config:  map[string]any{"city": "Oakland", "endpoint": "domain-endpoint-override", "api_key_env": "SENSOR_API_KEY"},
+			Config:  map[string]any{"city": "Alpha", "endpoint": "domain-endpoint-override", "api_key_env": "SENSOR_API_KEY"},
 		},
 		config.WidgetConfig{ID: "min-tile", Type: "minimal-type", RefreshIntervalSeconds: new(30), Endpoint: "http://bare.local/poll", Token: "standalone-token"},
 	))
 	defer coord.Stop()
-	if p1.initCfg["token"] != nil || p1.initCfg["token_env"] != nil || p1.initCfg["method"] != nil || p1.initCfg["endpoint"] != "domain-endpoint-override" || p1.initCfg["city"] != "Oakland" || p1.initCfg["api_key_env"] != "SENSOR_API_KEY" {
+	if p1.initCfg["token"] != nil || p1.initCfg["token_env"] != nil || p1.initCfg["method"] != nil || p1.initCfg["endpoint"] != "domain-endpoint-override" || p1.initCfg["city"] != "Alpha" || p1.initCfg["api_key_env"] != "SENSOR_API_KEY" {
 		t.Errorf("unexpected domain config: %v", p1.initCfg)
 	}
 	if p1.initOpts.ID != "sensor-tile-1" || p1.initOpts.Type != "custom-sensor" || p1.initOpts.Endpoint != "https://sensor.local/api/metrics" || p1.initOpts.Method != http.MethodPost || p1.initOpts.GetSecret("api_key") != "secret-sensor-api-key" || p1.initOpts.Timezone != "America/Los_Angeles" {
@@ -628,7 +652,7 @@ func assertPushWidgetDataSuccess(t *testing.T) (*provider.ProviderCoordinator, m
 		pkgs[typ] = mkPkg(typ, typ, 0, nil)
 		widgets = append(widgets, mkWidget(id, typ, 0, nil))
 	}
-	coord := newCoord(nil, b, s, mkSnap("", pkgs, widgets...))
+	coord := newCoord(regPushParked("http", "tasks", "calendar-feed", "weather-forecast"), b, s, mkSnap("", pkgs, widgets...))
 	ctx := context.Background()
 	validData := map[string]any{"temperature": 23.5, "humidity": 60.0}
 	p, err := coord.PushWidgetData(ctx, "tile-custom", validData)
@@ -647,7 +671,7 @@ func assertPushWidgetDataSuccess(t *testing.T) (*provider.ProviderCoordinator, m
 	if p2, err := coord.PushWidgetData(ctx, "tile-custom", validData); err != nil || p2.WidgetID != "tile-custom" {
 		t.Fatalf("second push failed: %v, %+v", err, p2)
 	}
-	coordUnloaded := newCoord(nil, b, s, mkSnap("", map[string]*domain.Package{"empty-schema": mkPkg("empty-schema", "http", 0, nil)}, mkWidget("tile-unloaded", "http", 0, nil), mkWidget("tile-empty", "empty-schema", 0, nil)))
+	coordUnloaded := newCoord(regPushParked("http"), b, s, mkSnap("", map[string]*domain.Package{"empty-schema": mkPkg("empty-schema", "http", 0, nil)}, mkWidget("tile-unloaded", "http", 0, nil), mkWidget("tile-empty", "empty-schema", 0, nil)))
 	defer coordUnloaded.Stop()
 	for _, id := range []string{"tile-unloaded", "tile-empty"} {
 		if _, err := coordUnloaded.PushWidgetData(ctx, id, validData); err != nil {
@@ -660,7 +684,7 @@ func assertPushWidgetDataSuccess(t *testing.T) (*provider.ProviderCoordinator, m
 func assertPushWidgetDataErrors(t *testing.T, coord *provider.ProviderCoordinator, pkgs map[string]*domain.Package, widgets []config.WidgetConfig, validData map[string]any) {
 	t.Helper()
 	ctx := context.Background()
-	coordStopped := provider.NewCoordinator(provider.CoordinatorConfig{}, mkSnap("", pkgs, widgets...))
+	coordStopped := provider.NewCoordinator(provider.CoordinatorConfig{Registry: regPushParked("http", "tasks", "calendar-feed", "weather-forecast")}, mkSnap("", pkgs, widgets...))
 	_ = coordStopped.Stop()
 	coordNilSnap := provider.NewCoordinator(provider.CoordinatorConfig{}, nil)
 	defer coordNilSnap.Stop()
@@ -703,7 +727,7 @@ func assertPushWidgetPhotosSuccess(t *testing.T) (*provider.ProviderCoordinator,
 	}
 	widgets := []config.WidgetConfig{
 		{ID: "tile-ember", Type: "photo-carousel", Config: map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/ember"}},
-		{ID: "tile-share", Type: "photo-carousel", Config: map[string]any{"source": "share_url", "album_url": "https://photos.app.goo.gl/share"}},
+		{ID: "tile-share", Type: "photo-carousel", Config: map[string]any{"source": "share_url", "album_url": closedServerURL(t)}},
 		{ID: "tile-sensor", Type: "custom-sensor", Endpoint: "https://example.com/sensor"},
 	}
 	reg := provider.NewRegistry()
@@ -751,7 +775,7 @@ func assertPushPhotosErr(t *testing.T, c *provider.ProviderCoordinator, name, id
 
 func assertPushWidgetPhotosErrors(t *testing.T, coord *provider.ProviderCoordinator, pkgs map[string]*domain.Package, widgets []config.WidgetConfig, validPhotos []string) {
 	t.Helper()
-	coordStopped := provider.NewCoordinator(provider.CoordinatorConfig{}, mkSnap("", pkgs, widgets...))
+	coordStopped := provider.NewCoordinator(provider.CoordinatorConfig{Registry: regPushParked("http", "photos")}, mkSnap("", pkgs, widgets...))
 	_ = coordStopped.Stop()
 	coordNilSnap := provider.NewCoordinator(provider.CoordinatorConfig{}, nil)
 	defer coordNilSnap.Stop()

@@ -25,7 +25,9 @@ func setupIntentMockServer(t *testing.T, mode string) (string, func()) {
 	t.Helper()
 	switch mode {
 	case "unreachable":
-		return "http://127.0.0.1:54321", func() {}
+		srv := httptest.NewServer(http.NotFoundHandler())
+		srv.Close()
+		return srv.URL, func() {}
 	case "invalid_url":
 		return "http://[invalid-host-bracket", func() {}
 	case "truncated":
@@ -101,7 +103,7 @@ func runClientProcessIntentCase(t *testing.T, tc clientProcessIntentCase) {
 		cancel()
 	}
 
-	resp, matched, err := client.ProcessIntent(ctx, IntentRequest{Text: tc.reqText, TurnID: "turn-456", Speaker: "alex"})
+	resp, matched, err := client.ProcessIntent(ctx, IntentRequest{Text: tc.reqText, TurnID: "turn-456", Speaker: "alpha"})
 	if (err != nil) != tc.wantErr {
 		t.Fatalf("err=%v, wantErr=%v", err, tc.wantErr)
 	}

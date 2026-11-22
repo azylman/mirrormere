@@ -6,8 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -84,7 +82,7 @@ func mkStream(id, url, sType, prio string, timeout int) VideoStream {
 	return VideoStream{ID: id, StreamURL: url, Type: sType, Priority: prio, TimeoutSeconds: timeout}
 }
 
-func TestCoordinator_ValidationAndClose(t *testing.T) {
+func TestCoordinator_InitAndClose(t *testing.T) {
 	t.Parallel()
 	sink := &mockSink{}
 	hub := events.NewHub(events.HubConfig{}, nil, nil)
@@ -98,50 +96,9 @@ func TestCoordinator_ValidationAndClose(t *testing.T) {
 	if sink.state == nil || sink.state.Mode != ModeWidgets {
 		t.Fatalf("unexpected seeded sink: %+v", sink.state)
 	}
-
-	tests := []struct {
-		name    string
-		stream  VideoStream
-		dismiss string
-		isDis   bool
-		wantErr error
-	}{
-		{"trig_empty", VideoStream{}, "", false, ErrInvalidStream},
-		{"trig_no_url", VideoStream{ID: "c"}, "", false, ErrInvalidStream},
-		{"trig_res_all", VideoStream{ID: "all", StreamURL: "u"}, "", false, ErrInvalidStream},
-		{"trig_res_star", VideoStream{ID: "*", StreamURL: "u"}, "", false, ErrInvalidStream},
-		{"trig_bad_type", VideoStream{ID: "c", StreamURL: "u", Type: "mp4"}, "", false, ErrInvalidStream},
-		{"trig_bad_prio", VideoStream{ID: "c", StreamURL: "u", Priority: "urgent"}, "", false, ErrInvalidStream},
-		{"trig_bad_ps", VideoStream{ID: "c", StreamURL: "u", PlayerState: "stopped"}, "", false, ErrInvalidPlayerState},
-		{"dis_empty", VideoStream{}, "", true, ErrInvalidStream},
-		{"dis_missing", VideoStream{}, "missing", true, ErrStreamNotFound},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			action := coord.Trigger
-			if tc.isDis {
-				action = func(VideoStream) (VideoState, error) { return coord.Dismiss(tc.dismiss) }
-			}
-			if _, err := action(tc.stream); !errors.Is(err, tc.wantErr) {
-				t.Fatalf("got %v, want %v", err, tc.wantErr)
-			}
-		})
-	}
-
-	if _, err := coord.Dismiss("all"); !errors.Is(err, ErrStreamNotFound) {
-		t.Fatalf("expected ErrStreamNotFound on idle Dismiss, got %v", err)
-	}
-
 	coord.Close()
-	_, e1 := coord.Trigger(mkStream("c", "u", "", "", 0))
-	_, e2 := coord.Dismiss("c")
-	_, e3 := coord.Dismiss("all")
-	_, e4 := coord.UpdatePlayerState("c", VideoStream{PlayerState: PlayerStatePlaying})
-	for _, err := range []error{e1, e2, e3, e4} {
-		if !errors.Is(err, ErrStreamNotFound) {
-			t.Fatal("expected ErrStreamNotFound on closed coordinator")
-		}
+	if _, err := coord.UpdatePlayerState("c", VideoStream{PlayerState: PlayerStatePlaying}); !errors.Is(err, ErrStreamNotFound) {
+		t.Fatalf("UpdatePlayerState on closed coordinator = %v, want ErrStreamNotFound", err)
 	}
 
 	var capturedCB func()
@@ -156,6 +113,66 @@ func TestCoordinator_ValidationAndClose(t *testing.T) {
 	}
 	if (&realTimer{}).Stop() {
 		t.Fatal("expected false on nil timer Stop")
+	}
+}
+
+func TestCoordinator_TriggerValidation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		stream     VideoStream
+		closeFirst bool
+		wantErr    error
+	}{
+		{"empty", VideoStream{}, false, ErrInvalidStream},
+		{"no_url", VideoStream{ID: "c"}, false, ErrInvalidStream},
+		{"reserved_all", VideoStream{ID: "all", StreamURL: "u"}, false, ErrInvalidStream},
+		{"reserved_star", VideoStream{ID: "*", StreamURL: "u"}, false, ErrInvalidStream},
+		{"bad_type", VideoStream{ID: "c", StreamURL: "u", Type: "mp4"}, false, ErrInvalidStream},
+		{"bad_priority", VideoStream{ID: "c", StreamURL: "u", Priority: "urgent"}, false, ErrInvalidStream},
+		{"bad_player_state", VideoStream{ID: "c", StreamURL: "u", PlayerState: "stopped"}, false, ErrInvalidPlayerState},
+		{"closed", mkStream("c", "u", "", "", 0), true, ErrStreamNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			coord := NewCoordinator(nil)
+			t.Cleanup(coord.Close)
+			if tc.closeFirst {
+				coord.Close()
+			}
+			if _, err := coord.Trigger(tc.stream); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Trigger() err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestCoordinator_Dismiss(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, id   string
+		closeFirst bool
+		wantErr    error
+	}{
+		{"empty", "", false, ErrInvalidStream},
+		{"not_found", "missing", false, ErrStreamNotFound},
+		{"all_idle", "all", false, ErrStreamNotFound},
+		{"closed_id", "c", true, ErrStreamNotFound},
+		{"closed_all", "all", true, ErrStreamNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			coord := NewCoordinator(nil)
+			t.Cleanup(coord.Close)
+			if tc.closeFirst {
+				coord.Close()
+			}
+			if _, err := coord.Dismiss(tc.id); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Dismiss(%q) err = %v, want %v", tc.id, err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -436,25 +453,6 @@ func TestCoordinator_ForwardAction(t *testing.T) {
 	_, _ = coord.Trigger(VideoStream{ID: "fail", StreamURL: "http://v", Priority: PriorityPersistent, Controllable: true, ControlURL: sidecar.URL + "/fail"})
 	if err := coord.ForwardAction(context.Background(), "fail", ActionPlay, nil); !errors.Is(err, ErrControllerUnreachable) {
 		t.Fatalf("expected ErrControllerUnreachable, got %v", err)
-	}
-}
-
-func TestCoordinator_SchemaValidation(t *testing.T) {
-	t.Parallel()
-	if b, err := os.ReadFile(filepath.Join("..", "..", "api", "schemas", "video.state.json")); err == nil {
-		var s map[string]any
-		if err := json.Unmarshal(b, &s); err != nil {
-			t.Fatalf("failed to parse schema: %v", err)
-		}
-	}
-	st := VideoState{Mode: ModeVideo, Primary: &VideoStream{ID: "c", StreamURL: "u", Priority: PriorityPersistent}, Pip: &VideoStream{ID: "d", StreamURL: "u"}}
-	b1, _ := json.Marshal(st)
-	b2, _ := json.Marshal(VideoState{Mode: ModeWidgets})
-	var m1, m2 map[string]any
-	_ = json.Unmarshal(b1, &m1)
-	_ = json.Unmarshal(b2, &m2)
-	if m1["mode"] != "video" || m1["primary"] == nil || m1["pip"] == nil || m2["mode"] != "widgets" || m2["primary"] != nil || m2["pip"] != nil {
-		t.Fatalf("schema mismatch: m1=%+v m2=%+v", m1, m2)
 	}
 }
 

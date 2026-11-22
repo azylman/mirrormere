@@ -115,7 +115,7 @@ func runCalDAVDiscoveryFlowSubtest(t *testing.T) {
 	defer srv.Close()
 
 	client := provider.NewCalDAVClient(srv.Client(), nil)
-	source := mkCalSource("Family", srv.URL+"/dav/", "alex", "pass", "")
+	source := mkCalSource("Family", srv.URL+"/dav/", "alpha", "pass", "")
 	events, err := client.FetchCalendarEvents(context.Background(), source, ref.AddDate(0, 0, -1), ref.AddDate(0, 0, 14))
 	if err != nil || len(events) != 1 || events[0].Title != "Discovered Event" {
 		t.Fatalf("discovery fetch failed: err=%v events=%+v", err, events)
@@ -323,12 +323,13 @@ func runCalDAVPropfindFailureSubtest(t *testing.T) {
 func runCalDAVWebcalAndNetworkSubtest(t *testing.T) {
 	t.Parallel()
 	client := provider.NewCalDAVClient(&http.Client{Timeout: 50 * time.Millisecond}, nil)
-	disc, err := client.DiscoverCalendarURL(context.Background(), mkCalSource("W", "webcal://127.0.0.1:54321/cal/", "", "", ""))
+	deadURL := closedServerURL(t)
+	disc, err := client.DiscoverCalendarURL(context.Background(), mkCalSource("W", strings.Replace(deadURL, "http://", "webcal://", 1)+"/cal/", "", "", ""))
 	if err != nil || !strings.HasPrefix(disc, "https://") {
 		t.Fatalf("expected https prefix, got %q (err: %v)", disc, err)
 	}
 	now := time.Now()
-	if _, err := client.FetchCalendarEvents(context.Background(), mkCalSource("Dead", "http://127.0.0.1:59999/cal/", "", "", ""), now, now.Add(time.Hour)); err == nil {
+	if _, err := client.FetchCalendarEvents(context.Background(), mkCalSource("Dead", deadURL+"/cal/", "", "", ""), now, now.Add(time.Hour)); err == nil {
 		t.Fatal("expected network error")
 	}
 	if _, err := client.FetchCalendarEvents(context.Background(), mkCalSource("Inv", "http:// invalid url with spaces", "", "", ""), now, now.Add(time.Hour)); err == nil {

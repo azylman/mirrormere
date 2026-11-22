@@ -101,7 +101,6 @@ func TestTasksProvider_Init(t *testing.T) {
 		{"gtasks_web_file", "", mkCfg("gtasks", "gtasks", map[string]any{"tasklist_id": "tl", "client_secret_file_env": "FENV", "refresh_token": "rtok", "token_url": "https://x.com/tok"}), mkOpts("w", map[string]string{"FENV": filepath.Join(tmpDir, "web.json")}, "")},
 		{"gtasks_bad_file_fallback", "", mkCfg("gtasks", "gtasks", map[string]any{"tasklist_id": "tl", "credentials_file": filepath.Join(tmpDir, "bad.json"), "token": "fallback-tok"}), mkOpts("w", nil, "")},
 		{"todoist_missing_block", "requires 'todoist' config block", map[string]any{"source": "todoist"}, mkOpts("w", nil, "")},
-		{"todoist_missing_token", "requires a valid token", mkCfg("todoist", "todoist", map[string]any{"project_id": "1"}), mkOpts("w", nil, "")},
 		{"todoist_inline_token", "", mkCfg("todoist", "todoist", map[string]any{"token": "tok", "project_name": "Inbox"}), mkOpts("w", nil, "")},
 		{"todoist_token_env_sec", "", mkCfg("todoist", "todoist", map[string]any{"token_env": "TTOK"}), mkOpts("w", map[string]string{"TTOK": "tok"}, "")},
 		{"todoist_opts_token", "", mkCfg("todoist", "todoist", map[string]any{}), mkOpts("w", nil, "tok")},
@@ -129,16 +128,23 @@ func TestTasksProvider_Init(t *testing.T) {
 }
 
 func TestTasksProvider_Init_Todoist_EnvFallback(t *testing.T) {
-	for _, tc := range []struct{ name, key, val string }{
-		{"api_token_env", "TODOIST_API_TOKEN", "api-token-from-env"},
-		{"token_env", "TODOIST_TOKEN", "token-from-env"},
+	for _, tc := range []struct{ name, key, val, wantErrSub string }{
+		{"api_token_env", "TODOIST_API_TOKEN", "api-token-from-env", ""},
+		{"token_env", "TODOIST_TOKEN", "token-from-env", ""},
+		{"missing_token", "TODOIST_TOKEN", "", "requires a valid token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("TODOIST_API_TOKEN", "")
 			t.Setenv("TODOIST_TOKEN", "")
 			t.Setenv(tc.key, tc.val)
 			p := provider.NewTasksProvider()
-			err := p.Init(context.Background(), map[string]any{"source": "todoist", "list_name": "EnvList", "todoist": map[string]any{}}, provider.InitOptions{ID: tc.name})
+			err := p.Init(context.Background(), map[string]any{"source": "todoist", "list_name": "EnvList", "todoist": map[string]any{"project_id": "1"}}, provider.InitOptions{ID: tc.name})
+			if tc.wantErrSub != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Fatalf("Init err = %v, want substring %q", err, tc.wantErrSub)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("Init failed: %v", err)
 			}

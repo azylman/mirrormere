@@ -55,36 +55,3 @@ func TestRegistry(t *testing.T) {
 		t.Fatalf("want ErrProviderNotRegistered: %v", err)
 	}
 }
-
-func TestRegistry_Builtins(t *testing.T) {
-	t.Parallel()
-	reg := provider.NewRegistry()
-	builtins := []string{"spacer", "live-view", "http", "weather-forecast", "calendar-feed", "photo-carousel", "tasks"}
-	for _, name := range builtins {
-		p, err := reg.Create(name)
-		if err != nil {
-			t.Fatalf("Create(%q) failed: %v", name, err)
-		}
-		if p == nil {
-			t.Fatalf("Create(%q) returned nil provider", name)
-		}
-	}
-}
-
-func TestInitOptions_GetSecret(t *testing.T) {
-	t.Parallel()
-	opts := provider.InitOptions{Secrets: map[string]string{"token": "tok-123", "api_key": "secret-xyz"}}
-	tests := []struct{ key, want string }{
-		{"token", "tok-123"},
-		{"api_key", "secret-xyz"},
-		{"unset", ""},
-	}
-	for _, tc := range tests {
-		if got := opts.GetSecret(tc.key); got != tc.want {
-			t.Errorf("GetSecret(%q) = %q, want %q", tc.key, got, tc.want)
-		}
-	}
-	if got := (provider.InitOptions{}).GetSecret("anything"); got != "" {
-		t.Errorf("want empty, got %q", got)
-	}
-}

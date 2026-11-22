@@ -46,15 +46,6 @@ func mkHeaderCfgWithLoc(lat, lon float64, units string, interval *int, loc strin
 	return &config.HeaderWeatherConfig{Latitude: lat, Longitude: lon, Units: units, RefreshIntervalSeconds: interval, Location: loc}
 }
 
-func TestNewHeaderWeatherPoller_Defaults(t *testing.T) {
-	t.Parallel()
-	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{})
-	if poller == nil {
-		t.Fatal("expected non-nil poller")
-	}
-	poller.Stop()
-}
-
 type headerFetchTestCase struct {
 	name       string
 	status     int

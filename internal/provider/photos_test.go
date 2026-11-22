@@ -149,6 +149,18 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 	}
 }
 
+// photosLoopbackTransport serves loopback requests over the network and answers
+// every other host with an empty 200, so redirect hops to Google login, consent
+// or captcha hosts are classified by final host without leaving the machine.
+type photosLoopbackTransport struct{}
+
+func (photosLoopbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if host := req.URL.Hostname(); host == "127.0.0.1" || host == "::1" || host == "localhost" {
+		return http.DefaultTransport.RoundTrip(req)
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: http.Header{}, Request: req}, nil
+}
+
 func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 	t.Parallel()
 
@@ -175,7 +187,7 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 				}
 				w.WriteHeader(tc.status)
 			}))
-			p := provider.NewPhotosProvider()
+			p := provider.NewPhotosProvider(provider.WithPhotosTransport(photosLoopbackTransport{}))
 			_ = p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{})
 			_, err := p.Fetch(context.Background())
 			ts.Close()
