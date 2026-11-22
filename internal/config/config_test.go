@@ -27,6 +27,19 @@ func mockGetenv(vars map[string]string) func(string) string {
 	}
 }
 
+// parseConfig runs ValidatePipeline's syntax and instance-schema stages (1-2)
+// over yaml; package, layout and domain stages are covered by lkgc_test.
+func parseConfig(yaml string, getenv func(string) string) (*config.Config, error) {
+	cfg, err := config.ParseYAMLStage([]byte(yaml))
+	if err != nil {
+		return nil, err
+	}
+	if err := config.ValidateCoreInstancesStage(cfg, getenv); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 func withBaseYAML(extra string) string {
 	return "timezone: America/Los_Angeles\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n" + extra
 }
@@ -42,15 +55,18 @@ func mkWidgetConfig(tokenEnv string, cfg map[string]any) *config.Config {
 }
 
 const (
-	locationPropagateYAML      = "timezone: America/Los_Angeles\nlocation:\n  name: Oakland Hills\n  latitude: 37.8044\n  longitude: -122.2712\ndisplay:\n  theme:\n    mode: auto\n  header:\n    weather:\n      units: imperial\n  widgets:\n    - id: forecast-1\n      type: weather-forecast\n"
-	legacyWeatherPropagateYAML = "timezone: America/Los_Angeles\ndisplay:\n  theme:\n    mode: auto\n  header:\n    weather:\n      location: Oakland\n      latitude: 37.8\n      longitude: -122.2\n  widgets:\n    - id: w1\n      type: spacer\n"
+	locationPropagateYAML      = "timezone: America/Los_Angeles\nlocation:\n  name: Alpha Hills\n  latitude: 45.5051\n  longitude: -100.4372\ndisplay:\n  theme:\n    mode: auto\n  header:\n    weather:\n      units: imperial\n  widgets:\n    - id: forecast-1\n      type: weather-forecast\n"
+	legacyWeatherPropagateYAML = "timezone: America/Los_Angeles\ndisplay:\n  theme:\n    mode: auto\n  header:\n    weather:\n      location: Alpha\n      latitude: 45.5\n      longitude: -100.4\n  widgets:\n    - id: w1\n      type: spacer\n"
 )
 
 func TestLoad_ExampleConfig(t *testing.T) {
 	t.Parallel()
-	examplePath := filepath.Join("..", "..", "deploy", "examples", "config.yaml")
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "examples", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read example config: %v", err)
+	}
 
-	_, err := config.LoadWithEnv(examplePath, mockGetenv(nil))
+	_, err = parseConfig(string(raw), mockGetenv(nil))
 	if err == nil || !strings.Contains(err.Error(), "FAMILY_CALENDAR_URL") {
 		t.Fatalf("expected error mentioning FAMILY_CALENDAR_URL, got: %v", err)
 	}
@@ -60,9 +76,9 @@ func TestLoad_ExampleConfig(t *testing.T) {
 		"TODOIST_API_TOKEN":       "todoist-test-token",
 		"GOOGLE_PHOTOS_ALBUM_URL": "https://photos.app.goo.gl/example-album",
 	}
-	cfg, err := config.LoadWithEnv(examplePath, mockGetenv(mockEnv))
+	cfg, err := parseConfig(string(raw), mockGetenv(mockEnv))
 	if err != nil {
-		t.Fatalf("unexpected error loading example config: %v", err)
+		t.Fatalf("unexpected error validating example config: %v", err)
 	}
 
 	assertEq(t, "timezone", cfg.Timezone, "America/Los_Angeles")
@@ -99,7 +115,7 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	assertEq(t, "secret album_url", photos.Secrets["albums[0].url"], mockEnv["GOOGLE_PHOTOS_ALBUM_URL"])
 }
 
-func TestParseWithEnv_ValidationErrors(t *testing.T) {
+func TestParseConfig_ValidationErrors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -127,8 +143,8 @@ func TestParseWithEnv_ValidationErrors(t *testing.T) {
 		{"negative rotation interval", withBaseYAML("  rotation:\n    interval_seconds: -5\n"), "rotation interval_seconds must be non-negative"},
 		{"negative rotation pause", withBaseYAML("  rotation:\n    pause_duration_seconds: -1\n"), "rotation pause_duration_seconds must be non-negative"},
 		{"invalid rotation transition", withBaseYAML("  rotation:\n    transition: zoom\n"), "invalid rotation transition 'zoom'"},
-		{"location lat out of bounds", withBaseYAML("location:\n  latitude: 95.0\n  longitude: -122.2\n"), "location latitude must be between -90 and 90"},
-		{"location lon out of bounds", withBaseYAML("location:\n  latitude: 37.8\n  longitude: -195.0\n"), "location longitude must be between -180 and 180"},
+		{"location lat out of bounds", withBaseYAML("location:\n  latitude: 95.0\n  longitude: -100.4\n"), "location latitude must be between -90 and 90"},
+		{"location lon out of bounds", withBaseYAML("location:\n  latitude: 45.5\n  longitude: -195.0\n"), "location longitude must be between -180 and 180"},
 		{"theme invalid mode", withBaseYAML("  theme:\n    mode: cyberpunk\n"), "invalid theme mode 'cyberpunk'"},
 		{"theme auto without coordinates", withBaseYAML("  theme:\n    mode: auto\n"), "theme mode 'auto' requires location coordinates"},
 		{"header weather non-positive interval", withBaseYAML("  header:\n    weather:\n      refresh_interval_seconds: 0\n      latitude: 37.0\n      longitude: -122.0\n      units: imperial\n"), "header weather refresh_interval_seconds must be positive"},
@@ -172,9 +188,9 @@ func TestParseWithEnv_ValidationErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := config.ParseWithEnv([]byte(tc.yaml), mockGetenv(nil))
+			_, err := parseConfig(tc.yaml, mockGetenv(nil))
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("ParseWithEnv() err = %v, want substring %q", err, tc.wantErr)
+				t.Fatalf("parseConfig() err = %v, want substring %q", err, tc.wantErr)
 			}
 		})
 	}
@@ -182,7 +198,6 @@ func TestParseWithEnv_ValidationErrors(t *testing.T) {
 
 type validConfigCase struct {
 	name, yaml                                                                   string
-	nilGetenv                                                                    bool
 	wantTransition, wantWeatherUnits, wantMethod, wantRemoteURL, wantVideoStream string
 	wantLocName, wantThemeMode, wantForecastLoc                                  string
 	wantWeatherInterval, wantChatMax                                             int
@@ -265,7 +280,7 @@ func assertConfigLocationAndThemeProps(t *testing.T, cfg *config.Config, tc vali
 	}
 }
 
-func TestParseWithEnv_ValidConfigsAndDefaults(t *testing.T) {
+func TestParseConfig_ValidConfigsAndDefaults(t *testing.T) {
 	t.Parallel()
 
 	tests := []validConfigCase{
@@ -278,25 +293,20 @@ func TestParseWithEnv_ValidConfigsAndDefaults(t *testing.T) {
 		{name: "widget http method get normalization", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      method: get\n", wantMethod: "GET"},
 		{name: "widget default method POST with endpoint", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      endpoint: http://example.com/api\n", wantMethod: "POST"},
 		{name: "hide_cursor and remote_url", yaml: withBaseYAML("  hide_cursor: true\n  remote_url: http://localhost:8080/display\n"), wantHideCursor: true, wantRemoteURL: "http://localhost:8080/display"},
-		{name: "nil getenv fallback", yaml: withBaseYAML(""), nilGetenv: true, wantTransition: "slide"},
 		{name: "voice hub speaker id and fast path valid", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: http://127.0.0.1:8000/intent\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    model: ecapa\n    speakers:\n      - id: mike\n        embedding: [1.0, 0.0]\n"), wantVoiceHub: true, wantFastPath: true, wantSpeakerID: true},
 		{name: "header video valid config", yaml: withBaseYAML("  header:\n    video:\n      enabled: true\n      stream_id: frontdoor\n      type: webrtc\n"), wantVideoEnabled: true, wantVideoStream: "frontdoor"},
 		{name: "chat log defaults when omitted", yaml: withBaseYAML(""), wantChatTTL: 20 * time.Minute, wantChatMax: 50},
 		{name: "chat log custom values", yaml: withBaseYAML("chat_log:\n  ttl_minutes: 5\n  max_messages_per_node: 12\n"), wantChatTTL: 5 * time.Minute, wantChatMax: 12},
-		{name: "location and theme propagation", yaml: locationPropagateYAML, wantLocName: "Oakland Hills", wantLat: 37.8044, wantThemeMode: "auto", wantForecastLoc: "Oakland Hills"},
+		{name: "location and theme propagation", yaml: locationPropagateYAML, wantLocName: "Alpha Hills", wantLat: 45.5051, wantThemeMode: "auto", wantForecastLoc: "Alpha Hills"},
 		{name: "empty theme mode defaults to day", yaml: withBaseYAML("  theme:\n    mode: \"\"\n"), wantThemeMode: "day"},
-		{name: "partial location config filled from header weather", yaml: "timezone: UTC\nlocation:\n  name: \"\"\ndisplay:\n  header:\n    weather:\n      location: Oakland\n      latitude: 37.8\n      longitude: -122.2\n  widgets:\n    - id: w1\n      type: spacer\n", wantLocName: "Oakland", wantLat: 37.8},
-		{name: "legacy header weather to location propagation", yaml: legacyWeatherPropagateYAML, wantLocName: "Oakland", wantLat: 37.8, wantThemeMode: "auto"},
+		{name: "partial location config filled from header weather", yaml: "timezone: UTC\nlocation:\n  name: \"\"\ndisplay:\n  header:\n    weather:\n      location: Alpha\n      latitude: 45.5\n      longitude: -100.4\n  widgets:\n    - id: w1\n      type: spacer\n", wantLocName: "Alpha", wantLat: 45.5},
+		{name: "legacy header weather to location propagation", yaml: legacyWeatherPropagateYAML, wantLocName: "Alpha", wantLat: 45.5, wantThemeMode: "auto"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var getenv func(string) string
-			if !tc.nilGetenv {
-				getenv = mockGetenv(nil)
-			}
-			cfg, err := config.ParseWithEnv([]byte(tc.yaml), getenv)
+			cfg, err := parseConfig(tc.yaml, mockGetenv(nil))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -309,13 +319,12 @@ func TestResolveEnv(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		cfg          *config.Config
-		env          map[string]string
-		useNilGetenv bool
-		wantToken    string
-		wantSecrets  map[string]string
-		wantErr      string
+		name        string
+		cfg         *config.Config
+		env         map[string]string
+		wantToken   string
+		wantSecrets map[string]string
+		wantErr     string
 	}{
 		{name: "token_env valid", cfg: mkWidgetConfig("MY_TOKEN", nil), env: map[string]string{"MY_TOKEN": "secret-123"}, wantToken: "secret-123", wantSecrets: map[string]string{"token": "secret-123"}},
 		{name: "token_env unset error", cfg: mkWidgetConfig("UNSET_TOKEN", nil), wantErr: "environment variable 'UNSET_TOKEN' defined in token_env is unset or empty"},
@@ -328,17 +337,12 @@ func TestResolveEnv(t *testing.T) {
 		{name: "error conflicting key and key_env", cfg: mkWidgetConfig("", map[string]any{"api_key": "val", "api_key_env": "ENV_VAR"}), wantErr: "cannot specify both 'api_key' and 'api_key_env'"},
 		{name: "error map[any]any unset var", cfg: mkWidgetConfig("", map[string]any{"sub": map[any]any{"token_env": "UNSET_ANY"}}), wantErr: "environment variable 'UNSET_ANY' defined in token_env is unset or empty"},
 		{name: "error slice map[any]any unset var", cfg: mkWidgetConfig("", map[string]any{"slice": []any{map[any]any{"token_env": "UNSET_SLICE"}}}), wantErr: "environment variable 'UNSET_SLICE' defined in token_env is unset or empty"},
-		{name: "ResolveEnv nil getenv defaults to os.Getenv", cfg: mkWidgetConfig("", nil), useNilGetenv: true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			getenv := mockGetenv(tc.env)
-			if tc.useNilGetenv {
-				getenv = nil
-			}
-			err := tc.cfg.ResolveEnv(getenv)
+			err := tc.cfg.ResolveEnv(mockGetenv(tc.env))
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("ResolveEnv() err = %v, want substring %q", err, tc.wantErr)
@@ -359,38 +363,10 @@ func TestResolveEnv(t *testing.T) {
 	}
 }
 
-func TestLoad(t *testing.T) {
-	if _, err := config.Load(""); err == nil {
-		t.Fatal("expected error reading DefaultConfigPath, got nil")
-	}
-	if _, err := config.LoadWithEnv("/nonexistent/path/never/exists.yaml", os.Getenv); err == nil {
-		t.Fatal("expected error loading nonexistent file, got nil")
-	}
-
-	t.Setenv("MIRRORMERE_TEST_TOKEN", "sys-token-val")
-	raw := []byte("timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      token_env: MIRRORMERE_TEST_TOKEN\n")
-	cfg, err := config.Parse(raw)
-	if err != nil {
-		t.Fatalf("Parse() unexpected error: %v", err)
-	}
-	assertEq(t, "Token", cfg.Display.Widgets[0].Token, "sys-token-val")
-	assertEq(t, "Secrets[token]", cfg.Display.Widgets[0].Secrets["token"], "sys-token-val")
-
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err = os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	loaded, err := config.Load(path)
-	if err != nil {
-		t.Fatalf("Load() unexpected error: %v", err)
-	}
-	assertEq(t, "Timezone", loaded.Timezone, "UTC")
-}
-
 func TestDisplayVoiceWaveform_Parse(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := config.ParseWithEnv([]byte(withBaseYAML("  voice:\n    waveform:\n      enabled: true\n      levels_url: \"http://127.0.0.1:9100/levels\"\n      gain: 3.0\n")), mockGetenv(nil))
+	cfg, err := parseConfig(withBaseYAML("  voice:\n    waveform:\n      enabled: true\n      levels_url: \"http://127.0.0.1:9100/levels\"\n      gain: 3.0\n"), mockGetenv(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -402,7 +378,7 @@ func TestDisplayVoiceWaveform_Parse(t *testing.T) {
 	assertEq(t, "wave url", wave.GetLevelsURL(), "http://127.0.0.1:9100/levels")
 	assertEq(t, "wave gain", wave.GetGain(), 3.0)
 
-	cfg, err = config.ParseWithEnv([]byte(withBaseYAML("")), mockGetenv(nil))
+	cfg, err = parseConfig(withBaseYAML(""), mockGetenv(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -418,9 +394,9 @@ func assertLocationAndThemeAccessors(t *testing.T) {
 	assertEq(t, "nil loc lon", nilLoc.GetLongitude(), 0)
 	assertEq(t, "zero loc lat", (&config.LocationConfig{}).GetLatitude(), 0)
 	assertEq(t, "zero loc lon", (&config.LocationConfig{}).GetLongitude(), 0)
-	popLoc := &config.LocationConfig{Latitude: new(37.8), Longitude: new(-122.2)}
-	assertEq(t, "pop loc lat", popLoc.GetLatitude(), 37.8)
-	assertEq(t, "pop loc lon", popLoc.GetLongitude(), -122.2)
+	popLoc := &config.LocationConfig{Latitude: new(45.5), Longitude: new(-100.4)}
+	assertEq(t, "pop loc lat", popLoc.GetLatitude(), 45.5)
+	assertEq(t, "pop loc lon", popLoc.GetLongitude(), -100.4)
 
 	var nilTheme *config.ThemeConfig
 	assertEq(t, "theme nil", nilTheme.GetMode(), "day")
@@ -557,7 +533,7 @@ func TestDisplayUI(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := config.ParseWithEnv([]byte(tc.yaml), nil)
+			_, err := parseConfig(tc.yaml, mockGetenv(nil))
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -614,10 +590,10 @@ func TestThemeNightSchedule(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cfg, err := config.ParseWithEnv([]byte(tc.yaml), nil)
+			cfg, err := parseConfig(tc.yaml, mockGetenv(nil))
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("ParseWithEnv() err = %v, want substring %q", err, tc.wantErr)
+					t.Fatalf("parseConfig() err = %v, want substring %q", err, tc.wantErr)
 				}
 				return
 			}

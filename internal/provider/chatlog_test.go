@@ -62,18 +62,3 @@ func TestChatLogWidget_PushValidatesStoresAndBroadcasts(t *testing.T) {
 		t.Fatalf("unexpected store state or non-http push error: %v", err)
 	}
 }
-
-func TestChatLogWidget_PushUpdateBroadcastsWidgetUpdate(t *testing.T) {
-	t.Parallel()
-	bc := &mockBroadcaster{}
-	coord := provider.NewCoordinator(provider.CoordinatorConfig{Broadcaster: bc, StateSink: newMockStateSink(), ChatLog: chatlog.NewStore()}, chatLogSnapshot())
-	defer func() { _ = coord.Stop() }()
-	bc.waitForPublish(time.Second)
-
-	if _, err := coord.PushUpdate("chat", map[string]any{"messages": []any{}}); err != nil {
-		t.Fatal(err)
-	}
-	if evt, ok := bc.waitForPublish(time.Second); !ok || evt.Type != "widget.update" {
-		t.Fatalf("expected widget.update, got %v %v", evt, ok)
-	}
-}

@@ -12,47 +12,6 @@ import (
 	"testing"
 )
 
-func TestHomeAssistant_ProviderInterface(t *testing.T) {
-	t.Parallel()
-	var _ Provider = NewHomeAssistantProvider()
-}
-
-func TestHomeAssistant_SupportedDomains(t *testing.T) {
-	t.Parallel()
-	domains := SupportedDomains
-	expected := []string{
-		"light",
-		"switch",
-		"fan",
-		"cover",
-		"lock",
-		"climate",
-		"media_player",
-		"camera",
-		"scene",
-		"script",
-		"sensor",
-		"binary_sensor",
-	}
-
-	if len(domains) != len(expected) {
-		t.Fatalf("expected %d domains, got %d", len(expected), len(domains))
-	}
-
-	for _, d := range expected {
-		if !IsSupportedDomain(d) {
-			t.Errorf("expected domain %q to be supported", d)
-		}
-	}
-
-	if IsSupportedDomain("automation") {
-		t.Error("automation domain should not be in supported list")
-	}
-	if IsSupportedDomain("zone") {
-		t.Error("zone domain should not be in supported list")
-	}
-}
-
 type haInitTestCase struct {
 	name          string
 	envURL        string

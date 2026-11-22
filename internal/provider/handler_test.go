@@ -55,14 +55,6 @@ func mkPhotoPusher(ts string, err error) provider.WidgetPusher {
 	}}
 }
 
-func TestNewPushHandler(t *testing.T) {
-	t.Parallel()
-	p := mkPusher("", nil)
-	if provider.NewPushHandler(p) == nil {
-		t.Fatal("expected non-nil PushHandler")
-	}
-}
-
 type pushHandlerTestCase struct {
 	name          string
 	method        string

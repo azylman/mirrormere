@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,7 +135,7 @@ func newTestManager(t *testing.T, yamlStr, overridePath string) (*config.Manager
 	if overridePath != "" {
 		opts = append(opts, config.WithOverridePath(overridePath))
 	}
-	mgr, err := config.NewManager([]byte(yamlStr), loader, os.Getenv, slog.Default(), opts...)
+	mgr, err := config.NewManager([]byte(yamlStr), loader, func(string) string { return "" }, slog.Default(), opts...)
 	if err != nil {
 		t.Fatalf("failed to create config manager: %v", err)
 	}
