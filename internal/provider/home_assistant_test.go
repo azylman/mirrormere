@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 type haInitTestCase struct {
@@ -410,461 +414,246 @@ func TestHomeAssistant_LovelaceLayoutDiscovery(t *testing.T) {
 	}
 }
 
-type haHydrateTestCase struct {
-	name            string
-	domains         []any
-	wantCount       int
-	wantPresent     []string
-	wantAbsent      []string
-	wantDrivewayPic string
-	wantMediaPic    string
+// newHAServer serves a scripted Home Assistant: the default Lovelace config
+// route and the /api/states route.
+func newHAServer(t *testing.T, lovelace, states testutil.Route) (*httptest.Server, *testutil.Captured) {
+	t.Helper()
+	return testutil.RouteServer(t, map[string]testutil.Route{"/api/lovelace/config": lovelace, "/api/states": states})
 }
 
-func assertHaHydrateStates(t *testing.T, states map[string]EntityState, tc haHydrateTestCase) {
+// haJSON marshals v for a scripted Home Assistant response body.
+func haJSON(t *testing.T, v any) string {
 	t.Helper()
-	if len(states) != tc.wantCount {
-		t.Fatalf("expected %d hydrated states, got %d", tc.wantCount, len(states))
-	}
-	for _, entityID := range tc.wantPresent {
-		if _, ok := states[entityID]; !ok {
-			t.Errorf("expected entity %q to be hydrated", entityID)
-		}
-	}
-	for _, entityID := range tc.wantAbsent {
-		if _, ok := states[entityID]; ok {
-			t.Errorf("expected entity %q to be filtered out", entityID)
-		}
-	}
-}
-
-func assertHaHydratePictures(t *testing.T, states map[string]EntityState, tc haHydrateTestCase) {
-	t.Helper()
-	if tc.wantDrivewayPic != "" {
-		gotPic, _ := states["camera.driveway"].Attributes["entity_picture"].(string)
-		if gotPic != tc.wantDrivewayPic {
-			t.Errorf("expected camera entity_picture %q, got %q", tc.wantDrivewayPic, gotPic)
-		}
-	}
-	if tc.wantMediaPic != "" {
-		gotMediaPic, _ := states["media_player.living_room_speaker"].Attributes["entity_picture"].(string)
-		if gotMediaPic != tc.wantMediaPic {
-			t.Errorf("expected media_player entity_picture %q, got %q", tc.wantMediaPic, gotMediaPic)
-		}
-	}
-}
-
-func runHaHydrateCase(t *testing.T, server *httptest.Server, tc haHydrateTestCase) {
-	t.Helper()
-	ctx := context.Background()
-	p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "test-ha-token")
-	cfgMap := map[string]any{
-		"url": server.URL,
-	}
-	if tc.domains != nil {
-		cfgMap["domains"] = tc.domains
-	}
-	if err := p.Init(ctx, cfgMap, InitOptions{Token: "test-ha-token"}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	states, err := p.HydrateStates(ctx)
+	b, err := json.Marshal(v)
 	if err != nil {
-		t.Fatalf("HydrateStates failed: %v", err)
+		t.Fatalf("marshal: %v", err)
 	}
-	assertHaHydrateStates(t, states, tc)
-	assertHaHydratePictures(t, states, tc)
+	return string(b)
+}
+
+// haCheckErr fails the test unless err is nil when wantSub is empty, or
+// non-nil with text containing wantSub otherwise.
+func haCheckErr(t *testing.T, err error, wantSub string) {
+	t.Helper()
+	got := ""
+	if err != nil {
+		got = err.Error()
+	}
+	if (wantSub == "") != (got == "") || !strings.Contains(got, wantSub) {
+		t.Fatalf("error = %q, want substring %q", got, wantSub)
+	}
+}
+
+// haCardSummary renders a card as "type entity image" with the server base
+// URL replaced by BASE, so rows can state normalized image URLs as literals.
+func haCardSummary(c LovelaceCard, base string) string {
+	return strings.TrimSpace(strings.Join([]string{c.Type, c.Entity, strings.Replace(c.Image, base, "BASE", 1)}, " "))
 }
 
 func mockHomeAssistantStates() []EntityState {
 	return []EntityState{
-		{
-			EntityID: "light.kitchen",
-			State:    "on",
-			Attributes: map[string]any{
-				"friendly_name": "Kitchen Light",
-				"brightness":    200,
-			},
-		},
-		{
-			EntityID: "switch.coffee",
-			State:    "off",
-			Attributes: map[string]any{
-				"friendly_name": "Coffee Maker",
-			},
-		},
-		{
-			EntityID: "fan.living_room",
-			State:    "on",
-			Attributes: map[string]any{
-				"percentage": 50,
-			},
-		},
-		{
-			EntityID: "cover.garage",
-			State:    "closed",
-			Attributes: map[string]any{
-				"current_position": 0,
-			},
-		},
-		{
-			EntityID: "lock.front_door",
-			State:    "locked",
-			Attributes: map[string]any{
-				"friendly_name": "Front Door",
-			},
-		},
-		{
-			EntityID: "climate.hallway",
-			State:    "heat",
-			Attributes: map[string]any{
-				"current_temperature": 68.5,
-				"temperature":         70.0,
-			},
-		},
-		{
-			EntityID: "media_player.living_room_speaker",
-			State:    "playing",
-			Attributes: map[string]any{
-				"media_title":    "Hey Jude",
-				"volume_level":   0.4,
-				"entity_picture": "https://cdn.example.com/album.jpg",
-			},
-		},
-		{
-			EntityID: "camera.driveway",
-			State:    "idle",
-			Attributes: map[string]any{
-				"access_token":   "cam-token-xyz",
-				"entity_picture": "/api/camera_proxy/camera.driveway?token=cam-token-xyz",
-			},
-		},
-		{
-			EntityID: "scene.evening",
-			State:    "scening",
-			Attributes: map[string]any{
-				"friendly_name": "Evening Scene",
-			},
-		},
-		{
-			EntityID: "script.movie_night",
-			State:    "off",
-			Attributes: map[string]any{
-				"friendly_name": "Movie Night",
-			},
-		},
-		{
-			EntityID: "sensor.outdoor_temperature",
-			State:    "72.4",
-			Attributes: map[string]any{
-				"unit_of_measurement": "°F",
-				"device_class":        "temperature",
-			},
-		},
-		{
-			EntityID: "binary_sensor.front_motion",
-			State:    "on",
-			Attributes: map[string]any{
-				"device_class": "motion",
-			},
-		},
-		{
-			EntityID: "automation.motion_lighting",
-			State:    "on",
-			Attributes: map[string]any{
-				"friendly_name": "Motion Lighting Rule",
-			},
-		},
-		{
-			EntityID: "zone.home",
-			State:    "zoning",
-			Attributes: map[string]any{
-				"radius": 100,
-			},
-		},
-	}
-}
-
-func setupHomeAssistantHydrateServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	mockStates := mockHomeAssistantStates()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/states" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.Header.Get("Authorization") != "Bearer test-ha-token" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(mockStates)
-	}))
-	t.Cleanup(server.Close)
-	return server
-}
-
-func haHydrateTestCases(serverURL string) []haHydrateTestCase {
-	return []haHydrateTestCase{
-		{
-			name:      "hydrates all 12 supported domains and rewrites root-relative entity_picture",
-			wantCount: 12,
-			wantPresent: []string{
-				"light.kitchen",
-				"switch.coffee",
-				"fan.living_room",
-				"cover.garage",
-				"lock.front_door",
-				"climate.hallway",
-				"media_player.living_room_speaker",
-				"camera.driveway",
-				"scene.evening",
-				"script.movie_night",
-				"sensor.outdoor_temperature",
-				"binary_sensor.front_motion",
-			},
-			wantAbsent:      []string{"automation.motion_lighting", "zone.home"},
-			wantDrivewayPic: serverURL + "/api/camera_proxy/camera.driveway?token=cam-token-xyz",
-			wantMediaPic:    "https://cdn.example.com/album.jpg",
-		},
-		{
-			name:        "filters by configured domains",
-			domains:     []any{"light", "climate"},
-			wantCount:   2,
-			wantPresent: []string{"light.kitchen", "climate.hallway"},
-			wantAbsent:  []string{"switch.coffee", "camera.driveway"},
-		},
+		{EntityID: "light.kitchen", State: "on", Attributes: map[string]any{"friendly_name": "Kitchen Light", "brightness": 200}},
+		{EntityID: "switch.coffee", State: "off", Attributes: map[string]any{"friendly_name": "Coffee Maker"}},
+		{EntityID: "fan.living_room", State: "on", Attributes: map[string]any{"percentage": 50}},
+		{EntityID: "cover.garage", State: "closed", Attributes: map[string]any{"current_position": 0}},
+		{EntityID: "lock.front_door", State: "locked", Attributes: map[string]any{"friendly_name": "Front Door"}},
+		{EntityID: "climate.hallway", State: "heat", Attributes: map[string]any{"current_temperature": 68.5, "temperature": 70.0}},
+		{EntityID: "media_player.living_room_speaker", State: "playing", Attributes: map[string]any{
+			"media_title": "Hey Jude", "volume_level": 0.4, "entity_picture": "https://cdn.example.com/album.jpg",
+		}},
+		{EntityID: "camera.driveway", State: "idle", Attributes: map[string]any{
+			"access_token": "cam-token-xyz", "entity_picture": "/api/camera_proxy/camera.driveway?token=cam-token-xyz",
+		}},
+		{EntityID: "scene.evening", State: "scening", Attributes: map[string]any{"friendly_name": "Evening Scene"}},
+		{EntityID: "script.movie_night", State: "off", Attributes: map[string]any{"friendly_name": "Movie Night"}},
+		{EntityID: "sensor.outdoor_temperature", State: "72.4", Attributes: map[string]any{"unit_of_measurement": "°F", "device_class": "temperature"}},
+		{EntityID: "binary_sensor.front_motion", State: "on", Attributes: map[string]any{"device_class": "motion"}},
+		{EntityID: "automation.motion_lighting", State: "on", Attributes: map[string]any{"friendly_name": "Motion Lighting Rule"}},
+		{EntityID: "zone.home", State: "zoning", Attributes: map[string]any{"radius": 100}},
 	}
 }
 
 func TestHomeAssistant_HydrateStates(t *testing.T) {
 	t.Parallel()
-
-	server := setupHomeAssistantHydrateServer(t)
-	tests := haHydrateTestCases(server.URL)
-
+	allStates := haJSON(t, mockHomeAssistantStates())
+	tests := []struct {
+		name         string
+		states       testutil.Route
+		domains      []any
+		canceledCtx  bool
+		wantErrSub   string
+		wantIDs      []string
+		wantPictures map[string]string
+	}{
+		{
+			name:   "all 12 supported domains with root-relative entity_picture rewritten",
+			states: testutil.Route{Body: allStates},
+			wantIDs: []string{
+				"binary_sensor.front_motion", "camera.driveway", "climate.hallway", "cover.garage", "fan.living_room", "light.kitchen",
+				"lock.front_door", "media_player.living_room_speaker", "scene.evening", "script.movie_night", "sensor.outdoor_temperature", "switch.coffee",
+			},
+			wantPictures: map[string]string{
+				"camera.driveway":                  "BASE/api/camera_proxy/camera.driveway?token=cam-token-xyz",
+				"media_player.living_room_speaker": "https://cdn.example.com/album.jpg",
+			},
+		},
+		{name: "configured domains filter", states: testutil.Route{Body: allStates}, domains: []any{"light", "climate"}, wantIDs: []string{"climate.hallway", "light.kitchen"}},
+		{name: "upstream 500", states: testutil.Route{Status: http.StatusInternalServerError, Body: "internal crash"}, wantErrSub: "states request returned status 500: internal crash"},
+		{name: "invalid json", states: testutil.Route{Body: "invalid json"}, wantErrSub: "failed to decode states"},
+		{name: "canceled context", states: testutil.Route{Body: allStates}, canceledCtx: true, wantErrSub: "states request failed"},
+	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			runHaHydrateCase(t, server, tc)
+			srv, captured := newHAServer(t, testutil.Route{}, tc.states)
+			p := NewHomeAssistantProviderWithClient(nil, srv.URL, "")
+			p.client = nil // exercise the http.DefaultClient fallback
+			cfg := map[string]any{"url": srv.URL}
+			if tc.domains != nil {
+				cfg["domains"] = tc.domains
+			}
+			if err := p.Init(context.Background(), cfg, InitOptions{Token: "test-ha-token"}); err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.canceledCtx {
+				cancel()
+			}
+			states, err := p.HydrateStates(ctx)
+			haCheckErr(t, err, tc.wantErrSub)
+			for _, r := range captured.Requests() {
+				if got := r.Header.Get("Authorization"); got != "Bearer test-ha-token" {
+					t.Errorf("Authorization = %q, want bearer token", got)
+				}
+			}
+			if gotIDs := slices.Sorted(maps.Keys(states)); !slices.Equal(gotIDs, tc.wantIDs) {
+				t.Errorf("hydrated IDs = %v, want %v", gotIDs, tc.wantIDs)
+			}
+			for id, want := range tc.wantPictures {
+				pic, _ := states[id].Attributes["entity_picture"].(string)
+				if got := strings.Replace(pic, srv.URL, "BASE", 1); got != want {
+					t.Errorf("%s entity_picture = %q, want %q", id, got, want)
+				}
+			}
 		})
 	}
 }
 
 func TestHomeAssistant_Fetch(t *testing.T) {
 	t.Parallel()
-
-	lovelaceData := LovelaceConfig{
-		Title: "My Lovelace Home",
-		Views: []LovelaceView{
-			{
-				Title: "Living Room",
-				Path:  "living_room",
-				Cards: []LovelaceCard{
-					{
-						Type:   "tile",
-						Entity: "light.living_room",
-					},
-					{
-						Type:   "thermostat",
-						Entity: "climate.hallway",
-					},
-				},
-			},
-		},
-	}
-
-	statesData := []EntityState{
+	tests := []struct {
+		name           string
+		config         map[string]any
+		lovelace       testutil.Route
+		states         testutil.Route
+		wantErrSub     string
+		wantTitle      string
+		wantCards      []string
+		wantEntities   []string
+		wantDiscovered []string
+	}{
 		{
-			EntityID: "light.living_room",
-			State:    "on",
-			Attributes: map[string]any{
-				"friendly_name": "Living Room Light",
-			},
+			name:           "lovelace layout plus a hydrated non-card entity",
+			lovelace:       testutil.Route{Body: `{"title":"My Lovelace Home","views":[{"title":"Living Room","path":"living_room","cards":[{"type":"tile","entity":"light.living_room"},{"type":"thermostat","entity":"climate.hallway"}]}]}`},
+			states:         testutil.Route{Body: `[{"entity_id":"light.living_room","state":"on"},{"entity_id":"climate.hallway","state":"cool"},{"entity_id":"switch.tv","state":"off"}]`},
+			wantTitle:      "My Lovelace Home",
+			wantCards:      []string{"tile light.living_room", "thermostat climate.hallway"},
+			wantEntities:   []string{"climate.hallway", "light.living_room", "switch.tv"},
+			wantDiscovered: []string{"light.living_room", "climate.hallway"},
 		},
 		{
-			EntityID: "climate.hallway",
-			State:    "cool",
-			Attributes: map[string]any{
-				"current_temperature": 71.0,
-			},
+			name:           "lovelace 404 generates sorted fallback cards from states",
+			lovelace:       testutil.Route{Status: http.StatusNotFound},
+			states:         testutil.Route{Body: `[{"entity_id":"climate.thermostat","state":"heat"},{"entity_id":"camera.front_door","state":"idle"},{"entity_id":"light.porch","state":"on"}]`},
+			wantTitle:      "Home Assistant",
+			wantCards:      []string{"picture-entity camera.front_door", "thermostat climate.thermostat", "tile light.porch"},
+			wantEntities:   []string{"camera.front_door", "climate.thermostat", "light.porch"},
+			wantDiscovered: []string{"camera.front_door", "climate.thermostat", "light.porch"},
 		},
 		{
-			EntityID: "switch.tv",
-			State:    "off",
-			Attributes: map[string]any{
-				"friendly_name": "TV Power",
-			},
-		},
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/lovelace/config":
-			_ = json.NewEncoder(w).Encode(lovelaceData)
-		case "/api/states":
-			_ = json.NewEncoder(w).Encode(statesData)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	ctx := context.Background()
-	p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "token-123")
-	err := p.Init(ctx, map[string]any{
-		"url": server.URL,
-	}, InitOptions{Token: "token-123"})
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	res, err := p.Fetch(ctx)
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snapshot, ok := res.(HomeAssistantSnapshot)
-	if !ok {
-		t.Fatalf("expected HomeAssistantSnapshot, got %T", res)
-	}
-
-	if snapshot.Title != "My Lovelace Home" {
-		t.Errorf("expected title 'My Lovelace Home', got %q", snapshot.Title)
-	}
-	if len(snapshot.Cards) != 2 {
-		t.Fatalf("expected 2 discovered cards, got %d", len(snapshot.Cards))
-	}
-	if len(snapshot.Entities) != 3 {
-		t.Fatalf("expected 3 hydrated entities, got %d", len(snapshot.Entities))
-	}
-	if len(snapshot.DiscoveredEntities) != 2 {
-		t.Fatalf("expected 2 discovered entities, got %d", len(snapshot.DiscoveredEntities))
-	}
-	if snapshot.LastUpdated == "" {
-		t.Error("expected non-empty LastUpdated timestamp")
-	}
-}
-
-func TestHomeAssistant_Fetch_FallbackWhenLovelace404(t *testing.T) {
-	t.Parallel()
-
-	statesData := []EntityState{
-		{
-			EntityID: "climate.thermostat",
-			State:    "heat",
-			Attributes: map[string]any{
-				"current_temperature": 69,
-			},
+			name:       "states failure fails the fetch",
+			lovelace:   testutil.Route{Body: `{"title":"Dash","views":[{"title":"V1","cards":[{"type":"tile","entity":"light.one"}]}]}`},
+			states:     testutil.Route{Status: http.StatusInternalServerError, Body: "states error"},
+			wantErrSub: "home-assistant hydration failed: states request returned status 500: states error",
 		},
 		{
-			EntityID: "camera.front_door",
-			State:    "idle",
+			name:           "configured entity joins discovered and section image is normalized",
+			config:         map[string]any{"entities": []any{"switch.extra"}},
+			lovelace:       testutil.Route{Body: `{"title":"Lovelace Dash","views":[{"title":"V1","sections":[{"title":"S1","cards":[{"type":"tile","entity":"light.one","image":"/local/img.png"}]}]}]}`},
+			states:         testutil.Route{Body: `[{"entity_id":"light.one","state":"on"},{"entity_id":"switch.extra","state":"off"}]`},
+			wantTitle:      "Lovelace Dash",
+			wantCards:      []string{"tile light.one BASE/local/img.png"},
+			wantEntities:   []string{"light.one", "switch.extra"},
+			wantDiscovered: []string{"light.one", "switch.extra"},
 		},
-		{
-			EntityID: "light.porch",
-			State:    "on",
-		},
+		{name: "untitled empty dashboard defaults the title", lovelace: testutil.Route{Body: `{"views":[{"cards":[]}]}`}, states: testutil.Route{Body: `[]`}, wantTitle: "Home Assistant"},
 	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/lovelace/config":
-			http.NotFound(w, r)
-		case "/api/states":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(statesData)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	ctx := context.Background()
-	p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "token-123")
-	err := p.Init(ctx, map[string]any{
-		"url": server.URL,
-	}, InitOptions{Token: "token-123"})
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	res, err := p.Fetch(ctx)
-	if err != nil {
-		t.Fatalf("Fetch should succeed even when Lovelace 404s: %v", err)
-	}
-
-	snapshot, ok := res.(HomeAssistantSnapshot)
-	if !ok {
-		t.Fatalf("expected HomeAssistantSnapshot, got %T", res)
-	}
-	if len(snapshot.Cards) != 3 {
-		t.Fatalf("expected 3 generated fallback cards, got %d", len(snapshot.Cards))
-	}
-	if len(snapshot.Entities) != 3 {
-		t.Fatalf("expected 3 hydrated entities, got %d", len(snapshot.Entities))
-	}
-
-	typeMap := make(map[string]string)
-	for _, c := range snapshot.Cards {
-		typeMap[c.Entity] = c.Type
-	}
-
-	if typeMap["climate.thermostat"] != "thermostat" {
-		t.Errorf("expected climate fallback card to be thermostat, got %q", typeMap["climate.thermostat"])
-	}
-	if typeMap["camera.front_door"] != "picture-entity" {
-		t.Errorf("expected camera fallback card to be picture-entity, got %q", typeMap["camera.front_door"])
-	}
-	if typeMap["light.porch"] != "tile" {
-		t.Errorf("expected light fallback card to be tile, got %q", typeMap["light.porch"])
-	}
-}
-
-func TestHomeAssistant_Registry(t *testing.T) {
-	t.Parallel()
-	reg := NewRegistry()
-	p, err := reg.Create("home-assistant")
-	if err != nil {
-		t.Fatalf("expected home-assistant to be registered in NewRegistry(): %v", err)
-	}
-	if p == nil {
-		t.Fatal("expected non-nil provider instance")
-	}
-	if _, ok := p.(*HomeAssistantProvider); !ok {
-		t.Fatalf("expected *HomeAssistantProvider, got %T", p)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv, _ := newHAServer(t, tc.lovelace, tc.states)
+			p := NewHomeAssistantProviderWithClient(srv.Client(), srv.URL, "")
+			cfg := map[string]any{"url": srv.URL}
+			maps.Copy(cfg, tc.config)
+			if err := p.Init(context.Background(), cfg, InitOptions{Token: "token-123"}); err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			res, err := p.Fetch(context.Background())
+			haCheckErr(t, err, tc.wantErrSub)
+			if err != nil {
+				return
+			}
+			snap := testutil.As[HomeAssistantSnapshot](t, res)
+			cards := make([]string, 0, len(snap.Cards))
+			for _, c := range snap.Cards {
+				cards = append(cards, haCardSummary(c, srv.URL))
+			}
+			if snap.Title != tc.wantTitle || !slices.Equal(cards, tc.wantCards) {
+				t.Errorf("title, cards = %q, %v; want %q, %v", snap.Title, cards, tc.wantTitle, tc.wantCards)
+			}
+			if got := slices.Sorted(maps.Keys(snap.Entities)); !slices.Equal(got, tc.wantEntities) {
+				t.Errorf("entities = %v, want %v", got, tc.wantEntities)
+			}
+			if !slices.Equal(snap.DiscoveredEntities, tc.wantDiscovered) {
+				t.Errorf("discovered = %v, want %v", snap.DiscoveredEntities, tc.wantDiscovered)
+			}
+			if _, err := time.Parse(time.RFC3339, snap.LastUpdated); err != nil {
+				t.Errorf("LastUpdated %q is not RFC3339: %v", snap.LastUpdated, err)
+			}
+		})
 	}
 }
 
 func TestHomeAssistant_IsValidIdentifier(t *testing.T) {
 	t.Parallel()
-	valid := []string{"light", "switch", "turn_on", "toggle", "binary_sensor", "media_player", "v1_service"}
-	for _, s := range valid {
-		if !IsValidIdentifier(s) {
-			t.Errorf("expected IsValidIdentifier(%q) to be true", s)
-		}
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"light", true},
+		{"switch", true},
+		{"turn_on", true},
+		{"toggle", true},
+		{"binary_sensor", true},
+		{"media_player", true},
+		{"v1_service", true},
+		{"", false},
+		{"Light", false},
+		{"light-switch", false},
+		{"light.turn_on", false},
+		{"light/turn_on", false},
+		{"../..", false},
+		{"light\n", false},
+		{"turn_on ", false},
 	}
-
-	invalid := []string{"", "Light", "light-switch", "light.turn_on", "light/turn_on", "../..", "light\n", "turn_on "}
-	for _, s := range invalid {
-		if IsValidIdentifier(s) {
-			t.Errorf("expected IsValidIdentifier(%q) to be false", s)
-		}
-	}
-}
-
-func TestHomeAssistant_SubscribeAndShutdown(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	p := NewHomeAssistantProvider()
-
-	if err := p.Subscribe(ctx, nil); err != nil {
-		t.Errorf("expected nil from Subscribe, got %v", err)
-	}
-
-	if err := p.Shutdown(ctx); err != nil {
-		t.Errorf("expected nil from Shutdown, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			t.Parallel()
+			if got := IsValidIdentifier(tc.in); got != tc.want {
+				t.Errorf("IsValidIdentifier(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -975,39 +764,24 @@ func TestHomeAssistant_UnconfiguredErrors(t *testing.T) {
 	}
 }
 
-func TestHomeAssistant_LovelaceCustomDashboardAndFallbacks(t *testing.T) {
+func TestHomeAssistant_LovelaceCustomDashboardFallsBackToDefault(t *testing.T) {
 	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/lovelace/config/custom":
-			w.WriteHeader(http.StatusNotFound)
-		case "/api/lovelace/config":
-			_ = json.NewEncoder(w).Encode(LovelaceConfig{
-				Title: "Default Dash",
-			})
-		case "/api/states":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`invalid json`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	ctx := context.Background()
-	p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "tok")
-
-	cfg, err := p.FetchLovelaceConfig(ctx, "custom")
-	if err != nil {
-		t.Fatalf("expected fallback to succeed, got %v", err)
+	srv, captured := testutil.RouteServer(t, map[string]testutil.Route{
+		"/api/lovelace/config/custom": {Status: http.StatusNotFound},
+		"/api/lovelace/config":        {Body: `{"title":"Default Dash"}`},
+	})
+	p := NewHomeAssistantProviderWithClient(srv.Client(), srv.URL, "tok")
+	cfg, err := p.FetchLovelaceConfig(context.Background(), "custom")
+	if err != nil || cfg.Title != "Default Dash" {
+		t.Fatalf("FetchLovelaceConfig = %+v, %v; want Default Dash fallback", cfg, err)
 	}
-	if cfg.Title != "Default Dash" {
-		t.Errorf("expected title 'Default Dash', got %q", cfg.Title)
+	reqs := captured.Requests()
+	paths := make([]string, 0, len(reqs))
+	for _, r := range reqs {
+		paths = append(paths, r.Path)
 	}
-
-	if _, err := p.HydrateStates(ctx); err == nil {
-		t.Error("expected decode error on invalid json states")
+	if want := []string{"/api/lovelace/config/custom", "/api/lovelace/config"}; !slices.Equal(paths, want) {
+		t.Errorf("request paths = %v, want %v", paths, want)
 	}
 }
 
@@ -1111,100 +885,5 @@ func TestHomeAssistant_EntityState_Domain(t *testing.T) {
 		if got := es.Domain(); got != tc.want {
 			t.Errorf("Domain(%q) = %q, want %q", tc.entityID, got, tc.want)
 		}
-	}
-}
-
-func TestHomeAssistant_Fetch_HydrationErrorAndEntityMerging(t *testing.T) {
-	t.Parallel()
-
-	serverErr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/api/lovelace/config") {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"title":"Dash","views":[{"title":"V1","cards":[{"type":"tile","entity":"light.one"}]}]}`))
-			return
-		}
-		if strings.Contains(r.URL.Path, "/api/states") {
-			http.Error(w, "states error", http.StatusInternalServerError)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer serverErr.Close()
-
-	ctx := context.Background()
-	pErr := NewHomeAssistantProviderWithClient(serverErr.Client(), serverErr.URL, "tok")
-	_ = pErr.Init(ctx, map[string]any{"url": serverErr.URL}, InitOptions{Token: "tok"})
-
-	_, err := pErr.Fetch(ctx)
-	if err == nil || !strings.Contains(err.Error(), "home-assistant hydration failed") {
-		t.Fatalf("expected hydration failed error, got: %v", err)
-	}
-
-	serverOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/api/lovelace/config") {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"title":"Lovelace Dash","views":[{"title":"V1","sections":[{"title":"S1","cards":[{"type":"tile","entity":"light.one","image":"/local/img.png"}]}]}]}`))
-			return
-		}
-		if strings.Contains(r.URL.Path, "/api/states") {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`[{"entity_id":"light.one","state":"on"},{"entity_id":"switch.extra","state":"off"}]`))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer serverOK.Close()
-
-	pOK := NewHomeAssistantProviderWithClient(serverOK.Client(), serverOK.URL, "tok")
-	_ = pOK.Init(ctx, map[string]any{
-		"url":      serverOK.URL,
-		"entities": []any{"switch.extra"},
-	}, InitOptions{Token: "tok"})
-
-	snapRaw, err := pOK.Fetch(ctx)
-	if err != nil {
-		t.Fatalf("unexpected Fetch error: %v", err)
-	}
-	snap, ok := snapRaw.(HomeAssistantSnapshot)
-	if !ok {
-		t.Fatalf("unexpected snapshot type: %T", snapRaw)
-	}
-	if snap.Title != "Lovelace Dash" {
-		t.Errorf("expected Title 'Lovelace Dash', got %q", snap.Title)
-	}
-	if !slices.Contains(snap.DiscoveredEntities, "switch.extra") {
-		t.Errorf("expected DiscoveredEntities to contain 'switch.extra', got %v", snap.DiscoveredEntities)
-	}
-	if len(snap.Cards) != 1 || snap.Cards[0].Image != serverOK.URL+"/local/img.png" {
-		t.Errorf("expected section card image normalized, got %+v", snap.Cards)
-	}
-
-	serverNoTitle := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/api/lovelace/config") {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"views":[{"cards":[]}]}`))
-			return
-		}
-		if strings.Contains(r.URL.Path, "/api/states") {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`[]`))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer serverNoTitle.Close()
-
-	pNoTitle := NewHomeAssistantProviderWithClient(serverNoTitle.Client(), serverNoTitle.URL, "tok")
-	_ = pNoTitle.Init(ctx, map[string]any{"url": serverNoTitle.URL}, InitOptions{Token: "tok"})
-	snapNoTitleRaw, err := pNoTitle.Fetch(ctx)
-	if err != nil {
-		t.Fatalf("unexpected Fetch error: %v", err)
-	}
-	snapNoTitle, ok := snapNoTitleRaw.(HomeAssistantSnapshot)
-	if !ok {
-		t.Fatalf("unexpected snapshot type: %T", snapNoTitleRaw)
-	}
-	if snapNoTitle.Title != "Home Assistant" {
-		t.Errorf("expected default title 'Home Assistant', got %q", snapNoTitle.Title)
 	}
 }

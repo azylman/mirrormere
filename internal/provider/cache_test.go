@@ -3,6 +3,7 @@ package provider_test
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -10,64 +11,63 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
-func assertCacheStep(t *testing.T, c *provider.SWRCache, got provider.WidgetPayload, trans bool, wantState, wantTS string, wantTrans bool, wantFails int) {
-	t.Helper()
-	if got.State != wantState || got.Timestamp != wantTS || trans != wantTrans || c.GetConsecutiveFailures(got.WidgetID) != wantFails {
-		t.Fatalf("step fail: state=%q (want %q), ts=%q (want %q), trans=%v (want %v), fails=%d (want %d)", got.State, wantState, got.Timestamp, wantTS, trans, wantTrans, c.GetConsecutiveFailures(got.WidgetID), wantFails)
-	}
-}
-
+// TestSWRCache_LifecycleAndStateTransitions drives one widget through the SWR
+// state machine; each step runs against the state the previous steps left.
 func TestSWRCache_LifecycleAndStateTransitions(t *testing.T) {
 	t.Parallel()
-	cache := provider.NewSWRCache()
-	wID := "sensor-weather"
+	const wID = "sensor-weather"
 	t0 := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	errCold, errTrans := errors.New("timeout on cold boot"), errors.New("502 bad gateway")
+	steps := []struct {
+		name      string
+		op        string
+		data      map[string]any
+		err       error
+		at        time.Duration
+		wantState string
+		wantTS    time.Duration
+		wantTrans bool
+		wantFails int
+		wantData  map[string]any
+	}{
+		{"cold failure serves an empty map", "failure", nil, errCold, 0, provider.StateError, 0, true, 1, map[string]any{}},
+		{"repeat cold failure", "failure", nil, errCold, 5 * time.Second, provider.StateError, 5 * time.Second, false, 2, map[string]any{}},
+		{"first success", "success", map[string]any{"temp": 72.5}, nil, 30 * time.Second, provider.StateHealthy, 30 * time.Second, true, 0, map[string]any{"temp": 72.5}},
+		{"repeat success", "success", map[string]any{"temp": 73.0}, nil, 90 * time.Second, provider.StateHealthy, 90 * time.Second, false, 0, map[string]any{"temp": 73.0}},
+		{"failure keeps last good", "failure", nil, errTrans, 150 * time.Second, provider.StateDegraded, 90 * time.Second, true, 1, map[string]any{"temp": 73.0}},
+		{"repeat degraded failure", "failure", nil, errTrans, 160 * time.Second, provider.StateDegraded, 90 * time.Second, false, 2, map[string]any{"temp": 73.0}},
+		{"recovery", "success", map[string]any{"temp": 71.8}, nil, 190 * time.Second, provider.StateHealthy, 190 * time.Second, true, 0, map[string]any{"temp": 71.8}},
+		{"push while healthy", "push", map[string]any{"temp": 70.0}, nil, 200 * time.Second, provider.StateHealthy, 200 * time.Second, false, 0, map[string]any{"temp": 70.0}},
+	}
 
-	if _, ok := cache.Get(wID); ok || cache.GetConsecutiveFailures(wID) != 0 {
+	cache := provider.NewSWRCache()
+	if _, ok := cache.Get(wID); ok || cache.GetConsecutiveFailures(wID) != 0 || cache.GetStatusMap() != nil {
 		t.Fatal("expected empty initial cache")
 	}
-
-	errCold := errors.New("timeout on cold boot")
-	p1, tr1 := cache.RecordFailure(wID, errCold, t0)
-	assertCacheStep(t, cache, p1, tr1, provider.StateError, t0.Format(time.RFC3339), true, 1)
-	if dm, ok := p1.Data.(map[string]any); !ok || len(dm) != 0 {
-		t.Fatal("expected empty fallback map")
+	for _, st := range steps {
+		var got provider.WidgetPayload
+		var trans bool
+		switch st.op {
+		case "failure":
+			got, trans = cache.RecordFailure(wID, st.err, t0.Add(st.at))
+		case "success":
+			got, trans = cache.RecordSuccess(wID, st.data, t0.Add(st.at))
+		default:
+			got, trans = cache.RecordPush(wID, st.data, t0.Add(st.at))
+		}
+		if wantTS := t0.Add(st.wantTS).Format(time.RFC3339); got.State != st.wantState || got.Timestamp != wantTS || trans != st.wantTrans {
+			t.Fatalf("%s: state=%q ts=%q trans=%v; want %q %q %v", st.name, got.State, got.Timestamp, trans, st.wantState, wantTS, st.wantTrans)
+		}
+		if fails := cache.GetConsecutiveFailures(wID); fails != st.wantFails {
+			t.Fatalf("%s: consecutive failures = %d, want %d", st.name, fails, st.wantFails)
+		}
+		if data, ok := got.Data.(map[string]any); !ok || !maps.Equal(data, st.wantData) {
+			t.Fatalf("%s: data = %v, want %v", st.name, got.Data, st.wantData)
+		}
 	}
-
-	p2, tr2 := cache.RecordFailure(wID, errCold, t0.Add(5*time.Second))
-	assertCacheStep(t, cache, p2, tr2, provider.StateError, t0.Add(5*time.Second).Format(time.RFC3339), false, 2)
-
-	t2 := t0.Add(30 * time.Second)
-	p3, tr3 := cache.RecordSuccess(wID, map[string]any{"temp": 72.5}, t2)
-	assertCacheStep(t, cache, p3, tr3, provider.StateHealthy, t2.Format(time.RFC3339), true, 0)
-
-	t3 := t2.Add(60 * time.Second)
-	p4, tr4 := cache.RecordSuccess(wID, map[string]any{"temp": 73.0}, t3)
-	assertCacheStep(t, cache, p4, tr4, provider.StateHealthy, t3.Format(time.RFC3339), false, 0)
-
-	errTrans := errors.New("502 bad gateway")
-	p5, tr5 := cache.RecordFailure(wID, errTrans, t3.Add(60*time.Second))
-	assertCacheStep(t, cache, p5, tr5, provider.StateDegraded, t3.Format(time.RFC3339), true, 1)
-	if dm, ok := p5.Data.(map[string]any); !ok || dm["temp"] != 73.0 {
-		t.Fatal("expected preserved LKG data")
+	if got := cache.GetStatusMap(); len(got) != 1 || got[wID] != provider.StateHealthy {
+		t.Fatalf("status map = %v, want only %s healthy", got, wID)
 	}
-
-	p6, tr6 := cache.RecordFailure(wID, errTrans, t3.Add(70*time.Second))
-	assertCacheStep(t, cache, p6, tr6, provider.StateDegraded, t3.Format(time.RFC3339), false, 2)
-
-	t6 := t3.Add(100 * time.Second)
-	p7, tr7 := cache.RecordSuccess(wID, map[string]any{"temp": 71.8}, t6)
-	assertCacheStep(t, cache, p7, tr7, provider.StateHealthy, t6.Format(time.RFC3339), true, 0)
-
-	pPush, _ := cache.RecordPush(wID, map[string]any{"temp": 70.0}, t6.Add(10*time.Second))
-	if pPush.State != provider.StateHealthy {
-		t.Fatal("expected healthy on push")
-	}
-
-	if len(cache.GetStatusMap()) != 1 {
-		t.Fatal("unexpected StatusMap length")
-	}
-
 	cache.Purge(wID)
 	if _, ok := cache.Get(wID); ok || cache.GetStatusMap() != nil {
 		t.Fatal("expected cache eviction after Purge")
