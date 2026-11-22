@@ -10,6 +10,11 @@ import { FakeRTCPeerConnection } from '../../test-utils/fakeRTCPeerConnection';
 import { renderWidget, seedWidget, widgetMeta } from '../../test-utils/widget';
 
 
+/** The w-live-1 widget inside a PaneContext, for rerender() after renderWidget(). */
+function liveViewPane(isCurrentPane: boolean, paneIndex = 0) {
+  return <PaneContext.Provider value={{ isCurrentPane, paneIndex }}><LiveViewWidget id="w-live-1" type="live-view" /></PaneContext.Provider>;
+}
+
 describe('LiveViewWidget helpers', () => {
   describe('parseLiveViewConfig', () => {
     it('returns default config when input is null, undefined, primitive, or invalid JSON', () => {
@@ -359,20 +364,12 @@ describe('LiveViewWidget component', () => {
     const firstPc = lastPeerConnection;
 
     // Switch pane
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    rerender(liveViewPane(false));
 
     expect(firstPc?.closed).toBe(true);
 
     // Switch back to current pane
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    rerender(liveViewPane(true));
 
     await vi.waitFor(() => {
       expect(lastPeerConnection).not.toBe(firstPc);
@@ -704,27 +701,13 @@ describe('LiveViewWidget component', () => {
     });
 
     renderWidget(LiveViewWidget, widgetId, 'live-view');
+    await act(async () => { await vi.advanceTimersByTimeAsync(499); });
+    expect(peerInstance).not.toBeNull();
+    expect(globalThis.fetch).not.toHaveBeenCalledWith('https://cam.example.com/webrtc', expect.anything());
 
-    await vi.waitFor(() => {
-      expect(peerInstance).not.toBeNull();
-    });
-
-    expect(globalThis.fetch).not.toHaveBeenCalledWith(
-      'https://cam.example.com/webrtc',
-      expect.anything(),
-    );
-
-    // Advance 500ms timer
-    act(() => {
-      vi.advanceTimersByTime(500);
-    });
-
-    await vi.waitFor(() => {
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        'https://cam.example.com/webrtc',
-        expect.anything(),
-      );
-    });
+    // The 500ms ICE gathering timeout fires and the offer is posted.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(globalThis.fetch).toHaveBeenCalledWith('https://cam.example.com/webrtc', expect.anything());
   });
 
   it('aborts ICE gathering wait when component is unmounted', async () => {
@@ -1251,11 +1234,7 @@ describe('LiveViewWidget component', () => {
     expect(secondRefreshedSrc).not.toBe(firstRefreshedSrc);
 
     // Swipe off-pane: img.src MUST be preserved (not cleared to '')
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    rerender(liveViewPane(false));
     expect(img.getAttribute('src')).toBe(secondRefreshedSrc);
 
     // Off-pane background refresh: stagger 2 * 5000ms = 10000ms + 300000ms (5 minutes)
@@ -1280,11 +1259,7 @@ describe('LiveViewWidget component', () => {
       stagger_index: 0,
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 1 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(LiveViewWidget, widgetId, 'live-view', { pane: { isCurrentPane: false, paneIndex: 1 } });
 
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('/hearth-api/cameras/nursery_cam/stream?quality=high');
@@ -1317,11 +1292,7 @@ describe('LiveViewWidget component', () => {
     expect(img.getAttribute('src')).toBe('/hearth-api/cameras/doorbell/stream');
 
     // Switch off-pane: background_refresh_interval_seconds: 0 must also disable periodic timer
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    rerender(liveViewPane(false));
 
     act(() => {
       vi.advanceTimersByTime(600000);
@@ -1341,11 +1312,7 @@ describe('LiveViewWidget component', () => {
       stagger_index: 0,
     });
 
-    const { container, unmount } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 1 }}>
-        <LiveViewWidget id={widgetId} type="live-view" />
-      </PaneContext.Provider>,
-    );
+    const { container, unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view', { pane: { isCurrentPane: true, paneIndex: 1 } });
     const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
 
     act(() => { vi.advanceTimersByTime(240_000); });
@@ -1368,7 +1335,7 @@ describe('LiveViewWidget component', () => {
     // Opt-in screen-0 navigation fires only when idle_timeout_seconds is explicitly configured
     unmount();
     seedLiveView({ stream_url: '/hearth-api/cameras/nursery_cam/stream', stream_type: 'mjpeg', idle_timeout_seconds: 120, stagger_index: 0 });
-    render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 1 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+    renderWidget(LiveViewWidget, widgetId, 'live-view', { pane: { isCurrentPane: true, paneIndex: 1 } });
     act(() => { vi.advanceTimersByTime(119_000); });
     expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
     act(() => { vi.advanceTimersByTime(1_000); });
@@ -1454,7 +1421,7 @@ describe('LiveViewWidget component', () => {
     expect(img.getAttribute('src')).toBe('/api/camera_proxy_stream/camera.front');
 
     const renderPane = (isCurrentPane: boolean) => {
-      rerender(<PaneContext.Provider value={{ isCurrentPane, paneIndex: 0 }}><LiveViewWidget id={widgetId} type="live-view" /></PaneContext.Provider>);
+      rerender(liveViewPane(isCurrentPane));
     };
 
     // Off-pane, document hidden, and idle each tear down continuous MJPEG img.src
