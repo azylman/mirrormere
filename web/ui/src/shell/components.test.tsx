@@ -30,14 +30,14 @@ describe('WeatherPill component', () => {
           units: '°F',
           icon: 'weather-sunny',
           condition: 'Sunny',
-          location: 'Berkeley',
+          location: 'Alpha City',
         },
       },
     });
 
     const { container } = render(<WeatherPill />);
     expect(container.querySelector('#weather-temp')?.textContent).toBe('68°F');
-    expect(container.querySelector('#weather-location')?.textContent).toBe('Berkeley');
+    expect(container.querySelector('#weather-location')?.textContent).toBe('Alpha City');
     expect(container.querySelector('#weather-desc')?.textContent).toBe('Sunny & Mild');
     const svg = container.querySelector('.mm-icon-weather-sunny');
     expect(svg).not.toBeNull();
@@ -69,132 +69,61 @@ describe('WeatherPill component', () => {
     expect(svg?.querySelector('path')).not.toBeNull();
   });
 
-  it('covers weather descriptions and icon resolution variants', () => {
-    // Custom description property takes precedence
-    useDisplayStore.setState({
-      header: {
-        timestamp: '2026-10-31T12:00:00Z',
-        timezone: 'America/Los_Angeles',
-        weather: {
-          temperature: 60,
-          description: 'Custom Breezy Fog',
-          icon: 'weather-fog',
-          condition: 'Foggy',
-        },
-      },
-    });
-    const { container, rerender } = render(<WeatherPill />);
-    expect(container.querySelector('#weather-desc')?.textContent).toBe('Custom Breezy Fog');
-    expect(container.querySelector('.mm-icon-weather-fog')).not.toBeNull();
+  const weatherDescTests = [
+    {
+      name: 'custom description wins over condition',
+      weather: { temperature: 60, description: 'Custom Breezy Fog', icon: 'weather-fog', condition: 'Foggy' },
+      wantTemp: '60°', wantDesc: 'Custom Breezy Fog', wantIconClass: 'mm-icon-weather-fog', wantTitle: 'weather-fog',
+    },
+    {
+      name: 'condition token maps directly',
+      weather: { temperature: 40, condition: 'weather-snowy-rainy' },
+      wantTemp: '40°', wantDesc: 'Rain & Snow', wantIconClass: 'mm-icon-weather-snowy-rainy', wantTitle: 'weather-snowy-rainy',
+    },
+    {
+      name: 'unknown night icon falls back to clear-night and raw condition',
+      weather: { temperature: 50, icon: 'stormy-night-unknown', condition: 'Wild Storm At Night' },
+      wantTemp: '50°', wantDesc: 'Wild Storm At Night', wantIconClass: 'mm-icon-weather-clear-night', wantTitle: 'stormy-night-unknown',
+    },
+    {
+      name: 'unknown day icon falls back to partly-cloudy and Clear Sky',
+      weather: { temperature: 70, icon: 'unknown-alien-weather' },
+      wantTemp: '70°', wantDesc: 'Clear Sky', wantIconClass: 'mm-icon-weather-partly-cloudy', wantTitle: 'unknown-alien-weather',
+    },
+    {
+      name: 'unmapped icon uses mapped condition and units',
+      weather: { temperature: 68, units: 'C', icon: 'custom-unmapped', condition: 'weather-rainy' },
+      wantTemp: '68°C', wantDesc: 'Light Rain', wantIconClass: 'mm-icon-weather-partly-cloudy', wantTitle: 'custom-unmapped',
+    },
+    {
+      name: 'mapped icon wins over custom condition text',
+      weather: { temperature: 62, icon: 'weather-cloudy', condition: 'Dense Overcast Pea Soup' },
+      wantTemp: '62°', wantDesc: 'Overcast', wantIconClass: 'mm-icon-weather-cloudy', wantTitle: 'weather-cloudy',
+    },
+    {
+      name: 'unmapped night condition reads Clear',
+      weather: { temperature: 48, condition: 'night-chill-unmapped' },
+      wantTemp: '48°', wantDesc: 'Clear', wantIconClass: 'mm-icon-weather-clear-night', wantTitle: 'night-chill-unmapped',
+    },
+    {
+      name: 'empty condition and icon omit the title',
+      weather: { temperature: 65 },
+      wantTemp: '65°', wantDesc: 'Clear Sky', wantIconClass: 'mm-icon-weather-partly-cloudy', wantTitle: null,
+    },
+  ];
 
-    // Weather condition mapped directly from WEATHER_DESC_MAP
-    useDisplayStore.setState({
-      header: {
-        timestamp: '2026-10-31T12:00:00Z',
-        timezone: 'America/Los_Angeles',
-        weather: {
-          temperature: 40,
-          condition: 'weather-snowy-rainy',
-        },
-      },
+  for (const tc of weatherDescTests) {
+    it(`resolves weather description and icon: ${tc.name}`, () => {
+      useDisplayStore.setState({ header: { timestamp: '2026-10-31T12:00:00Z', timezone: 'America/Los_Angeles', weather: tc.weather } });
+      const { container, rerender } = render(<WeatherPill />);
+      // A second render with unchanged state exercises the compiler memo cache.
+      rerender(<WeatherPill />);
+      expect(container.querySelector('#weather-temp')?.textContent).toBe(tc.wantTemp);
+      expect(container.querySelector('#weather-desc')?.textContent).toBe(tc.wantDesc);
+      expect(container.querySelector(`.${tc.wantIconClass}`)).not.toBeNull();
+      expect(container.querySelector('#weather-condition')?.getAttribute('title')).toBe(tc.wantTitle);
     });
-    rerender(<WeatherPill />);
-    expect(container.querySelector('#weather-desc')?.textContent).toBe('Rain & Snow');
-    expect(container.querySelector('.mm-icon-weather-snowy-rainy')).not.toBeNull();
-
-    // Unknown icon token with "night" substring falls back to weather-clear-night
-    useDisplayStore.setState({
-      header: {
-        timestamp: '2026-10-31T12:00:00Z',
-        timezone: 'America/Los_Angeles',
-        weather: {
-          temperature: 50,
-          icon: 'stormy-night-unknown',
-          condition: 'Wild Storm At Night',
-        },
-      },
-    });
-    rerender(<WeatherPill />);
-    expect(container.querySelector('.mm-icon-weather-clear-night')).not.toBeNull();
-
-    // Unknown icon token without night falls back to weather-partly-cloudy and Clear Sky description
-    useDisplayStore.setState({
-      header: {
-        timestamp: '2026-10-31T12:00:00Z',
-        timezone: 'America/Los_Angeles',
-        weather: {
-          temperature: 70,
-          icon: 'unknown-alien-weather',
-        },
-      },
-    });
-    rerender(<WeatherPill />);
-    expect(container.querySelector('.mm-icon-weather-partly-cloudy')).not.toBeNull();
-    expect(container.querySelector('#weather-desc')?.textContent).toBe('Clear Sky');
-
-    // Weather condition mapped via WEATHER_DESC_MAP when icon is unknown
-    useDisplayStore.setState({
-      header: {
-        timestamp: '2026-10-31T12:00:00Z',
-        timezone: 'America/Los_Angeles',
-        weather: {
-          temperature: 68,
-          units: 'C',
-          icon: 'custom-unmapped',
-          condition: 'weather-rainy',
-        },
-      },
-    });
-    rerender(<WeatherPill />);
-    expect(container.querySelector('#weather-desc')?.textContent).toBe('Light Rain');
-    expect(container.querySelector('#weather-temp')?.textContent).toBe('68°C');
-
-    // Weather condition is custom string different from conditionToken
-    useDisplayStore.setState({
-      header: {
-        timestamp: '2026-10-31T12:00:00Z',
-        timezone: 'America/Los_Angeles',
-        weather: {
-          temperature: 62,
-          icon: 'weather-cloudy',
-          condition: 'Dense Overcast Pea Soup',
-        },
-      },
-    });
-    rerender(<WeatherPill />);
-    expect(container.querySelector('#weather-desc')?.textContent).toBe('Overcast');
-
-    // Condition token without mapping, but condition text contains "night" and equals conditionToken
-    useDisplayStore.setState({
-      header: {
-        timestamp: '2026-10-31T12:00:00Z',
-        timezone: 'America/Los_Angeles',
-        weather: {
-          temperature: 48,
-          condition: 'night-chill-unmapped',
-        },
-      },
-    });
-    rerender(<WeatherPill />);
-    expect(container.querySelector('#weather-desc')?.textContent).toBe('Clear');
-
-    // Empty condition and icon
-    useDisplayStore.setState({
-      header: {
-        timestamp: '2026-10-31T12:00:00Z',
-        timezone: 'America/Los_Angeles',
-        weather: {
-          temperature: 65,
-        },
-      },
-    });
-    rerender(<WeatherPill />);
-    expect(container.querySelector('#weather-condition')?.getAttribute('title')).toBeNull();
-
-    // Rerender with unchanged state to hit React compiler memoization cache
-    rerender(<WeatherPill />);
-    expect(container.querySelector('#weather-temp')?.textContent).toBe('65°');
-  });
+  }
 });
 
 describe('StatusDot component', () => {
