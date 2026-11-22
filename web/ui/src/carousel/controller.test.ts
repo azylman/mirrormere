@@ -93,14 +93,18 @@ function build(initialIndex = 1, width = 1000): Harness {
  * step's pace, 0.375 px/ms for a 300 px drag: under the flick threshold, so only
  * distance decides.
  */
-function swipe(h: Harness, x0: number, x1: number): void {
-  h.down(x0, 100);
+function swipe(h: Harness, x0: number, x1: number, target: EventTarget = h.viewport): void {
+  h.down(x0, 100, target);
   const steps = 4;
   for (let i = 1; i <= steps; i++) {
     h.move(x0 + ((x1 - x0) * i) / steps, 100, 200);
   }
   h.flushFrames();
   h.up(x1, 100, 0);
+}
+
+function postToWindow(data: unknown, origin = window.location.origin): void {
+  window.dispatchEvent(new MessageEvent('message', { origin, data }));
 }
 
 describe('neighbourOf', () => {
@@ -270,42 +274,31 @@ describe('CarouselController', () => {
     expect(h.host.commit).not.toHaveBeenCalled();
   });
 
-  it('ignores a swipe that starts inside an excluded zone', () => {
-    vi.useFakeTimers();
-    const h = build();
-    const guarded = document.createElement('div');
-    guarded.setAttribute('data-prevent-screen-swipe', '');
-    const cell = document.createElement('span');
-    guarded.appendChild(cell);
-    h.viewport.appendChild(guarded);
+  // Each row presses on a cell wrapped in an element carrying zoneAttr, then drags 300 px left.
+  const ignoredSwipes: { name: string; initial: number; total: number; paused: boolean; zoneAttr: string }[] = [
+    { name: 'ignores a swipe that starts inside an excluded zone', initial: 1, total: 3, paused: false, zoneAttr: 'data-prevent-screen-swipe' },
+    { name: 'ignores a swipe when the carousel is paused', initial: 1, total: 3, paused: true, zoneAttr: 'data-zone' },
+    { name: 'ignores swipes when there is only one screen', initial: 0, total: 1, paused: false, zoneAttr: 'data-zone' },
+  ];
+  for (const tc of ignoredSwipes) {
+    it(tc.name, () => {
+      vi.useFakeTimers();
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: tc.initial, totalScreens: tc.total } });
+      const h = build(tc.initial);
+      if (tc.paused) useDisplayStore.getState().pause();
+      const zone = document.createElement('div');
+      zone.setAttribute(tc.zoneAttr, '');
+      const cell = document.createElement('span');
+      zone.appendChild(cell);
+      h.viewport.appendChild(zone);
 
-    h.down(500, 100, cell);
-    h.move(300, 100);
-    h.flushFrames();
-    h.up(300, 100);
-    expect(h.frames).toHaveLength(0);
-    expect(h.track.style.transform).toBe('');
-    expect(h.host.commit).not.toHaveBeenCalled();
-  });
-
-  it('ignores a swipe when the carousel is paused', () => {
-    vi.useFakeTimers();
-    const h = build();
-    useDisplayStore.getState().pause();
-    swipe(h, 500, 200);
-    h.flushFrames();
-    expect(h.track.style.transform).toBe('');
-    expect(h.host.commit).not.toHaveBeenCalled();
-  });
-
-  it('ignores swipes when there is only one screen', () => {
-    vi.useFakeTimers();
-    useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 1 } });
-    const h = build(0);
-    swipe(h, 500, 100);
-    expect(h.host.commit).not.toHaveBeenCalled();
-    expect(h.track.style.transform).toBe('');
-  });
+      swipe(h, 500, 200, cell);
+      expect(h.frames).toHaveLength(0);
+      expect(h.track.style.transform).toBe('');
+      expect(h.host.commit).not.toHaveBeenCalled();
+      expect(h.host.select).not.toHaveBeenCalled();
+    });
+  }
 
   it('does nothing when the echo of our own select names the screen already shown', () => {
     vi.useFakeTimers();
@@ -454,85 +447,27 @@ describe('CarouselController', () => {
     expect(h.host.commit).toHaveBeenCalledTimes(3);
   });
 
-  it('rejects cross-origin, null-origin, and malformed hearth-swipe messages', () => {
-    vi.useFakeTimers();
-    const h = build(1);
-
-    // Cross-origin message
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        origin: 'https://evil.example.com',
-        data: { type: 'hearth-swipe', direction: 'next' },
-      }),
-    );
-    expect(h.host.commit).not.toHaveBeenCalled();
-    expect(h.host.select).not.toHaveBeenCalled();
-    expect(h.track.style.transform).toBe('');
-
-    // Null origin
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        origin: 'null',
-        data: { type: 'hearth-swipe', direction: 'next' },
-      }),
-    );
-    expect(h.host.commit).not.toHaveBeenCalled();
-    expect(h.host.select).not.toHaveBeenCalled();
-
-    // Empty string origin
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        origin: '',
-        data: { type: 'hearth-swipe', direction: 'next' },
-      }),
-    );
-    expect(h.host.commit).not.toHaveBeenCalled();
-    expect(h.host.select).not.toHaveBeenCalled();
-
-    // Malformed data: non-object
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        origin: window.location.origin,
-        data: 'hearth-swipe',
-      }),
-    );
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        origin: window.location.origin,
-        data: null,
-      }),
-    );
-    expect(h.host.commit).not.toHaveBeenCalled();
-    expect(h.host.select).not.toHaveBeenCalled();
-
-    // Malformed data: invalid or missing direction
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        origin: window.location.origin,
-        data: { type: 'hearth-swipe', direction: 'up' },
-      }),
-    );
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        origin: window.location.origin,
-        data: { type: 'hearth-swipe' },
-      }),
-    );
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        origin: window.location.origin,
-        data: { type: 'hearth-screen-select', screen_index: 'invalid' },
-      }),
-    );
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        origin: window.location.origin,
-        data: { type: 'other-event', direction: 'next' },
-      }),
-    );
-    expect(h.host.commit).not.toHaveBeenCalled();
-    expect(h.host.select).not.toHaveBeenCalled();
-  });
+  const rejectedMessages: { name: string; origin: string; data: unknown }[] = [
+    { name: 'cross-origin', origin: 'https://evil.example.com', data: { type: 'hearth-swipe', direction: 'next' } },
+    { name: 'null origin', origin: 'null', data: { type: 'hearth-swipe', direction: 'next' } },
+    { name: 'empty origin', origin: '', data: { type: 'hearth-swipe', direction: 'next' } },
+    { name: 'string payload', origin: window.location.origin, data: 'hearth-swipe' },
+    { name: 'null payload', origin: window.location.origin, data: null },
+    { name: 'invalid direction', origin: window.location.origin, data: { type: 'hearth-swipe', direction: 'up' } },
+    { name: 'missing direction', origin: window.location.origin, data: { type: 'hearth-swipe' } },
+    { name: 'non-numeric screen_index', origin: window.location.origin, data: { type: 'hearth-screen-select', screen_index: 'invalid' } },
+    { name: 'unknown message type', origin: window.location.origin, data: { type: 'other-event', direction: 'next' } },
+  ];
+  for (const tc of rejectedMessages) {
+    it(`rejects hearth message: ${tc.name}`, () => {
+      vi.useFakeTimers();
+      const h = build(1);
+      postToWindow(tc.data, tc.origin);
+      expect(h.host.commit).not.toHaveBeenCalled();
+      expect(h.host.select).not.toHaveBeenCalled();
+      expect(h.track.style.transform).toBe('');
+    });
+  }
 
   it('keeps the animation count balanced when disposed mid-settle', () => {
     vi.useFakeTimers();
@@ -911,41 +846,27 @@ describe('CarouselController', () => {
       useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 2 } });
     });
 
-    it('settles a prev swipe (right drag) with translate3d(1000px, 0px, 0px)', () => {
-      vi.useFakeTimers();
-      const h = build(0);
-      swipe(h, 200, 500);
-      h.flushFrames();
+    // Each row reaches screen 1 from screen 0 through one input: a right drag, goTo with 'prev', or a hearth-swipe.
+    // With two screens both neighbours are screen 1, so the slide direction must follow the input.
+    const tests: { name: string; drag?: [number, number]; goTo?: [number, 'prev' | 'next']; message?: unknown }[] = [
+      { name: 'settles a prev swipe (right drag) from the left', drag: [200, 500] },
+      { name: 'settles goTo(target, "prev") from the left', goTo: [1, 'prev'] },
+      { name: 'settles hearth-swipe { direction: "prev" } from the left', message: { type: 'hearth-swipe', direction: 'prev' } },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        vi.useFakeTimers();
+        const h = build(0);
+        if (tc.drag) swipe(h, ...tc.drag);
+        if (tc.goTo) h.controller.goTo(...tc.goTo);
+        if (tc.message) postToWindow(tc.message);
+        h.flushFrames();
 
-      expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
-      h.transitionEnd();
-      expect(h.host.commit).toHaveBeenCalledWith(1);
-      expect(h.host.select).toHaveBeenCalledWith(1);
-    });
-
-    it('settles goTo(target, "prev") with translate3d(1000px, 0px, 0px)', () => {
-      vi.useFakeTimers();
-      const h = build(0);
-      h.controller.goTo(1, 'prev');
-      expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
-      h.transitionEnd();
-      expect(h.host.commit).toHaveBeenCalledWith(1);
-      expect(h.host.select).toHaveBeenCalledWith(1);
-    });
-
-    it('settles hearth-swipe { direction: "prev" } with translate3d(1000px, 0px, 0px)', () => {
-      vi.useFakeTimers();
-      const h = build(0);
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          origin: window.location.origin,
-          data: { type: 'hearth-swipe', direction: 'prev' },
-        }),
-      );
-      expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
-      h.transitionEnd();
-      expect(h.host.commit).toHaveBeenCalledWith(1);
-      expect(h.host.select).toHaveBeenCalledWith(1);
-    });
+        expect(h.track.style.transform).toBe('translate3d(1000px, 0px, 0px)');
+        h.transitionEnd();
+        expect(h.host.commit).toHaveBeenCalledWith(1);
+        expect(h.host.select).toHaveBeenCalledWith(1);
+      });
+    }
   });
 });
