@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { useDisplayStore } from '../../store';
+import { seedWidget, widgetMeta } from '../../test-utils/widget';
 import { WidgetHost } from '../WidgetHost';
 import { SpacerWidget } from './SpacerWidget';
 
@@ -21,22 +21,7 @@ describe('SpacerWidget', () => {
   });
 
   it('integrates with WidgetHost across [1, 1] dimensions without duplicate data-widget-id', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'spacer-1x1': {
-          meta: {
-            type: 'spacer',
-            origin: [0, 0],
-            dimensions: [1, 1],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {},
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedWidget('spacer-1x1', widgetMeta('spacer', {}, [1, 1]), {}, 'healthy');
 
     const { container } = render(<WidgetHost id="spacer-1x1" origin={[0, 0]} dimensions={[1, 1]} />);
     const card = container.querySelector('.widget-card') as HTMLElement;
@@ -56,22 +41,7 @@ describe('SpacerWidget', () => {
   });
 
   it('integrates with WidgetHost across [6, 4] dimensions', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'spacer-6x4': {
-          meta: {
-            type: 'spacer',
-            origin: [0, 0],
-            dimensions: [6, 4],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {},
-          timestamp: '2026-10-31T12:00:00Z',
-        },
-      },
-    });
+    seedWidget('spacer-6x4', widgetMeta('spacer', {}, [6, 4]), {}, 'healthy');
 
     const { container } = render(<WidgetHost id="spacer-6x4" origin={[0, 0]} dimensions={[6, 4]} />);
     const card = container.querySelector('.widget-card') as HTMLElement;

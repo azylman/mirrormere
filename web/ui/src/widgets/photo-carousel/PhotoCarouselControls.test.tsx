@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, act } from '@testing-library/react';
+import { fireEvent, act } from '@testing-library/react';
 import {
   PhotoCarouselWidget,
   PHOTO_CONTROLS_HIDE_MS,
@@ -10,7 +10,6 @@ import {
   hasMultiplePhotoAlbums,
 } from './PhotoCarouselWidget';
 import { useDisplayStore } from '../../store';
-import { PaneContext } from '../../carousel/PaneContext';
 import type { PhotoItem } from './photoCarouselHelpers';
 import { renderWidget, seedWidget, widgetMeta } from '../../test-utils/widget';
 
@@ -173,11 +172,7 @@ describe('PhotoCarouselWidget transport controls', () => {
       { id: '1', url: 'https://example.com/p1.jpg' },
     ], 10);
 
-    const { container: singleContainer } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id="single-photo-widget" type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { container: singleContainer } = renderWidget(PhotoCarouselWidget, 'single-photo-widget', 'photo-carousel');
 
     const rootSingle = singleContainer.querySelector('.widget-photo-carousel') as HTMLDivElement;
     expect(singleContainer.querySelector('.photo-transport-controls')).toBeNull();

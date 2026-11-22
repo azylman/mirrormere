@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { PaneContext } from '../../carousel/PaneContext';
 import { NextUp } from '../../shell/NextUp';
 import { useDisplayStore } from '../../store';
+import { renderWidget } from '../../test-utils/widget';
 import { YtMusicWidget, type MusicState } from './YtMusicWidget';
 import {
   DEFAULT_ART,
@@ -166,7 +167,7 @@ describe('YtMusicWidget', () => {
   });
 
   it('hydrates music state on mount and renders account picker, speakers, mini player, and discovery', async () => {
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     // Initial state fetch
     await waitFor(() => { expect(fetchMock).toHaveBeenCalledWith('/hearth-api/music/state'); });
     // Account picker
@@ -209,7 +210,7 @@ describe('YtMusicWidget', () => {
   });
 
   it('selects account and sends select_account control POST', async () => {
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#account-picker')).not.toBeNull(); });
     const picker = container.querySelector('#account-picker') as HTMLSelectElement;
     fireEvent.change(picker, { target: { value: 'brand' } });
@@ -238,7 +239,7 @@ describe('YtMusicWidget', () => {
     win.EmberBridge = {
       getGoogleAccounts: vi.fn(() => JSON.stringify(mockAccounts)),
     };
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => {
       const picker = container.querySelector('#account-picker') as HTMLSelectElement;
       expect(picker).not.toBeNull();
@@ -287,7 +288,7 @@ describe('YtMusicWidget', () => {
   });
 
   it('selects speaker and toggles speaker between This Device and remote speaker', async () => {
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelectorAll('.spk-pill').length).toBe(3); });
     // 1. Click specific speaker pill (Kitchen)
     const kitchenSpk = itemAt(container.querySelectorAll('.spk-pill'), 2);
@@ -327,7 +328,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response(JSON.stringify({ state: mockIdleState }), { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => {
       const spkToggle = container.querySelector('#speaker-toggle-btn');
       expect(spkToggle?.textContent).toContain('Cast to Speakers');
@@ -359,13 +360,13 @@ describe('YtMusicWidget', () => {
       }
       return new Response(JSON.stringify({ state: mockIdleState }), { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#speaker-toggle-btn')).not.toBeNull(); });
     fireEvent.click(container.querySelector('#speaker-toggle-btn')!);
   });
 
   it('handles transport buttons, volume slider, and stop action', async () => {
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#btn-play')).not.toBeNull(); });
     // Shuffle
     const shuffleBtn = container.querySelector('#btn-shuffle') as HTMLButtonElement;
@@ -426,7 +427,7 @@ describe('YtMusicWidget', () => {
   });
 
   it('clicking Play when paused starts playback and transitions to full Now Playing view', async () => {
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#btn-play')).not.toBeNull(); });
     // Initially in Discovery view
     expect(container.querySelector('.ytm-discovery')).not.toBeNull();
@@ -452,7 +453,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response('{}', { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#account-picker')).not.toBeNull(); });
     fireEvent.click(container.querySelector('#btn-play')!);
     await waitFor(() => {
@@ -476,7 +477,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response('{}', { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#account-picker')).not.toBeNull(); });
     fireEvent.click(container.querySelector('#btn-play')!);
     await waitFor(() => {
@@ -500,7 +501,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response('{}', { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#account-picker')).not.toBeNull(); });
     fireEvent.click(container.querySelector('#btn-play')!);
     await waitFor(() => {
@@ -521,7 +522,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response('{}', { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#account-picker')).not.toBeNull(); });
     fireEvent.click(container.querySelector('#btn-play')!);
     await waitFor(() => {
@@ -542,7 +543,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response(JSON.stringify({ state: mockPlayingState }), { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     // Mounts directly in Now Playing view
     await waitFor(() => {
       expect(container.querySelector('.ytm-now-playing-view')).not.toBeNull();
@@ -577,7 +578,7 @@ describe('YtMusicWidget', () => {
   });
 
   it('plays playlist and suggestion tiles on click from Discovery view', async () => {
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => {
       expect(container.querySelector('.ytm-discovery')).not.toBeNull();
       expect(container.querySelector('[data-pl="PL_favorites"]')).not.toBeNull();
@@ -626,7 +627,7 @@ describe('YtMusicWidget', () => {
   });
 
   it('switches to Queue tab, triggers playback, and switches back to Playlists tab', async () => {
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('.sub-toolbar')).not.toBeNull(); });
     const queueTabBtn = container.querySelector('button[data-tab="queue"]')!;
     fireEvent.click(queueTabBtn);
@@ -658,7 +659,7 @@ describe('YtMusicWidget', () => {
   });
 
   it('performs search and triggers playback on search result click', async () => {
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#search-input')).not.toBeNull(); });
     const searchInput = container.querySelector('#search-input') as HTMLInputElement;
     const searchForm = container.querySelector('#search-form') as HTMLFormElement;
@@ -696,7 +697,7 @@ describe('YtMusicWidget', () => {
     vi.useFakeTimers();
     try {
       // 1. Single off-pane instance is elected primary and polls while document is visible
-      render(<PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 1 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+      renderWidget(YtMusicWidget, 'yt-1', 'yt-music', { pane: { isCurrentPane: false, paneIndex: 1 } });
       await act(async () => {
         await Promise.resolve();
       });
@@ -729,7 +730,7 @@ describe('YtMusicWidget', () => {
   });
 
   it('marks horizontal controls with data-prevent-screen-swipe so carousel drags ignore them', async () => {
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#vol-slider')).not.toBeNull(); });
     expect(container.querySelector('.vol-wrap')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
     expect(container.querySelector('#vol-slider')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
@@ -748,7 +749,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response('{}', { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('#search-input')).not.toBeNull(); });
     // Empty search query submission does nothing
     fireEvent.submit(container.querySelector('#search-form')!);
@@ -760,7 +761,7 @@ describe('YtMusicWidget', () => {
   });
 
   it('activates media tiles on Enter and Space keydown', async () => {
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('.media-tile')).not.toBeNull(); });
     const playlistTile = container.querySelector('.media-tile') as HTMLElement;
     expect(playlistTile.getAttribute('role')).toBe('button');
@@ -831,7 +832,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response('{}', { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => { expect(container.querySelector('.ytm-now-playing-view')).not.toBeNull(); });
     // Click on up next queue row
     const queueRows = container.querySelectorAll('.np-queue-row');
@@ -886,7 +887,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response('{}', { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-empty" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-empty', 'yt-music');
     await waitFor(() => { expect(container.querySelector('[data-sug="s_art"]')).not.toBeNull(); });
     // Click artist suggestion without subtitle and with video_id
     fireEvent.click(container.querySelector('[data-sug="s_art"]')!);
@@ -915,7 +916,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response('{}', { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     const audio = await waitFor(() => {
       const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
       expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
@@ -967,7 +968,7 @@ describe('YtMusicWidget', () => {
       }
       return new Response('{}', { status: 200 });
     });
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     const audio = await waitFor(() => {
       const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
       expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
@@ -994,7 +995,7 @@ describe('YtMusicWidget', () => {
       return new Response(JSON.stringify({ state: localPlayingState }), { status: 200 });
     });
 
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     const audio = await waitFor(() => {
       const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
       expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
@@ -1050,7 +1051,7 @@ describe('YtMusicWidget', () => {
       return new Response(JSON.stringify({ state: singleTrackState }), { status: 200 });
     });
 
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     const audio = await waitFor(() => {
       const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
       expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
@@ -1080,7 +1081,7 @@ describe('YtMusicWidget', () => {
       return new Response(JSON.stringify({ state: localPlayingState }), { status: 200 });
     });
 
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     const audio = await waitFor(() => {
       const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
       expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
@@ -1122,7 +1123,7 @@ describe('YtMusicWidget', () => {
       return new Response(JSON.stringify({ state: localPlayingState }), { status: 200 });
     });
 
-    const { container } = render(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     const audio = await waitFor(() => {
       const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
       expect(el.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
@@ -1437,7 +1438,7 @@ describe('YtMusicWidget', () => {
       expect(itemAt(audios, 0).getAttribute('data-video-id')).toBe('v_starboy');
       expect(itemAt(audios, 1).getAttribute('data-video-id')).toBeNull();
       // Mount a third off-pane instance after sharedYtMusicState is already populated -> initializes from shared state without clobbering
-      const { unmount: unmountThird } = render(<PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 1 }}><YtMusicWidget id="yt-1" type="yt-music" /></PaneContext.Provider>);
+      const { unmount: unmountThird } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music', { pane: { isCurrentPane: false, paneIndex: 1 } });
       expect(getSharedYtMusicState().now_playing?.title).toBe('Starboy');
       unmountThird();
       // Clicking Live Island when on screen 0 dispatches hearth-screen-select postMessage and does NOT call scrollIntoView on off-pane widgets

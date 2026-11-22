@@ -3,6 +3,7 @@ import type { BufferedEvent } from '../sse/batch';
 import type { WidgetDetailResponse } from '../sse/types';
 import { needsHydrate, reduceEvents, useDisplayStore } from './index';
 import { entryAt, itemAt } from '../test-utils/lookup';
+import { seedWidget, widgetMeta } from '../test-utils/widget';
 
 const initial = useDisplayStore.getState();
 
@@ -349,16 +350,7 @@ describe('display store', () => {
     });
 
     it('does not refetch widget types outside REFETCH_ON_UPDATE', async () => {
-      useDisplayStore.setState({
-        widgets: {
-          w: {
-            meta: { type: 'weather-forecast', config: {}, assets_base: 'a/', origin: [0, 0], dimensions: [1, 1] },
-            state: 'healthy',
-            data: 1,
-            timestamp: 't0',
-          },
-        },
-      });
+      seedWidget('w', widgetMeta('weather-forecast', {}, [1, 1]), 1, 'healthy');
       const fetchMock = stubFetch(detail());
       useDisplayStore.getState().applyEvents([widgetUpdate('w', 2)]);
       await Promise.resolve();
@@ -436,16 +428,7 @@ describe('display store', () => {
     });
 
     it('returns true when meta dimensions differ from requested dimensions', () => {
-      useDisplayStore.setState({
-        widgets: {
-          w1: {
-            meta: { type: 'calendar-grid', config: {}, assets_base: '', origin: [0, 0], dimensions: [2, 1] },
-            state: 'healthy',
-            data: {},
-            timestamp: 't0',
-          },
-        },
-      });
+      seedWidget('w1', widgetMeta('calendar-grid', {}, [2, 1]), {}, 'healthy');
       expect(needsHydrate('w1', [2, 1])).toBe(false);
       expect(needsHydrate('w1', [3, 2])).toBe(true);
       expect(needsHydrate('w1', [2, 2])).toBe(true);
