@@ -143,6 +143,7 @@ type Hub struct {
 	brainTimeout      time.Duration
 	ttsTimeout        time.Duration
 	heartbeatInterval time.Duration
+	clock             clock
 }
 
 // HubOption configures optional Hub overrides (e.g. for testing).
@@ -168,6 +169,25 @@ func (h *Hub) recordChat(nodeID, role, author, text string) {
 	}
 }
 
+// clock is the time source for the hub's inactivity deadlines and thinking
+// heartbeat. realClock is the default; tests inject a fake through a
+// test-only HubOption.
+type clock interface {
+	Now() time.Time
+	AfterFunc(d time.Duration, f func()) stopper
+}
+
+// stopper cancels a pending clock.AfterFunc callback.
+type stopper interface {
+	Stop() bool
+}
+
+type realClock struct{}
+
+func (realClock) Now() time.Time { return time.Now() }
+
+func (realClock) AfterFunc(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) }
+
 // inactivityContext provides a sliding window inactivity timeout.
 // When no activity occurs for the specified duration, the context is canceled
 // with context.DeadlineExceeded. Calls to Reset() advance the deadline.
@@ -175,7 +195,8 @@ type inactivityContext struct {
 	context.Context
 
 	cancel       context.CancelFunc
-	timer        *time.Timer
+	clock        clock
+	timer        stopper
 	d            time.Duration
 	mu           sync.Mutex
 	lastActivity time.Time
@@ -183,6 +204,9 @@ type inactivityContext struct {
 	done         bool
 }
 
+// onTimeout fires when the timer armed for the current deadline expires. If
+// Reset recorded activity since the timer was armed, it re-arms for the time
+// left until lastActivity + d instead of canceling.
 func (ic *inactivityContext) onTimeout() {
 	ic.mu.Lock()
 	defer ic.mu.Unlock()
@@ -191,10 +215,9 @@ func (ic *inactivityContext) onTimeout() {
 		return
 	}
 
-	elapsed := time.Since(ic.lastActivity)
+	elapsed := ic.clock.Now().Sub(ic.lastActivity)
 	if elapsed < ic.d {
-		remaining := ic.d - elapsed
-		ic.timer = time.AfterFunc(remaining, ic.onTimeout)
+		ic.timer = ic.clock.AfterFunc(ic.d-elapsed, ic.onTimeout)
 		return
 	}
 
@@ -204,20 +227,21 @@ func (ic *inactivityContext) onTimeout() {
 }
 
 // newInactivityContext derives a child of parent with a sliding inactivity
-// deadline. reset records activity and pushes the deadline out; stop releases
-// the context.
-func newInactivityContext(parent context.Context, timeout time.Duration) (ctx context.Context, reset, stop func()) {
+// deadline measured on clk. reset records activity and pushes the deadline
+// out; stop releases the context.
+func newInactivityContext(parent context.Context, timeout time.Duration, clk clock) (ctx context.Context, reset, stop func()) {
 	child, cancel := context.WithCancel(parent)
 	ic := &inactivityContext{
 		Context:      child,
 		cancel:       cancel,
+		clock:        clk,
 		d:            timeout,
-		lastActivity: time.Now(),
+		lastActivity: clk.Now(),
 	}
 
 	if timeout > 0 {
 		ic.mu.Lock()
-		ic.timer = time.AfterFunc(timeout, ic.onTimeout)
+		ic.timer = clk.AfterFunc(timeout, ic.onTimeout)
 		ic.mu.Unlock()
 	}
 
@@ -243,16 +267,15 @@ func (ic *inactivityContext) Err() error {
 	return ic.Context.Err()
 }
 
+// Reset records activity. The armed timer stays put; when it fires,
+// onTimeout re-arms it for the remainder of the slid deadline.
 func (ic *inactivityContext) Reset() {
 	ic.mu.Lock()
 	defer ic.mu.Unlock()
 	if ic.done || ic.Context.Err() != nil {
 		return
 	}
-	ic.lastActivity = time.Now()
-	if ic.timer != nil && ic.timer.Stop() {
-		ic.timer.Reset(ic.d)
-	}
+	ic.lastActivity = ic.clock.Now()
 }
 
 // isTimeoutError reports whether an error or context deadline was caused by a timeout,
@@ -278,6 +301,7 @@ func NewHub(cfg *config.VoiceHubConfig, coord *Coordinator, opts ...HubOption) *
 		brainTimeout:      30 * time.Second,
 		ttsTimeout:        10 * time.Second,
 		heartbeatInterval: 5 * time.Second,
+		clock:             realClock{},
 	}
 	if cfg != nil {
 		h.brainTimeout = time.Duration(cfg.GetBrainTimeoutSeconds()) * time.Second
@@ -687,7 +711,7 @@ func (h *Hub) synthesizeAndEmitReply(
 	if ttsTimeout <= 0 {
 		ttsTimeout = 10 * time.Second
 	}
-	ttsCtx, resetTTS, stopTTS := newInactivityContext(ctx, ttsTimeout)
+	ttsCtx, resetTTS, stopTTS := newInactivityContext(ctx, ttsTimeout, h.clock)
 	defer stopTTS()
 
 	ttsStart := time.Now()
