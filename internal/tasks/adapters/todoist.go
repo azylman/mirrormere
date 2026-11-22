@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/api"
+	"github.com/azylman/mirrormere/internal/httpx"
 	"github.com/azylman/mirrormere/internal/tasks"
 )
 
@@ -526,15 +526,12 @@ func (a *TodoistAdapter) CompleteItem(ctx context.Context, itemID string) error 
 		req.Header.Set("Authorization", "Bearer "+a.token)
 	}
 
-	resp, err := a.client.Do(req)
+	_, status, err := httpx.GetBounded(ctx, a.client, req, 4096)
 	if err != nil {
-		return fmt.Errorf("todoist close request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	if err != nil {
+		if status == 0 {
+			return fmt.Errorf("todoist close request failed: %w", err)
+		}
 		return fmt.Errorf("failed to drain response body: %w", err)
 	}
-	return mapUpstreamStatus(resp.StatusCode, targetURL)
+	return mapUpstreamStatus(status, targetURL)
 }

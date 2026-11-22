@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +15,8 @@ import (
 
 	ical "github.com/arran4/golang-ical"
 	"github.com/teambition/rrule-go"
+
+	"github.com/azylman/mirrormere/internal/httpx"
 )
 
 const (
@@ -413,17 +414,13 @@ func (p *CalendarProvider) fetchCalendar(ctx context.Context, source CalendarSou
 	req.Header.Set("User-Agent", "Mirrormere-Calendar/1.0")
 	req.Header.Set("Accept", "text/calendar, application/ics, text/plain")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
+	body, status, err := httpx.GetBounded(ctx, p.client, req, maxCalendarFeedBytes+1)
+	if err != nil && status == 0 {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("http status %d", resp.StatusCode)
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("http status %d", status)
 	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCalendarFeedBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}

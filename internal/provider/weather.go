@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/azylman/mirrormere/internal/httpx"
 )
 
 // Weather icon tokens shared by several WMO codes; render maps tokens to SVGs.
@@ -313,25 +314,9 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	q.Set("timezone", p.timezone)
 	parsedURL.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create weather request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := p.client.Do(req)
+	bodyBytes, err := fetchOpenMeteo(ctx, p.client, parsedURL.String(), "weather")
 	if err != nil {
 		return nil, err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxHTTPResponseBodySize))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read weather response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
 	}
 
 	var data openMeteoResponse
@@ -426,6 +411,28 @@ func (*WeatherProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPa
 // Shutdown cleanly stops the provider.
 func (*WeatherProvider) Shutdown(ctx context.Context) error {
 	return nil
+}
+
+// fetchOpenMeteo GETs an Open-Meteo forecast URL and returns the bounded body.
+// label names the caller ("weather", "header weather") in error text.
+func fetchOpenMeteo(ctx context.Context, client *http.Client, rawURL, label string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create %s request: %w", label, err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	bodyBytes, status, err := httpx.GetBounded(ctx, client, req, MaxHTTPResponseBodySize)
+	if err != nil {
+		if status == 0 {
+			return nil, err
+		}
+		return nil, fmt.Errorf("failed to read %s response: %w", label, err)
+	}
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", status, strings.TrimSpace(string(bodyBytes)))
+	}
+	return bodyBytes, nil
 }
 
 func minSliceLen(n int, lens ...int) int {

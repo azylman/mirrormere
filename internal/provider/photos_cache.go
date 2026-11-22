@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -16,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/azylman/mirrormere/internal/httpx"
 )
 
 const (
@@ -230,18 +231,13 @@ func postBatchexecute(ctx context.Context, client *http.Client, albumURL, rpcID 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=utf-8")
 	req.Header.Set("Accept", "*/*")
 
-	resp, err := client.Do(req)
-	if err != nil {
+	bodyBytes, status, err := httpx.GetBounded(ctx, client, req, maxPhotoAlbumBytes+1)
+	if err != nil && status == 0 {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("batchexecute returned HTTP %d", resp.StatusCode)
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("batchexecute returned HTTP %d", status)
 	}
-
-	limitReader := io.LimitReader(resp.Body, maxPhotoAlbumBytes+1)
-	bodyBytes, err := io.ReadAll(limitReader)
 	if err != nil {
 		return nil, err
 	}
