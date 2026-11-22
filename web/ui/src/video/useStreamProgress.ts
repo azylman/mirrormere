@@ -164,8 +164,8 @@ export function useStreamProgress({
     updateScrub(e.clientX, e.currentTarget);
   };
 
-  const onTrackPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isScrubbing) return;
+  const finishScrub = (e: React.PointerEvent<HTMLDivElement>): boolean => {
+    if (!isScrubbing) return false;
     if (typeof e.stopPropagation === 'function') {
       e.stopPropagation();
     }
@@ -182,6 +182,11 @@ export function useStreamProgress({
 
     isScrubbingRef.current = false;
     setIsScrubbing(false);
+    return true;
+  };
+
+  const onTrackPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!finishScrub(e)) return;
     const targetTime = currentSeekTimeRef.current;
     basePositionRef.current = targetTime;
     basePositionTimeRef.current = Date.now();
@@ -191,23 +196,7 @@ export function useStreamProgress({
   };
 
   const onTrackPointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isScrubbing) return;
-    if (typeof e.stopPropagation === 'function') {
-      e.stopPropagation();
-    }
-    onUserActivity?.();
-
-    const trackEl = trackElementRef.current || e.currentTarget;
-    if (typeof trackEl.releasePointerCapture === 'function') {
-      try {
-        trackEl.releasePointerCapture(e.pointerId);
-      } catch {
-        // ignore
-      }
-    }
-
-    isScrubbingRef.current = false;
-    setIsScrubbing(false);
+    if (!finishScrub(e)) return;
     setScrubPosition(null);
   };
 
