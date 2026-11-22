@@ -139,64 +139,68 @@ func TestHub_DispatchConfigReload(t *testing.T) {
 	}
 }
 
-func TestHub_DispatchReloadAndStatus(t *testing.T) {
+// subscribeDispatchHub returns a hub over provider plus a live subscription closed via t.Cleanup.
+func subscribeDispatchHub(t *testing.T, provider StateProvider) (*Hub, <-chan *Event) {
+	t.Helper()
+	hub := NewHub(HubConfig{}, provider, nil)
+	t.Cleanup(hub.Close)
+	ch, unsub := hub.Subscribe(context.Background())
+	t.Cleanup(unsub)
+	return hub, ch
+}
+
+func expectOne(t *testing.T, ch <-chan *Event, wantType, wantSub string) {
+	t.Helper()
+	verifyHubDispatchEvents(t, ch, []string{wantType}, wantSub)
+}
+
+func TestHub_PublishJSONError(t *testing.T) {
 	t.Parallel()
-	hubErr := NewHub(HubConfig{}, nil, nil)
-	t.Cleanup(hubErr.Close)
-	if err := hubErr.publishJSON("test", make(chan int)); err == nil {
+	hub, ch := subscribeDispatchHub(t, nil)
+	if err := hub.publishJSON("test", make(chan int)); err == nil {
 		t.Fatal("expected publishJSON to fail on unmarshalable payload")
 	}
+	verifyHubDispatchEvents(t, ch, nil, "")
+}
 
-	tests := []struct {
-		name     string
-		action   string
-		wantType string
-		wantSub  string
-	}{
-		{"style_reload", "style", EventStyleReload, "custom.css"},
-		{"widget_reload", "widget", EventWidgetReload, "sensor-card"},
-		{"system_reload", "system", EventSystemReload, "manual_reload"},
-		{"system_status", "status", EventSystemStatus, "syntax error"},
+func TestHub_DispatchStyleReload(t *testing.T) {
+	t.Parallel()
+	hub, ch := subscribeDispatchHub(t, NewInMemoryStateProvider(nil))
+	if err := hub.DispatchStyleReload(StyleReloadEvent{File: "custom.css", Timestamp: "2026-09-25T20:00:00Z"}); err != nil {
+		t.Fatalf("DispatchStyleReload: %v", err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			provider := NewInMemoryStateProvider(nil)
-			hub := NewHub(HubConfig{}, provider, nil)
-			defer hub.Close()
+	expectOne(t, ch, EventStyleReload, `"file":"custom.css"`)
+}
 
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			ch, unsub := hub.Subscribe(ctx)
-			defer unsub()
-
-			var err error
-			switch tc.action {
-			case "style":
-				err = hub.DispatchStyleReload(StyleReloadEvent{File: "custom.css", Timestamp: "2026-09-25T20:00:00Z"})
-			case "widget":
-				err = hub.DispatchWidgetReload(WidgetReloadEvent{Type: "sensor-card"})
-			case "system":
-				err = hub.DispatchSystemReload(SystemReloadEvent{Reason: "manual_reload", Timestamp: "2026-09-25T20:00:00Z"})
-			case "status":
-				errStr := "syntax error"
-				provider.SetProvidersStatus(map[string]string{"pkg": "missing manifest"})
-				err = hub.DispatchStatus(config.Status{ConfigStatus: config.ConfigStatusError, ConfigError: &errStr})
-				if provider.CurrentStatus().ConfigStatus != config.ConfigStatusError {
-					t.Error("expected provider status updated to error")
-				}
-			}
-			if err != nil {
-				t.Fatalf("dispatch %s failed: %v", tc.action, err)
-			}
-			select {
-			case evt := <-ch:
-				if evt.Type != tc.wantType || !strings.Contains(string(evt.Data), tc.wantSub) {
-					t.Fatalf("got %s %s, want %s %s", evt.Type, string(evt.Data), tc.wantType, tc.wantSub)
-				}
-			case <-time.After(1 * time.Second):
-				t.Fatalf("timeout waiting for %s", tc.wantType)
-			}
-		})
+func TestHub_DispatchWidgetReload(t *testing.T) {
+	t.Parallel()
+	hub, ch := subscribeDispatchHub(t, NewInMemoryStateProvider(nil))
+	if err := hub.DispatchWidgetReload(WidgetReloadEvent{Type: "sensor-card"}); err != nil {
+		t.Fatalf("DispatchWidgetReload: %v", err)
 	}
+	expectOne(t, ch, EventWidgetReload, `"type":"sensor-card"`)
+}
+
+func TestHub_DispatchSystemReload(t *testing.T) {
+	t.Parallel()
+	hub, ch := subscribeDispatchHub(t, NewInMemoryStateProvider(nil))
+	if err := hub.DispatchSystemReload(SystemReloadEvent{Reason: "manual_reload", Timestamp: "2026-09-25T20:00:00Z"}); err != nil {
+		t.Fatalf("DispatchSystemReload: %v", err)
+	}
+	expectOne(t, ch, EventSystemReload, `"reason":"manual_reload"`)
+}
+
+func TestHub_DispatchStatus(t *testing.T) {
+	t.Parallel()
+	provider := NewInMemoryStateProvider(nil)
+	provider.SetProvidersStatus(map[string]string{"pkg": "missing manifest"})
+	hub, ch := subscribeDispatchHub(t, provider)
+	errStr := "syntax error"
+	if err := hub.DispatchStatus(config.Status{ConfigStatus: config.ConfigStatusError, ConfigError: &errStr}); err != nil {
+		t.Fatalf("DispatchStatus: %v", err)
+	}
+	if got := provider.CurrentStatus().ConfigStatus; got != config.ConfigStatusError {
+		t.Errorf("provider ConfigStatus = %q, want %q", got, config.ConfigStatusError)
+	}
+	expectOne(t, ch, EventSystemStatus, "syntax error")
 }

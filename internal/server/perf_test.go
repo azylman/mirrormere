@@ -41,50 +41,57 @@ func perfHistogramCount(t *testing.T, srv *server.Server, series string) float64
 	return 0
 }
 
-func TestPerf_ValidBatchObservesHistograms(t *testing.T) {
+func TestPerf_Post(t *testing.T) {
 	srv := server.New(server.Config{})
-	swipeSeries := `mirrormere_display_swipe_settle_ms_count{ui="legacy"}`
-	frameSeries := `mirrormere_display_frame_ms_count{ui="react"}`
-	swipeBefore := perfHistogramCount(t, srv, swipeSeries)
-	frameBefore := perfHistogramCount(t, srv, frameSeries)
-
-	body := `{"samples":[{"metric":"swipe_settle","value_ms":42.5,"ui":"legacy"},{"metric":"frame","value_ms":16.7,"ui":"react"}]}`
-	rec := doPerfReq(srv, http.MethodPost, body)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	tests := []struct {
+		name       string
+		method     string
+		body       string
+		wantStatus int
+		wantAllow  string
+		wantDeltas map[string]float64
+	}{
+		{
+			name: "valid_batch_observes_histograms", method: http.MethodPost, wantStatus: http.StatusNoContent,
+			body:       `{"samples":[{"metric":"swipe_settle","value_ms":42.5,"ui":"legacy"},{"metric":"frame","value_ms":16.7,"ui":"react"}]}`,
+			wantDeltas: map[string]float64{`mirrormere_display_swipe_settle_ms_count{ui="legacy"}`: 1, `mirrormere_display_frame_ms_count{ui="react"}`: 1},
+		},
+		{
+			// Upper bounds are inclusive, so 16.7 lands in the le="16.7" bucket.
+			name: "bucket_includes_boundary", method: http.MethodPost, wantStatus: http.StatusNoContent,
+			body:       `{"samples":[{"metric":"screen_ready","value_ms":16.7,"ui":"legacy"}]}`,
+			wantDeltas: map[string]float64{`mirrormere_display_screen_ready_ms_bucket{ui="legacy",le="16.7"}`: 1},
+		},
+		{
+			name: "rejected_batch_observes_nothing", method: http.MethodPost, wantStatus: http.StatusBadRequest,
+			body:       `{"samples":[{"metric":"long_task","value_ms":80,"ui":"legacy"},{"metric":"bogus","value_ms":1,"ui":"legacy"}]}`,
+			wantDeltas: map[string]float64{`mirrormere_display_long_task_ms_count{ui="legacy"}`: 0},
+		},
+		{
+			name: "max_batch_accepted", method: http.MethodPost, body: fullBatch(), wantStatus: http.StatusNoContent,
+			wantDeltas: map[string]float64{`mirrormere_display_interaction_ms_count{ui="legacy"}`: 200},
+		},
+		{name: "wrong_method", method: http.MethodGet, wantStatus: http.StatusMethodNotAllowed, wantAllow: http.MethodPost},
 	}
-	if got := perfHistogramCount(t, srv, swipeSeries) - swipeBefore; got != 1 {
-		t.Errorf("swipe_settle count delta = %v, want 1", got)
-	}
-	if got := perfHistogramCount(t, srv, frameSeries) - frameBefore; got != 1 {
-		t.Errorf("frame count delta = %v, want 1", got)
-	}
-}
-
-func TestPerf_BucketsIncludeBoundary(t *testing.T) {
-	srv := server.New(server.Config{})
-	series := `mirrormere_display_screen_ready_ms_bucket{ui="legacy",le="16.7"}`
-	before := perfHistogramCount(t, srv, series)
-	rec := doPerfReq(srv, http.MethodPost, `{"samples":[{"metric":"screen_ready","value_ms":16.7,"ui":"legacy"}]}`)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204", rec.Code)
-	}
-	// Upper bounds are inclusive, so 16.7 lands in the le="16.7" bucket.
-	if got := perfHistogramCount(t, srv, series) - before; got != 1 {
-		t.Errorf("le=16.7 bucket delta = %v, want 1", got)
-	}
-}
-
-func TestPerf_RejectedBatchObservesNothing(t *testing.T) {
-	srv := server.New(server.Config{})
-	series := `mirrormere_display_long_task_ms_count{ui="legacy"}`
-	before := perfHistogramCount(t, srv, series)
-	body := `{"samples":[{"metric":"long_task","value_ms":80,"ui":"legacy"},{"metric":"bogus","value_ms":1,"ui":"legacy"}]}`
-	if rec := doPerfReq(srv, http.MethodPost, body); rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
-	}
-	if got := perfHistogramCount(t, srv, series) - before; got != 0 {
-		t.Errorf("partial batch observed %v samples, want 0", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			before := make(map[string]float64, len(tc.wantDeltas))
+			for series := range tc.wantDeltas {
+				before[series] = perfHistogramCount(t, srv, series)
+			}
+			rec := doPerfReq(srv, tc.method, tc.body)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if got := rec.Header().Get("Allow"); got != tc.wantAllow {
+				t.Errorf("Allow = %q, want %q", got, tc.wantAllow)
+			}
+			for series, want := range tc.wantDeltas {
+				if got := perfHistogramCount(t, srv, series) - before[series]; got != want {
+					t.Errorf("%s delta = %v, want %v", series, got, want)
+				}
+			}
+		})
 	}
 }
 
@@ -115,24 +122,6 @@ func TestPerf_Validation(t *testing.T) {
 				t.Errorf("body = %q, want substring %q", rec.Body.String(), tc.wantSub)
 			}
 		})
-	}
-}
-
-func TestPerf_MaxBatchAccepted(t *testing.T) {
-	srv := server.New(server.Config{})
-	if rec := doPerfReq(srv, http.MethodPost, fullBatch()); rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204 for a 200-sample batch; body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestPerf_WrongMethod(t *testing.T) {
-	srv := server.New(server.Config{})
-	rec := doPerfReq(srv, http.MethodGet, "")
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405", rec.Code)
-	}
-	if got := rec.Header().Get("Allow"); got != http.MethodPost {
-		t.Errorf("Allow = %q, want POST", got)
 	}
 }
 
