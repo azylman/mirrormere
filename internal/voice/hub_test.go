@@ -296,42 +296,39 @@ func TestHub_Interact_Scenarios(t *testing.T) {
 	}
 }
 
-func TestHub_Interact_ConcurrencyAndPanic(t *testing.T) {
+func TestHub_Interact_RejectsConcurrent(t *testing.T) {
 	t.Parallel()
-	t.Run("concurrent_busy", func(t *testing.T) {
-		t.Parallel()
-		sttStarted, sttBlock, doneCh := make(chan struct{}), make(chan struct{}), make(chan error)
-		h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockBlockingSTT{
-			onTranscribe: func() {
-				close(sttStarted)
-				<-sttBlock
-			},
-		}))
-		nopSink := func(string, any) error { return nil }
-		go func() { doneCh <- h.Interact(context.Background(), wavRdr(100), "", "", nopSink, EdgeTimings{}) }()
-		<-sttStarted
-		if err := h.Interact(context.Background(), wavRdr(100), "", "", nopSink, EdgeTimings{}); !errors.Is(err, ErrInteractionBusy) {
-			t.Errorf("expected ErrInteractionBusy, got: %v", err)
-		}
-		close(sttBlock)
-		if firstErr := <-doneCh; errors.Is(firstErr, ErrInteractionBusy) {
-			t.Errorf("first call should not be busy: %v", firstErr)
-		}
-	})
+	sttStarted, sttBlock, doneCh := make(chan struct{}), make(chan struct{}), make(chan error)
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockBlockingSTT{
+		onTranscribe: func() {
+			close(sttStarted)
+			<-sttBlock
+		},
+	}))
+	nopSink := func(string, any) error { return nil }
+	go func() { doneCh <- h.Interact(context.Background(), wavRdr(100), "", "", nopSink, EdgeTimings{}) }()
+	<-sttStarted
+	if err := h.Interact(context.Background(), wavRdr(100), "", "", nopSink, EdgeTimings{}); !errors.Is(err, ErrInteractionBusy) {
+		t.Errorf("expected ErrInteractionBusy, got: %v", err)
+	}
+	close(sttBlock)
+	if firstErr := <-doneCh; errors.Is(firstErr, ErrInteractionBusy) {
+		t.Errorf("first call should not be busy: %v", firstErr)
+	}
+}
 
-	t.Run("panic_recovers_and_transitions_coordinator", func(t *testing.T) {
-		t.Parallel()
-		coord := NewCoordinator(nil)
-		h := NewHub(&config.VoiceHubConfig{Enabled: true}, coord, WithSTTClient(&mockBlockingSTT{
-			onTranscribe: func() { panic("unexpected boom") },
-		}))
-		defer func() {
-			if recover() == nil || coord.GetState().State != StateError {
-				t.Fatalf("expected panic and StateError, got state %s", coord.GetState().State)
-			}
-		}()
-		_ = h.Interact(context.Background(), wavRdr(100), "", "", func(string, any) error { return nil }, EdgeTimings{})
-	})
+func TestHub_Interact_PanicSetsErrorState(t *testing.T) {
+	t.Parallel()
+	coord := NewCoordinator(nil)
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, coord, WithSTTClient(&mockBlockingSTT{
+		onTranscribe: func() { panic("unexpected boom") },
+	}))
+	defer func() {
+		if recover() == nil || coord.GetState().State != StateError {
+			t.Fatalf("expected panic and StateError, got state %s", coord.GetState().State)
+		}
+	}()
+	_ = h.Interact(context.Background(), wavRdr(100), "", "", func(string, any) error { return nil }, EdgeTimings{})
 }
 
 func TestDefaultSTTClient_Wyoming(t *testing.T) {

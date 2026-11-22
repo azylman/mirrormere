@@ -8,3 +8,9 @@ func (c *Coordinator) GetState() events.VoiceStateData {
 	defer c.mu.RUnlock()
 	return c.snapshotLocked()
 }
+
+// WithClock is a test-only option that replaces the hub's real clock for
+// inactivity deadlines and the thinking heartbeat.
+func WithClock(c clock) HubOption {
+	return func(h *Hub) { h.clock = c }
+}
