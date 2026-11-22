@@ -10,7 +10,9 @@ import {
   relDate,
   tasksStats,
   todayPrecipProb,
+  type TasksStatsResult,
 } from './format';
+import { type CalendarFeedActiveCalendar } from './formatCalendar';
 import { normalizeMonthDay } from './formatDate';
 import { itemAt } from '../test-utils/lookup';
 
@@ -25,62 +27,40 @@ describe('format helpers', () => {
 
   describe('tasksStats', () => {
     const fixedNow = new Date('2026-10-31T15:00:00Z');
-
-    it('handles null, undefined, and empty objects', () => {
-      expect(tasksStats(null)).toEqual({ total: 0, completed: 0, remaining: 0, overdue: 0 });
-      expect(tasksStats(undefined)).toEqual({ total: 0, completed: 0, remaining: 0, overdue: 0 });
-      expect(tasksStats({})).toEqual({ total: 0, completed: 0, remaining: 0, overdue: 0 });
-      expect(tasksStats([])).toEqual({ total: 0, completed: 0, remaining: 0, overdue: 0 });
-    });
-
-    it('calculates metrics from a flat array with snake_case and PascalCase', () => {
-      const items = [
-        { done: true, due_date: '2026-10-20' }, // completed, past due (not overdue because done)
-        { Done: false, DueDate: '2026-10-30' }, // pending, past due (overdue)
-        { done: false, due_date: '2026-10-31' }, // pending, due today UTC (not overdue)
-        { done: false, due_date: '2026-11-05' }, // pending, future due (not overdue)
-        { done: false }, // pending, no due date (not overdue)
-      ];
-
-      const res = tasksStats(items, fixedNow);
-      expect(res).toEqual({
-        total: 5,
-        completed: 1,
-        remaining: 4,
-        overdue: 1,
+    const zero = { total: 0, completed: 0, remaining: 0, overdue: 0 };
+    const tests: { name: string; input: unknown; want: TasksStatsResult }[] = [
+      { name: 'null', input: null, want: zero },
+      { name: 'undefined', input: undefined, want: zero },
+      { name: 'empty object', input: {}, want: zero },
+      { name: 'empty array', input: [], want: zero },
+      {
+        name: 'flat array with snake_case and PascalCase; done and due-today items are not overdue',
+        input: [
+          { done: true, due_date: '2026-10-20' },
+          { Done: false, DueDate: '2026-10-30' },
+          { done: false, due_date: '2026-10-31' },
+          { done: false, due_date: '2026-11-05' },
+          { done: false },
+        ],
+        want: { total: 5, completed: 1, remaining: 4, overdue: 1 },
+      },
+      {
+        name: 'RFC3339 due timestamps compare against now',
+        input: [
+          { done: false, due_date: '2026-10-31T14:00:00Z' },
+          { done: false, due_date: '2026-10-31T16:00:00Z' },
+        ],
+        want: { total: 2, completed: 0, remaining: 2, overdue: 1 },
+      },
+      { name: 'items wrapper', input: { items: [{ done: true }] }, want: { total: 1, completed: 1, remaining: 0, overdue: 0 } },
+      { name: 'Items wrapper', input: { Items: [{ Done: false }] }, want: { total: 1, completed: 0, remaining: 1, overdue: 0 } },
+      { name: 'list wrapper', input: { list: [{ done: true }] }, want: { total: 1, completed: 1, remaining: 0, overdue: 0 } },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(tasksStats(tc.input, fixedNow)).toEqual(tc.want);
       });
-    });
-
-    it('supports RFC3339 timestamps for overdue checks', () => {
-      const items = [
-        { done: false, due_date: '2026-10-31T14:00:00Z' }, // 1 hour ago (overdue)
-        { done: false, due_date: '2026-10-31T16:00:00Z' }, // 1 hour in future (not overdue)
-      ];
-
-      const res = tasksStats(items, fixedNow);
-      expect(res.overdue).toBe(1);
-    });
-
-    it('extracts items from wrapper objects with items or list properties', () => {
-      expect(tasksStats({ items: [{ done: true }] })).toEqual({
-        total: 1,
-        completed: 1,
-        remaining: 0,
-        overdue: 0,
-      });
-      expect(tasksStats({ Items: [{ Done: false }] })).toEqual({
-        total: 1,
-        completed: 0,
-        remaining: 1,
-        overdue: 0,
-      });
-      expect(tasksStats({ list: [{ done: true }] })).toEqual({
-        total: 1,
-        completed: 1,
-        remaining: 0,
-        overdue: 0,
-      });
-    });
+    }
   });
 
   describe('isValidTimezone', () => {
@@ -95,78 +75,58 @@ describe('format helpers', () => {
   });
 
   describe('formatTime', () => {
-    it('supports 1-argument formatTime(val) defaulting layout to "15:04"', () => {
-      expect(formatTime('2026-09-26T14:05:00Z')).toBe('14:05');
-      expect(formatTime('14:05')).toBe('14:05');
-    });
-
-    it('supports "3 PM" layout on ISO and RFC3339 strings', () => {
-      expect(formatTime('3 PM', '2026-09-26T14:00')).toBe('2 PM');
-      expect(formatTime('3 PM', '2026-09-26T15:00')).toBe('3 PM');
-      expect(formatTime('3 PM', '2026-09-26T00:00')).toBe('12 AM');
-      expect(formatTime('3 PM', '2026-09-26T12:00')).toBe('12 PM');
-      expect(formatTime('3 PM', '2026-09-26 15:30:00')).toBe('3 PM');
-      expect(formatTime('3 PM', '2026-01-02T18:39:10Z')).toBe('6 PM');
-    });
-
-    it('supports "3:04" layout without AM/PM', () => {
-      expect(formatTime('3:04', '2026-09-26T09:05:00Z')).toBe('9:05');
-      expect(formatTime('3:04', '2026-09-26T14:30:00Z')).toBe('2:30');
-      expect(formatTime('3:04', '2026-09-26T00:15:00Z')).toBe('12:15');
-    });
-
-    it('supports "PM" layout returning AM or PM', () => {
-      expect(formatTime('PM', '2026-09-26T09:05:00Z')).toBe('AM');
-      expect(formatTime('PM', '2026-09-26T14:30:00Z')).toBe('PM');
-    });
-
-    it('supports "15:04" layout', () => {
-      expect(formatTime('15:04', '2026-01-02T18:39:10Z')).toBe('18:39');
-      expect(formatTime('15:04', '14:05')).toBe('14:05');
-    });
-
-    it('supports timezone conversion for RFC3339/ISO with Z or offset', () => {
-      const eventUTC = '2026-10-12T03:30:00Z';
-      expect(formatTime('3:04', eventUTC, 'America/Los_Angeles')).toBe('8:30');
-      expect(formatTime('PM', eventUTC, 'America/Los_Angeles')).toBe('PM');
-      expect(formatTime('15:04', eventUTC, 'America/Los_Angeles')).toBe('20:30');
-      expect(formatTime('3 PM', eventUTC, 'America/Los_Angeles')).toBe('8 PM');
-    });
-
-    it('supports "3:04 PM" layout', () => {
-      expect(formatTime('3:04 PM', '2026-09-26T14:30:00Z')).toBe('2:30 PM');
-      expect(formatTime('3:04 PM', '2026-09-26T00:05:00Z')).toBe('12:05 AM');
-      expect(formatTime('3:04 PM', '2026-09-26T12:00:00Z')).toBe('12:00 PM');
-    });
-
-    it('supports Date and numeric timestamp inputs with valid and invalid timezones', () => {
-      const date = new Date('2026-10-12T03:30:00Z');
-      const timestamp = date.getTime();
-
-      // Date input with valid and invalid timezone
-      expect(formatTime('3:04 PM', date, 'America/Los_Angeles')).toBe('8:30 PM');
-      expect(formatTime('15:04', date, 'Invalid/Timezone')).toMatch(/^\d{2}:\d{2}$/);
-      expect(formatTime('15:04', new Date(NaN))).toBe('');
-
-      // Numeric timestamp input with valid and invalid timezone
-      expect(formatTime('3:04 PM', timestamp, 'America/Los_Angeles')).toBe('8:30 PM');
-      expect(formatTime('15:04', timestamp, 'Invalid/Timezone')).toMatch(/^\d{2}:\d{2}$/);
-      expect(formatTime('15:04', NaN)).toBe('');
-
-      // String full date with timezone via Date constructor
-      expect(formatTime('3:04 PM', '2026-10-12 15:30:00', 'America/Los_Angeles')).toBe('3:30 PM');
-      // Object input
-      expect(formatTime('15:04', { foo: 'bar' })).toBe('');
-    });
-
-    it('returns empty string for invalid input or date-only string', () => {
-      expect(formatTime('3 PM', null)).toBe('');
-      expect(formatTime('3 PM', undefined)).toBe('');
-      expect(formatTime('3 PM', '')).toBe('');
-      expect(formatTime('3 PM', '2026-09-26')).toBe('');
-      expect(formatTime('3 PM', 'not-a-date')).toBe('');
-      expect(formatTime(null)).toBe('');
-    });
+    const eventUTC = '2026-10-12T03:30:00Z';
+    const date = new Date(eventUTC);
+    const timestamp = date.getTime();
+    const tests: { name: string; args: [unknown, unknown?, string?]; want: unknown }[] = [
+      { name: '1-arg ISO defaults to 15:04', args: ['2026-09-26T14:05:00Z'], want: '14:05' },
+      { name: '1-arg HH:MM defaults to 15:04', args: ['14:05'], want: '14:05' },
+      { name: '3 PM: afternoon', args: ['3 PM', '2026-09-26T14:00'], want: '2 PM' },
+      { name: '3 PM: on the hour', args: ['3 PM', '2026-09-26T15:00'], want: '3 PM' },
+      { name: '3 PM: midnight', args: ['3 PM', '2026-09-26T00:00'], want: '12 AM' },
+      { name: '3 PM: noon', args: ['3 PM', '2026-09-26T12:00'], want: '12 PM' },
+      { name: '3 PM: space-separated datetime', args: ['3 PM', '2026-09-26 15:30:00'], want: '3 PM' },
+      { name: '3 PM: RFC3339 Z', args: ['3 PM', '2026-01-02T18:39:10Z'], want: '6 PM' },
+      { name: '3:04: morning', args: ['3:04', '2026-09-26T09:05:00Z'], want: '9:05' },
+      { name: '3:04: afternoon without AM/PM', args: ['3:04', '2026-09-26T14:30:00Z'], want: '2:30' },
+      { name: '3:04: after midnight', args: ['3:04', '2026-09-26T00:15:00Z'], want: '12:15' },
+      { name: 'PM: morning', args: ['PM', '2026-09-26T09:05:00Z'], want: 'AM' },
+      { name: 'PM: afternoon', args: ['PM', '2026-09-26T14:30:00Z'], want: 'PM' },
+      { name: '15:04: RFC3339', args: ['15:04', '2026-01-02T18:39:10Z'], want: '18:39' },
+      { name: '15:04: bare HH:MM', args: ['15:04', '14:05'], want: '14:05' },
+      { name: 'tz conversion: 3:04', args: ['3:04', eventUTC, 'America/Los_Angeles'], want: '8:30' },
+      { name: 'tz conversion: PM', args: ['PM', eventUTC, 'America/Los_Angeles'], want: 'PM' },
+      { name: 'tz conversion: 15:04', args: ['15:04', eventUTC, 'America/Los_Angeles'], want: '20:30' },
+      { name: 'tz conversion: 3 PM', args: ['3 PM', eventUTC, 'America/Los_Angeles'], want: '8 PM' },
+      { name: '3:04 PM: afternoon', args: ['3:04 PM', '2026-09-26T14:30:00Z'], want: '2:30 PM' },
+      { name: '3:04 PM: after midnight', args: ['3:04 PM', '2026-09-26T00:05:00Z'], want: '12:05 AM' },
+      { name: '3:04 PM: noon', args: ['3:04 PM', '2026-09-26T12:00:00Z'], want: '12:00 PM' },
+      { name: 'Date input with valid tz', args: ['3:04 PM', date, 'America/Los_Angeles'], want: '8:30 PM' },
+      { name: 'Date input with invalid tz falls back to local', args: ['15:04', date, 'Invalid/Timezone'], want: expect.stringMatching(/^\d{2}:\d{2}$/) },
+      { name: 'invalid Date', args: ['15:04', new Date(NaN)], want: '' },
+      { name: 'invalid Date with 3:04 PM layout', args: ['3:04 PM', new Date(NaN)], want: '' },
+      { name: 'numeric timestamp with valid tz', args: ['3:04 PM', timestamp, 'America/Los_Angeles'], want: '8:30 PM' },
+      { name: 'numeric timestamp with invalid tz falls back to local', args: ['15:04', timestamp, 'Invalid/Timezone'], want: expect.stringMatching(/^\d{2}:\d{2}$/) },
+      { name: 'NaN timestamp', args: ['15:04', NaN], want: '' },
+      { name: 'zoneless full date string with tz', args: ['3:04 PM', '2026-10-12 15:30:00', 'America/Los_Angeles'], want: '3:30 PM' },
+      { name: 'object input', args: ['15:04', { foo: 'bar' }], want: '' },
+      { name: 'offset without tz keeps wall time', args: ['15:04', '2026-10-27T15:30:00+02:00'], want: '15:30' },
+      { name: 'offset converted to tz', args: ['15:04', '2026-10-27T15:30:00+02:00', 'UTC'], want: '13:30' },
+      { name: 'out-of-range ISO string with Z', args: ['15:04', '99999-99-99T99:99:99Z'], want: '' },
+      { name: 'non-ISO string with tz', args: ['15:04', 'October 27, 2026 15:30:00 GMT', 'America/New_York'], want: '11:30' },
+      { name: 'bare HH:MM out of range', args: ['15:04', '25:70'], want: '' },
+      { name: 'null value', args: ['3 PM', null], want: '' },
+      { name: 'undefined value', args: ['3 PM', undefined], want: '' },
+      { name: 'empty value', args: ['3 PM', ''], want: '' },
+      { name: 'date-only string', args: ['3 PM', '2026-09-26'], want: '' },
+      { name: 'unparseable string', args: ['3 PM', 'not-a-date'], want: '' },
+      { name: '1-arg null', args: [null], want: '' },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(formatTime(...tc.args)).toEqual(tc.want);
+      });
+    }
   });
 
   describe('normalizeMonthDay', () => {
@@ -190,241 +150,269 @@ describe('format helpers', () => {
   describe('formatDate', () => {
     const target = new Date('2026-09-25T14:30:00Z');
     const eventUTC = '2026-10-12T03:30:00Z';
-
-    it('handles 1-arg defaulting to "2006-01-02"', () => {
-      expect(formatDate(target)).toBe('2026-09-25');
-      expect(formatDate('2026-09-25T14:30:00Z')).toBe('2026-09-25');
-    });
-
-    it('supports "Jan 2", "Jan 02, 2006", "Monday • Jan 2", and "2006" layouts', () => {
-      expect(formatDate('Jan 2', target)).toBe('Sep 25');
-      expect(formatDate('Jan 02, 2006', target)).toBe('Sep 25, 2026');
-      expect(formatDate('Monday • Jan 2', target)).toBe('Friday • Sep 25');
-      expect(formatDate('2006', target)).toBe('2026');
-    });
-
-    it('supports Date and numeric timestamp inputs with valid and invalid timezones', () => {
-      const date = new Date('2026-10-12T03:30:00Z');
-      const timestamp = date.getTime();
-
-      // Date input
-      expect(formatDate('2006-01-02', date, 'America/Los_Angeles')).toBe('2026-10-11');
-      expect(formatDate('2006-01-02', date, 'Invalid/Timezone')).toBe('2026-10-12');
-      expect(formatDate('2006-01-02', new Date(NaN))).toBe('Invalid Date');
-
-      // Numeric timestamp input
-      expect(formatDate('2006-01-02', timestamp, 'America/Los_Angeles')).toBe('2026-10-11');
-      expect(formatDate('2006-01-02', timestamp, 'Invalid/Timezone')).toBe('2026-10-12');
-      expect(formatDate('2006-01-02', NaN)).toBe('NaN');
-
-      // String without timezone fallback (local date)
-      expect(formatDate('2006-01-02', '2026-10-12T15:30:00')).toBe('2026-10-12');
-      // Unknown object type
-      expect(formatDate('2006-01-02', { foo: 'bar' })).toBe('[object Object]');
-    });
-
-    it('supports empty or "default" layout', () => {
-      expect(formatDate('', target)).toBe('2026-09-25');
-      expect(formatDate('default', target)).toBe('2026-09-25');
-    });
-
-    it('preserves date-only strings without timezone shifting', () => {
-      expect(formatDate('2006-01-02', '2026-10-12', 'America/Los_Angeles')).toBe('2026-10-12');
-      expect(formatDate('Jan 2', '2026-10-12', 'America/Los_Angeles')).toBe('Oct 12');
-      expect(formatDate('Monday • Jan 2', '2026-10-12', 'America/Los_Angeles')).toBe('Monday • Oct 12');
-    });
-
-    it('converts full UTC timestamp to destination timezone', () => {
-      expect(formatDate('2006-01-02', eventUTC, 'America/Los_Angeles')).toBe('2026-10-11');
-      expect(formatDate('Jan 2', eventUTC, 'America/Los_Angeles')).toBe('Oct 11');
-      expect(formatDate('Monday • Jan 2', eventUTC, 'America/Los_Angeles')).toBe('Sunday • Oct 11');
-    });
-
-    it('returns raw value for unparseable input', () => {
-      expect(formatDate('not-a-date')).toBe('not-a-date');
-      expect(formatDate('2006-01-02', 'bad-date')).toBe('bad-date');
-    });
-
-    it('returns empty string on empty input', () => {
-      expect(formatDate(null)).toBe('');
-      expect(formatDate(undefined)).toBe('');
-      expect(formatDate('')).toBe('');
-    });
+    const date = new Date(eventUTC);
+    const timestamp = date.getTime();
+    const tests: { name: string; args: [unknown, unknown?, string?]; want: string }[] = [
+      { name: '1-arg Date defaults to 2006-01-02', args: [target], want: '2026-09-25' },
+      { name: '1-arg ISO string defaults to 2006-01-02', args: ['2026-09-25T14:30:00Z'], want: '2026-09-25' },
+      { name: 'Jan 2 layout', args: ['Jan 2', target], want: 'Sep 25' },
+      { name: 'Jan 02, 2006 layout', args: ['Jan 02, 2006', target], want: 'Sep 25, 2026' },
+      { name: 'Monday • Jan 2 layout', args: ['Monday • Jan 2', target], want: 'Friday • Sep 25' },
+      { name: '2006 layout', args: ['2006', target], want: '2026' },
+      { name: 'empty layout uses default', args: ['', target], want: '2026-09-25' },
+      { name: '"default" layout uses default', args: ['default', target], want: '2026-09-25' },
+      { name: 'unknown layout falls back to raw value', args: ['unknown-layout', '2026-10-27'], want: '2026-10-27' },
+      { name: 'Date input with valid tz', args: ['2006-01-02', date, 'America/Los_Angeles'], want: '2026-10-11' },
+      { name: 'Date input with invalid tz', args: ['2006-01-02', date, 'Invalid/Timezone'], want: '2026-10-12' },
+      { name: 'invalid Date', args: ['2006-01-02', new Date(NaN)], want: 'Invalid Date' },
+      { name: 'numeric timestamp with valid tz', args: ['2006-01-02', timestamp, 'America/Los_Angeles'], want: '2026-10-11' },
+      { name: 'numeric timestamp with invalid tz', args: ['2006-01-02', timestamp, 'Invalid/Timezone'], want: '2026-10-12' },
+      { name: 'numeric timestamp with UTC', args: ['2006-01-02', 1761566400000, 'UTC'], want: '2025-10-27' },
+      { name: 'NaN timestamp', args: ['2006-01-02', NaN], want: 'NaN' },
+      { name: 'zoneless datetime string stays local', args: ['2006-01-02', '2026-10-12T15:30:00'], want: '2026-10-12' },
+      { name: 'unknown object type', args: ['2006-01-02', { foo: 'bar' }], want: '[object Object]' },
+      { name: 'boolean value', args: ['2006-01-02', true], want: 'true' },
+      { name: 'date-only string not shifted: 2006-01-02', args: ['2006-01-02', '2026-10-12', 'America/Los_Angeles'], want: '2026-10-12' },
+      { name: 'date-only string not shifted: Jan 2', args: ['Jan 2', '2026-10-12', 'America/Los_Angeles'], want: 'Oct 12' },
+      { name: 'date-only string not shifted: Monday • Jan 2', args: ['Monday • Jan 2', '2026-10-12', 'America/Los_Angeles'], want: 'Monday • Oct 12' },
+      { name: 'UTC timestamp converted to tz: 2006-01-02', args: ['2006-01-02', eventUTC, 'America/Los_Angeles'], want: '2026-10-11' },
+      { name: 'UTC timestamp converted to tz: Jan 2', args: ['Jan 2', eventUTC, 'America/Los_Angeles'], want: 'Oct 11' },
+      { name: 'UTC timestamp converted to tz: Monday • Jan 2', args: ['Monday • Jan 2', eventUTC, 'America/Los_Angeles'], want: 'Sunday • Oct 11' },
+      { name: '1-arg unparseable returns raw', args: ['not-a-date'], want: 'not-a-date' },
+      { name: 'unparseable returns raw', args: ['2006-01-02', 'bad-date'], want: 'bad-date' },
+      { name: 'null', args: [null], want: '' },
+      { name: 'undefined', args: [undefined], want: '' },
+      { name: 'empty string', args: [''], want: '' },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(formatDate(...tc.args)).toBe(tc.want);
+      });
+    }
   });
 
   describe('relDate', () => {
     const ref = new Date('2026-09-25T12:00:00Z');
     const eventUTC = '2026-10-12T03:30:00Z'; // 2026-10-11 20:30 in LA
-
-    it('returns relative date strings', () => {
-      expect(relDate(ref, ref)).toBe('Today');
-      expect(relDate(ref, '2026-09-25')).toBe('Today');
-      expect(relDate(ref, '2026-09-26T09:00:00Z')).toBe('Tomorrow');
-      expect(relDate(ref, '2026-09-24T23:00:00Z')).toBe('Yesterday');
-      expect(relDate(ref, '2026-09-28T10:00:00Z')).toBe('in 3 days');
-      expect(relDate(ref, '2026-09-21T10:00:00Z')).toBe('4 days ago');
-    });
-
-    it('supports timezone conversions', () => {
-      // Sat Oct 10 19:00 in LA -> event is Oct 11 in LA -> Tomorrow
-      const satNow = new Date('2026-10-11T02:00:00Z');
-      expect(relDate(satNow, eventUTC, 'America/Los_Angeles')).toBe('Tomorrow');
-
-      // Sun Oct 11 14:00 in LA -> event is Oct 11 in LA -> Today
-      const sunNow = new Date('2026-10-11T21:00:00Z');
-      expect(relDate(sunNow, eventUTC, 'America/Los_Angeles')).toBe('Today');
-    });
-
-    it('handles unparseable or empty values', () => {
-      expect(relDate(ref, 'invalid')).toBe('invalid');
-      expect(relDate(ref, null)).toBe('');
-      expect(relDate(ref, undefined)).toBe('');
-      expect(relDate(ref, '')).toBe('');
-    });
+    const tests: { name: string; ref: Date | null; value: unknown; tz?: string; want: string }[] = [
+      { name: 'same Date is Today', ref, value: ref, want: 'Today' },
+      { name: 'date-only today', ref, value: '2026-09-25', want: 'Today' },
+      { name: 'Tomorrow', ref, value: '2026-09-26T09:00:00Z', want: 'Tomorrow' },
+      { name: 'Yesterday', ref, value: '2026-09-24T23:00:00Z', want: 'Yesterday' },
+      { name: 'in N days', ref, value: '2026-09-28T10:00:00Z', want: 'in 3 days' },
+      { name: 'N days ago', ref, value: '2026-09-21T10:00:00Z', want: '4 days ago' },
+      { name: 'Yesterday with UTC tz', ref: new Date('2026-10-27T12:00:00Z'), value: '2026-10-26T12:00:00Z', tz: 'UTC', want: 'Yesterday' },
+      { name: 'N days ago with UTC tz', ref: new Date('2026-10-27T12:00:00Z'), value: '2026-10-23T12:00:00Z', tz: 'UTC', want: '4 days ago' },
+      { name: 'tz: Saturday evening LA sees Sunday event as Tomorrow', ref: new Date('2026-10-11T02:00:00Z'), value: eventUTC, tz: 'America/Los_Angeles', want: 'Tomorrow' },
+      { name: 'tz: Sunday afternoon LA sees event as Today', ref: new Date('2026-10-11T21:00:00Z'), value: eventUTC, tz: 'America/Los_Angeles', want: 'Today' },
+      { name: 'unparseable value returned raw', ref, value: 'invalid', want: 'invalid' },
+      { name: 'null value', ref, value: null, want: '' },
+      { name: 'undefined value', ref, value: undefined, want: '' },
+      { name: 'empty value', ref, value: '', want: '' },
+      { name: 'null ref returns raw value', ref: null, value: '2026-10-27', want: '2026-10-27' },
+      { name: 'invalid ref returns raw value', ref: new Date(NaN), value: '2026-10-27', want: '2026-10-27' },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(relDate(tc.ref, tc.value, tc.tz)).toBe(tc.want);
+      });
+    }
   });
 
   describe('calendarFeedActiveCalendars', () => {
-    it('returns empty array on empty or invalid input', () => {
-      expect(calendarFeedActiveCalendars(null)).toEqual([]);
-      expect(calendarFeedActiveCalendars({})).toEqual([]);
-      expect(calendarFeedActiveCalendars('invalid')).toEqual([]);
-    });
-
-    it('filters out calendars where enabled is false or "false"', () => {
-      const cfg = {
-        calendars: [
-          { name: 'Personal', color: '#ff6f59' },
-          { name: 'Disabled Feed', color: '#cccccc', enabled: false },
+    const tests: { name: string; input: unknown; want: CalendarFeedActiveCalendar[] }[] = [
+      { name: 'null', input: null, want: [] },
+      { name: 'empty object', input: {}, want: [] },
+      { name: 'non-object', input: 'invalid', want: [] },
+      {
+        name: 'drops calendars with enabled false or "false"',
+        input: {
+          calendars: [
+            { name: 'Personal', color: '#ff6f59' },
+            { name: 'Disabled Feed', color: '#cccccc', enabled: false },
+            { name: 'Family', color: '#9d8df1', enabled: true },
+            { name: 'Explicit False String', color: '#000000', enabled: 'false' },
+          ],
+        },
+        want: [
+          { name: 'Personal', color: '#ff6f59', enabled: true },
           { name: 'Family', color: '#9d8df1', enabled: true },
-          { name: 'Explicit False String', color: '#000000', enabled: 'false' },
         ],
-      };
-      const active = calendarFeedActiveCalendars(cfg);
-      expect(active.map((c) => c.name)).toEqual(['Personal', 'Family']);
-    });
-
-    it('supports passing array directly and normalizes enabled boolean', () => {
-      const list = [
-        { name: 'Feed A', enabled: 'true', color: '#123456' },
-        { name: 'Feed B', enabled: false },
-      ];
-      const active = calendarFeedActiveCalendars(list);
-      expect(active).toHaveLength(1);
-      expect(active[0]).toEqual({
-        name: 'Feed A',
-        color: '#123456',
-        enabled: true,
+      },
+      {
+        name: 'direct array normalizes enabled "true"',
+        input: [
+          { name: 'Feed A', enabled: 'true', color: '#123456' },
+          { name: 'Feed B', enabled: false },
+        ],
+        want: [{ name: 'Feed A', color: '#123456', enabled: true }],
+      },
+      {
+        name: 'skips non-objects and defaults nullish name and color',
+        input: [null, { name: null, color: null, enabled: true }, { name: 'alpha', color: '#ff0000', enabled: true }, { name: 'beta', enabled: true }],
+        want: [
+          { name: '', color: undefined, enabled: true },
+          { name: 'alpha', color: '#ff0000', enabled: true },
+          { name: 'beta', color: undefined, enabled: true },
+        ],
+      },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(calendarFeedActiveCalendars(tc.input)).toEqual(tc.want);
       });
-    });
+    }
   });
 
   describe('calendarFeedDayGroups', () => {
     const refTime = new Date('2026-10-10T15:30:00Z');
-
-    it('returns empty array on nil or empty data', () => {
-      expect(calendarFeedDayGroups(null, refTime)).toEqual([]);
-      expect(calendarFeedDayGroups({}, refTime)).toEqual([]);
-      expect(calendarFeedDayGroups({ events: [] }, refTime)).toEqual([]);
-    });
-
-    it('filters concluded events and groups by calendar date', () => {
-      const data = {
-        events: [
-          { id: '1', title: 'Past Timed', start: '2026-10-09T20:00:00Z', end: '2026-10-09T21:00:00Z' },
-          { id: '2', title: 'Past All-Day', start: '2026-10-09', end: '2026-10-09', all_day: true },
-          { id: '3', title: 'Earlier Today Concluded', start: '2026-10-10T13:00:00Z', end: '2026-10-10T14:00:00Z' },
-          { id: '4', title: 'Currently Ongoing', start: '2026-10-10T15:00:00Z', end: '2026-10-10T16:00:00Z' },
-          { id: '5', title: 'Later Today', start: '2026-10-10T18:00:00Z', end: '2026-10-10T19:00:00Z' },
-          { id: '6', title: 'Today All-Day', start: '2026-10-10', end: '2026-10-10', all_day: true },
-          { id: '7', title: 'Ongoing No End', start: '2026-10-10T15:00:00Z' },
-          { id: '8', title: 'Past No End', start: '2026-10-10T13:00:00Z' },
-          { id: '9', title: 'Tomorrow All-Day', start: '2026-10-11', end: '2026-10-11', all_day: true },
+    const laterRef = new Date('2026-10-27T12:00:00Z');
+    const morningRef = new Date('2026-10-27T08:00:00Z');
+    // want is matched with toMatchObject: group/event arrays must match in length, listed fields must match.
+    const tests: { name: string; data: unknown; ref: Date; tz?: string; want: Record<string, unknown>[] }[] = [
+      { name: 'null data', data: null, ref: refTime, want: [] },
+      { name: 'empty object', data: {}, ref: refTime, want: [] },
+      { name: 'empty events', data: { events: [] }, ref: refTime, want: [] },
+      { name: 'null events', data: { events: null }, ref: laterRef, want: [] },
+      { name: 'event without title or start', data: { events: [{ title: '', start: '' }] }, ref: laterRef, want: [] },
+      {
+        name: 'drops concluded events and groups by calendar date',
+        data: {
+          events: [
+            { id: '1', title: 'Past Timed', start: '2026-10-09T20:00:00Z', end: '2026-10-09T21:00:00Z' },
+            { id: '2', title: 'Past All-Day', start: '2026-10-09', end: '2026-10-09', all_day: true },
+            { id: '3', title: 'Earlier Today Concluded', start: '2026-10-10T13:00:00Z', end: '2026-10-10T14:00:00Z' },
+            { id: '4', title: 'Currently Ongoing', start: '2026-10-10T15:00:00Z', end: '2026-10-10T16:00:00Z' },
+            { id: '5', title: 'Later Today', start: '2026-10-10T18:00:00Z', end: '2026-10-10T19:00:00Z' },
+            { id: '6', title: 'Today All-Day', start: '2026-10-10', end: '2026-10-10', all_day: true },
+            { id: '7', title: 'Ongoing No End', start: '2026-10-10T15:00:00Z' },
+            { id: '8', title: 'Past No End', start: '2026-10-10T13:00:00Z' },
+            { id: '9', title: 'Tomorrow All-Day', start: '2026-10-11', end: '2026-10-11', all_day: true },
+          ],
+        },
+        ref: refTime,
+        tz: 'UTC',
+        want: [
+          {
+            date: '2026-10-10',
+            rel: 'Today',
+            events: [{ title: 'Currently Ongoing' }, { title: 'Later Today' }, { title: 'Today All-Day' }, { title: 'Ongoing No End' }],
+          },
+          { date: '2026-10-11', rel: 'Tomorrow', events: [{ title: 'Tomorrow All-Day' }] },
         ],
-      };
-
-      const groups = calendarFeedDayGroups(data, refTime, 'UTC');
-      expect(groups.length).toBe(2);
-      expect(itemAt(groups, 0).date).toBe('2026-10-10');
-      expect(itemAt(groups, 0).rel).toBe('Today');
-      expect(itemAt(groups, 0).events.map((e) => e.title)).toEqual([
-        'Currently Ongoing',
-        'Later Today',
-        'Today All-Day',
-        'Ongoing No End',
-      ]);
-
-      expect(itemAt(groups, 1).date).toBe('2026-10-11');
-      expect(itemAt(groups, 1).rel).toBe('Tomorrow');
-      expect(itemAt(groups, 1).events.map((e) => e.title)).toEqual(['Tomorrow All-Day']);
-    });
-
-    it('normalizes description on both all-day and timed events from camelCase or PascalCase', () => {
-      const data = {
-        events: [
+      },
+      {
+        name: 'drops past all-day, timed and endless events',
+        data: {
+          events: [
+            { title: 'Past All Day', start: '2026-10-20', all_day: true },
+            { title: 'Past Timed', start: '2026-10-20T10:00:00Z', end: '2026-10-20T11:00:00Z' },
+            { title: 'Past No End', start: '2026-10-20T10:00:00Z' },
+            { ID: 'multi-1', Title: 'Today Event 1', Start: '2026-10-27T14:00:00Z', Location: 'Main Room', Description: 'Notes', CalendarName: 'Shared', Color: '#fff' },
+            { ID: 'multi-2', Title: 'Today Event 2', Start: '2026-10-27T16:00:00Z' },
+          ],
+        },
+        ref: laterRef,
+        tz: 'UTC',
+        want: [{ events: [{ title: 'Today Event 1', location: 'Main Room' }, { title: 'Today Event 2' }] }],
+      },
+      {
+        name: 'normalizes camelCase and PascalCase descriptions on all-day and timed events',
+        data: {
+          events: [
+            { id: 'ev-1', title: 'All Day With Desc', start: '2026-10-10', all_day: true, description: 'Important details' },
+            { id: 'ev-2', title: 'Timed With Pascal Desc', start: '2026-10-10T16:00:00Z', end: '2026-10-10T17:00:00Z', Description: 'Meeting agenda and notes' },
+            { id: 'ev-3', title: 'Timed Without Desc', start: '2026-10-10T18:00:00Z', end: '2026-10-10T19:00:00Z' },
+          ],
+        },
+        ref: refTime,
+        tz: 'UTC',
+        want: [
           {
-            id: 'ev-1',
-            title: 'All Day With Desc',
-            start: '2026-10-10',
-            all_day: true,
-            description: 'Important details',
-          },
-          {
-            id: 'ev-2',
-            title: 'Timed With Pascal Desc',
-            start: '2026-10-10T16:00:00Z',
-            end: '2026-10-10T17:00:00Z',
-            Description: 'Meeting agenda and notes',
-          },
-          {
-            id: 'ev-3',
-            title: 'Timed Without Desc',
-            start: '2026-10-10T18:00:00Z',
-            end: '2026-10-10T19:00:00Z',
+            events: [
+              { description: 'Important details' },
+              { description: 'Meeting agenda and notes' },
+              { description: undefined },
+            ],
           },
         ],
-      };
-
-      const groups = calendarFeedDayGroups(data, refTime, 'UTC');
-      expect(groups).toHaveLength(1);
-      expect(itemAt(groups, 0).events).toHaveLength(3);
-      expect(itemAt(itemAt(groups, 0).events, 0).description).toBe('Important details');
-      expect(itemAt(itemAt(groups, 0).events, 1).description).toBe('Meeting agenda and notes');
-      expect(itemAt(itemAt(groups, 0).events, 2).description).toBeUndefined();
-    });
+      },
+      {
+        name: 'accepts a direct array and skips null entries',
+        data: [{ title: 'Array Event', start: '2026-10-27T10:00:00Z', end: '2026-10-27T11:00:00Z' }, null],
+        ref: morningRef,
+        tz: 'UTC',
+        want: [{ events: [{ title: 'Array Event' }] }],
+      },
+      {
+        name: 'reads PascalCase event fields',
+        data: {
+          events: [
+            {
+              Title: 'Pascal Title',
+              ID: 'pascal-id-1',
+              Location: 'Meeting Room A',
+              Description: 'Sync demo',
+              CalendarName: 'Work',
+              Color: '#3b82f6',
+              Start: '2026-10-27T14:00:00Z',
+              End: '2026-10-27T15:00:00Z',
+            },
+          ],
+        },
+        ref: morningRef,
+        tz: 'UTC',
+        want: [
+          {
+            events: [
+              { title: 'Pascal Title', id: 'pascal-id-1', location: 'Meeting Room A', description: 'Sync demo', calendarName: 'Work', color: '#3b82f6' },
+            ],
+          },
+        ],
+      },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(calendarFeedDayGroups(tc.data, tc.ref, tc.tz)).toMatchObject(tc.want);
+      });
+    }
   });
 
   describe('todayPrecipProb', () => {
-    it('returns 0 for empty or invalid data', () => {
-      expect(todayPrecipProb(null)).toBe(0);
-      expect(todayPrecipProb(undefined)).toBe(0);
-      expect(todayPrecipProb({})).toBe(0);
-      expect(todayPrecipProb('invalid')).toBe(0);
-    });
-
-    it('extracts from daily array', () => {
-      expect(todayPrecipProb({ daily: [{ precip_prob_max: 75 }] })).toBe(75);
-      expect(todayPrecipProb({ Daily: [{ PrecipProbMax: 60 }] })).toBe(60);
-    });
-
-    it('extracts max across first 12 hourly entries when daily is missing', () => {
-      const data = {
-        hourly: [
-          { precip_prob: 10 },
-          { precip_prob: 45 },
-          { precip_prob: 30 },
-          // 13th hour should be ignored
-          ...Array.from({ length: 9 }, () => ({ precip_prob: 0 })),
-          { precip_prob: 99 },
-        ],
-      };
-      expect(todayPrecipProb(data)).toBe(45);
-    });
-
-    it('falls back to current snapshot or direct property', () => {
-      expect(todayPrecipProb({ current: { precip_prob_max: 35 } })).toBe(35);
-      expect(todayPrecipProb({ Current: { PrecipProbMax: 40 } })).toBe(40);
-      expect(todayPrecipProb({ precip_prob_max: 55 })).toBe(55);
-    });
+    const tests: { name: string; data: unknown; want: number }[] = [
+      { name: 'null', data: null, want: 0 },
+      { name: 'undefined', data: undefined, want: 0 },
+      { name: 'empty object', data: {}, want: 0 },
+      { name: 'non-object', data: 'invalid', want: 0 },
+      { name: 'daily precip_prob_max', data: { daily: [{ precip_prob_max: 75 }] }, want: 75 },
+      { name: 'Daily PrecipProbMax', data: { Daily: [{ PrecipProbMax: 60 }] }, want: 60 },
+      { name: 'daily precip_prob', data: { daily: [{ precip_prob: 42 }] }, want: 42 },
+      { name: 'daily PrecipitationProbability', data: { daily: [{ PrecipitationProbability: 55 }] }, want: 55 },
+      {
+        name: 'hourly max over the first 12 entries only',
+        data: {
+          hourly: [
+            { precip_prob: 10 },
+            { precip_prob: 45 },
+            { precip_prob: 30 },
+            ...Array.from({ length: 9 }, () => ({ precip_prob: 0 })),
+            { precip_prob: 99 },
+          ],
+        },
+        want: 45,
+      },
+      { name: 'hourly PrecipitationProbability', data: { hourly: [{ PrecipitationProbability: 65 }] }, want: 65 },
+      { name: 'Hourly PrecipProb', data: { Hourly: [{ PrecipProb: 50 }] }, want: 50 },
+      { name: 'current precip_prob_max', data: { current: { precip_prob_max: 35 } }, want: 35 },
+      { name: 'Current PrecipProbMax', data: { Current: { PrecipProbMax: 40 } }, want: 40 },
+      { name: 'current PrecipitationProbability', data: { current: { PrecipitationProbability: 75 } }, want: 75 },
+      { name: 'top-level precip_prob_max', data: { precip_prob_max: 55 }, want: 55 },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(todayPrecipProb(tc.data)).toBe(tc.want);
+      });
+    }
   });
 
   describe('computeHourlyGraphLayout', () => {
@@ -519,148 +507,15 @@ describe('format helpers', () => {
       expect(itemAt(layout?.points, 0).circleR).toBe(3.5);
       expect(itemAt(layout?.points, 0).timeY).toBe(102);
     });
-  });
-
-  describe('format helpers additional branch coverage', () => {
-    it('covers relDate edge cases', () => {
-      const refTime = new Date('2026-10-27T12:00:00Z');
-      expect(relDate(refTime, null)).toBe('');
-      expect(relDate(refTime, undefined)).toBe('');
-      expect(relDate(refTime, '')).toBe('');
-      expect(relDate(null, '2026-10-27')).toBe('2026-10-27');
-      expect(relDate(new Date(NaN), '2026-10-27')).toBe('2026-10-27');
-      expect(relDate(refTime, 'invalid-date')).toBe('invalid-date');
-
-      // Yesterday and multiple days ago
-      expect(relDate(refTime, '2026-10-26T12:00:00Z', 'UTC')).toBe('Yesterday');
-      expect(relDate(refTime, '2026-10-23T12:00:00Z', 'UTC')).toBe('4 days ago');
-    });
-
-    it('covers formatTime edge cases: offsets, invalid dates, out-of-range hours', () => {
-      // Timezone offset without valid TZ
-      expect(formatTime('15:04', '2026-10-27T15:30:00+02:00')).toBe('15:30');
-      // Timezone offset with valid TZ
-      expect(formatTime('15:04', '2026-10-27T15:30:00+02:00', 'UTC')).toBe('13:30');
-      // Invalid Date string with Z
-      expect(formatTime('15:04', '99999-99-99T99:99:99Z')).toBe('');
-      // Non-ISO string with valid timezone
-      expect(formatTime('15:04', 'October 27, 2026 15:30:00 GMT', 'America/New_York')).toBe('11:30');
-      // Standalone hour out of range
-      expect(formatTime('15:04', '25:70')).toBe('');
-    });
-
-    it('covers formatDate edge cases: unknown layouts, non-string/non-date types', () => {
-      expect(formatDate('unknown-layout', '2026-10-27')).toBe('2026-10-27');
-      expect(formatDate('2006-01-02', 1761566400000, 'UTC')).toBe('2025-10-27');
-      expect(formatDate('2006-01-02', new Date(NaN))).toBe('Invalid Date');
-      expect(formatTime('3:04 PM', new Date(NaN))).toBe('');
-
-      // Test formatTime and formatDate cache clear branches (>2000 entries)
-      for (let i = 0; i < 2005; i++) {
-        formatTime('15:04', `2026-10-27T10:${String(i % 60).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}.${String(i).padStart(3, '0')}Z`);
-        formatDate('2006-01-02', `2026-${String((i % 12) + 1).padStart(2, '0')}-${String((i % 28) + 1).padStart(2, '0')}T${String(i % 24).padStart(2, '0')}:00:00.${String(i).padStart(3, '0')}Z`);
-      }
-    });
-
-    it('covers calendarFeedDayGroups and calendarFeedActiveCalendars edge cases', () => {
-      // Direct array input
-      const arrResult = calendarFeedDayGroups(
-        [
-          { title: 'Array Event', start: '2026-10-27T10:00:00Z', end: '2026-10-27T11:00:00Z' },
-          null,
-        ],
-        new Date('2026-10-27T08:00:00Z'),
-        'UTC',
-      );
-      expect(arrResult).toHaveLength(1);
-      expect(itemAt(itemAt(arrResult, 0).events, 0).title).toBe('Array Event');
-
-      // PascalCase fields
-      const pascalResult = calendarFeedDayGroups(
-        {
-          events: [
-            {
-              Title: 'Pascal Title',
-              ID: 'pascal-id-1',
-              Location: 'Meeting Room A',
-              Description: 'Sync demo',
-              CalendarName: 'Work',
-              Color: '#3b82f6',
-              Start: '2026-10-27T14:00:00Z',
-              End: '2026-10-27T15:00:00Z',
-            },
-          ],
-        },
-        new Date('2026-10-27T08:00:00Z'),
-        'UTC',
-      );
-      expect(itemAt(itemAt(pascalResult, 0).events, 0).title).toBe('Pascal Title');
-      expect(itemAt(itemAt(pascalResult, 0).events, 0).id).toBe('pascal-id-1');
-      expect(itemAt(itemAt(pascalResult, 0).events, 0).location).toBe('Meeting Room A');
-      expect(itemAt(itemAt(pascalResult, 0).events, 0).description).toBe('Sync demo');
-      expect(itemAt(itemAt(pascalResult, 0).events, 0).calendarName).toBe('Work');
-      expect(itemAt(itemAt(pascalResult, 0).events, 0).color).toBe('#3b82f6');
-
-      // Active calendars with nullish fields and non-object items
-      const calendars = calendarFeedActiveCalendars([
-        null,
-        { name: null, color: null, enabled: true },
-        { name: 'Alice', color: '#ff0000', enabled: true },
-        { name: 'Bob', enabled: true },
-      ]);
-      expect(calendars).toHaveLength(3);
-      expect(itemAt(calendars, 0).name).toBe('');
-      expect(itemAt(calendars, 0).color).toBeUndefined();
-      expect(itemAt(calendars, 1).name).toBe('Alice');
-      expect(itemAt(calendars, 2).color).toBeUndefined();
-
-      // computeHourlyGraphLayout custom baseY option
-      const pts = [{ time: '2026-09-26T14:00', temp: 70, icon: 'weather-sunny' }];
-      const layout = computeHourlyGraphLayout(pts, undefined, { baseY: 150 });
+    it('honors a custom baseY option', () => {
+      const layout = computeHourlyGraphLayout([{ time: '2026-09-26T14:00', temp: 70, icon: 'weather-sunny' }], undefined, { baseY: 150 });
       expect(layout?.baseY).toBe(150);
-      expect(formatDate('2006-01-02', true)).toBe('true');
     });
-
-    it('covers calendarFeedDayGroups edge cases: past events, missing fields', () => {
-      const refTime = new Date('2026-10-27T12:00:00Z');
-      expect(calendarFeedDayGroups(null, refTime)).toEqual([]);
-      expect(calendarFeedDayGroups({ events: null }, refTime)).toEqual([]);
-      expect(calendarFeedDayGroups({ events: [{ title: '', start: '' }] }, refTime)).toEqual([]);
-
-      // Past all-day and timed events filtered out
-      const pastData = {
-        events: [
-          { title: 'Past All Day', start: '2026-10-20', all_day: true },
-          { title: 'Past Timed', start: '2026-10-20T10:00:00Z', end: '2026-10-20T11:00:00Z' },
-          { title: 'Past No End', start: '2026-10-20T10:00:00Z' },
-          {
-            ID: 'multi-1',
-            Title: 'Today Event 1',
-            Start: '2026-10-27T14:00:00Z',
-            Location: 'Main Room',
-            Description: 'Notes',
-            CalendarName: 'Shared',
-            Color: '#fff',
-          },
-          {
-            ID: 'multi-2',
-            Title: 'Today Event 2',
-            Start: '2026-10-27T16:00:00Z',
-          },
-        ],
-      };
-      const groups = calendarFeedDayGroups(pastData, refTime, 'UTC');
-      expect(groups).toHaveLength(1);
-      expect(itemAt(groups, 0).events).toHaveLength(2);
-      expect(itemAt(itemAt(groups, 0).events, 0).location).toBe('Main Room');
-    });
-
-    it('covers todayPrecipProb variations: daily, hourly, and current', () => {
-      expect(todayPrecipProb({ daily: [{ precip_prob: 42 }] })).toBe(42);
-      expect(todayPrecipProb({ daily: [{ PrecipitationProbability: 55 }] })).toBe(55);
-      expect(todayPrecipProb({ hourly: [{ PrecipitationProbability: 65 }] })).toBe(65);
-      expect(todayPrecipProb({ Hourly: [{ PrecipProb: 50 }] })).toBe(50);
-      expect(todayPrecipProb({ current: { PrecipitationProbability: 75 } })).toBe(75);
-    });
+  });
+  it('clears the formatTime and formatDate caches past 2000 entries', () => {
+    for (let i = 0; i < 2005; i++) {
+      formatTime('15:04', `2026-10-27T10:${String(i % 60).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}.${String(i).padStart(3, '0')}Z`);
+      formatDate('2006-01-02', `2026-${String((i % 12) + 1).padStart(2, '0')}-${String((i % 28) + 1).padStart(2, '0')}T${String(i % 24).padStart(2, '0')}:00:00.${String(i).padStart(3, '0')}Z`);
+    }
   });
 });
