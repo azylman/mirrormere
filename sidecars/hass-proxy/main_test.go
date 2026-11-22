@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ type runWithReadyCase struct {
 	useListener bool
 	probeHealth bool
 	mockClient  bool
+	failStdout  bool
 	wantErrSub  string
 }
 
@@ -58,7 +60,11 @@ func assertRunWithReadyResult(t *testing.T, tc runWithReadyCase, errCh <-chan er
 
 func runRunWithReadyCase(t *testing.T, tc runWithReadyCase) {
 	t.Helper()
-	var stdout, stderr bytes.Buffer
+	var stdout io.Writer = &bytes.Buffer{}
+	if tc.failStdout {
+		stdout = &testutil.FailingFlusher{}
+	}
+	var stderr bytes.Buffer
 	var listener net.Listener
 	if tc.useListener {
 		listener, _ = net.Listen("tcp", "127.0.0.1:0")
@@ -70,7 +76,7 @@ func runRunWithReadyCase(t *testing.T, tc runWithReadyCase) {
 	ctx, cancel := context.WithCancel(context.Background())
 	readyCh, errCh := make(chan struct{}), make(chan error, 1)
 	go func() {
-		errCh <- RunWithReady(ctx, tc.args, &stdout, &stderr, readyCh, listener, client)
+		errCh <- RunWithReady(ctx, tc.args, stdout, &stderr, readyCh, listener, client)
 	}()
 	if tc.useListener {
 		probeReadyListener(t, listener, tc.probeHealth, readyCh, cancel)
@@ -96,6 +102,7 @@ func TestRunWithReady(t *testing.T) {
 		{name: "lifecycle_probe", args: []string{"--config=" + configPath}, useListener: true, probeHealth: true},
 		{name: "flag_config_equals", args: []string{"-config=" + configPath}, useListener: true, mockClient: true},
 		{name: "flag_positional", args: []string{configPath}, useListener: true, mockClient: true},
+		{name: "stdout_write_failure_continues", args: []string{configPath}, useListener: true, mockClient: true, failStdout: true},
 		{name: "listen_collision", args: []string{"-config", collideConfig}, mockClient: true, wantErrSub: "failed to listen"},
 	}
 
@@ -106,28 +113,19 @@ func TestRunWithReady(t *testing.T) {
 	}
 }
 
-func TestMain_Execution(t *testing.T) {
+func TestRunMain(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		wantCode int
+		name, wantErr string
+		args          []string
 	}{
-		{"help_success", []string{"--help"}, 0},
-		{"config_error", []string{"-config", "/nonexistent/never_exists.yaml"}, 1},
+		{name: "help", args: []string{"--help"}},
+		{name: "config_error", args: []string{"-config", "/nonexistent/never_exists.yaml"}, wantErr: "failed to load configuration"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			oldArgs, oldExit := argsHook, exitFunc
-			defer func() {
-				argsHook = oldArgs
-				exitFunc = oldExit
-			}()
-			argsHook = tc.args
-			exitCode := 0
-			exitFunc = func(code int) { exitCode = code }
-			main()
-			if exitCode != tc.wantCode {
-				t.Errorf("exitCode=%d, want %d", exitCode, tc.wantCode)
+			err := run(tc.args)
+			if (err == nil) != (tc.wantErr == "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("run(%q) error = %v, want %q", tc.args, err, tc.wantErr)
 			}
 		})
 	}

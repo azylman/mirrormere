@@ -142,21 +142,20 @@ func TestRun_Lifecycle(t *testing.T) {
 	}
 }
 
-func TestMain_Execution(t *testing.T) {
-	oldArgsHook, oldExitFunc := argsHook, exitFunc
-	defer func() {
-		argsHook = oldArgsHook
-		exitFunc = oldExitFunc
-	}()
-
-	argsHook = []string{"-help"}
-	main()
-
-	argsHook = []string{"-invalid-arg"}
-	exitCode := 0
-	exitFunc = func(code int) { exitCode = code }
-	main()
-	if exitCode != 1 {
-		t.Fatalf("expected exit code 1, got %d", exitCode)
+func TestRunMain(t *testing.T) {
+	tests := []struct {
+		name, wantErr string
+		args          []string
+	}{
+		{name: "help", args: []string{"-help"}},
+		{name: "unsupported_flag", args: []string{"-invalid-arg"}, wantErr: "flags are not supported"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := run(tc.args)
+			if (err == nil) != (tc.wantErr == "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("run(%q) error = %v, want %q", tc.args, err, tc.wantErr)
+			}
+		})
 	}
 }

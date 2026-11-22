@@ -308,53 +308,30 @@ func TestAssetReloader_ReloadWidgets(t *testing.T) {
 	}
 }
 
-func TestAssetReloader_ReloadCSS_Guards(t *testing.T) {
+func TestAssetReloader_Reload(t *testing.T) {
 	tests := []struct {
-		name       string
-		subPath    string
-		wantReload bool
+		name, cssRel, widgetDirRel  string // cssRel "." is the temp dir itself
+		widgetDirIsFile, withLoader bool
+		wantCSS, wantWidgets        bool
 	}{
-		{"empty_path", "", false},
-		{"missing_file", "missing.css", false},
-		{"directory_read_error", ".", false},
+		{name: "nil_safety"},
+		{name: "css_missing_file", cssRel: "missing.css"},
+		{name: "css_directory_read_error", cssRel: "."},
+		{name: "widgets_missing_dir", widgetDirRel: "missing", withLoader: true},
+		{name: "widgets_dir_is_file", widgetDirRel: "file", widgetDirIsFile: true, withLoader: true},
+		{name: "css_and_widgets_missing", cssRel: "missing.css", widgetDirRel: "missing", withLoader: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
-			var p string
-			if tc.subPath == "." {
-				p = tmp
-			} else if tc.subPath != "" {
-				p = filepath.Join(tmp, tc.subPath)
+			var cssPath, dir string
+			if tc.cssRel != "" {
+				cssPath = filepath.Join(tmp, tc.cssRel)
 			}
-			r := NewAssetReloader(p, nil, "", "", nil, nil, nil, nil)
-			if got := r.ReloadCSS(); got != tc.wantReload {
-				t.Fatalf("ReloadCSS() = %v, want %v", got, tc.wantReload)
+			if tc.widgetDirRel != "" {
+				dir = filepath.Join(tmp, tc.widgetDirRel)
 			}
-		})
-	}
-}
-
-func TestAssetReloader_ReloadWidgets_Guards(t *testing.T) {
-	tests := []struct {
-		name       string
-		withLoader bool
-		dirKind    string
-		wantReload bool
-	}{
-		{"nil_loader", false, "none", false},
-		{"missing_dirs", true, "missing", false},
-		{"file_dir_read_error", true, "file", false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tmp := t.TempDir()
-			var dir string
-			switch tc.dirKind {
-			case "missing":
-				dir = filepath.Join(tmp, "missing")
-			case "file":
-				dir = filepath.Join(tmp, "file")
+			if tc.widgetDirIsFile {
 				if err := os.WriteFile(dir, []byte("x"), 0o644); err != nil {
 					t.Fatalf("write file: %v", err)
 				}
@@ -363,50 +340,8 @@ func TestAssetReloader_ReloadWidgets_Guards(t *testing.T) {
 			if tc.withLoader {
 				loader = widget.NewLoader("", dir)
 			}
-			r := NewAssetReloader("", loader, dir, dir, nil, nil, nil, nil)
-			if got := r.ReloadWidgets(); got != tc.wantReload {
-				t.Fatalf("ReloadWidgets() = %v, want %v", got, tc.wantReload)
-			}
-		})
-	}
-}
-
-func TestAssetReloader_Reload_Guards(t *testing.T) {
-	tests := []struct {
-		name                 string
-		cssSubPath           string
-		widgetDirKind        string
-		wantCSS, wantWidgets bool
-	}{
-		{
-			name:        "nil_safety",
-			wantCSS:     false,
-			wantWidgets: false,
-		},
-		{
-			name:          "missing_dirs",
-			cssSubPath:    "missing.css",
-			widgetDirKind: "missing",
-			wantCSS:       false,
-			wantWidgets:   false,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tmp := t.TempDir()
-			var p string
-			if tc.cssSubPath != "" {
-				p = filepath.Join(tmp, tc.cssSubPath)
-			}
-			var dir string
-			var loader *widget.Loader
-			if tc.widgetDirKind == "missing" {
-				dir = filepath.Join(tmp, "missing")
-				loader = widget.NewLoader("", dir)
-			}
-			r := NewAssetReloader(p, loader, dir, dir, nil, nil, nil, nil)
-			c, w := r.Reload()
-			if c != tc.wantCSS || w != tc.wantWidgets {
+			r := NewAssetReloader(cssPath, loader, dir, dir, nil, nil, nil, nil)
+			if c, w := r.Reload(); c != tc.wantCSS || w != tc.wantWidgets {
 				t.Fatalf("Reload() = (%v, %v), want (%v, %v)", c, w, tc.wantCSS, tc.wantWidgets)
 			}
 		})

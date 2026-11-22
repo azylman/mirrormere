@@ -6,8 +6,3 @@ import "context"
 func (e *Engine) RenderWidget(ctx context.Context, widgetID string) ([]byte, error) {
 	return e.RenderWidgetWithOverrides(ctx, widgetID, "", nil)
 }
-
-// RenderWidgetForNode renders a widget for one display, identified by its voice node_id.
-func (e *Engine) RenderWidgetForNode(ctx context.Context, widgetID, nodeID string) ([]byte, error) {
-	return e.RenderWidgetWithOverrides(ctx, widgetID, nodeID, nil)
-}
