@@ -117,19 +117,64 @@ jobs:
               - 'go.sum'
               - 'sidecars/hass-proxy/**'
 
+      # Image selection only. Same paths as the image filters above, minus
+      # test-only files, so a PR that changes only tests builds no image.
+      # 'every' means a file must match ALL patterns: one positive pattern
+      # per image (never two), then the shared test-file negations.
+      # Test jobs keep gating on steps.filter.
+      - name: Image Path Filter Check
+        uses: dorny/paths-filter@v4
+        id: images
+        with:
+          predicate-quantifier: 'every'
+          filters: |
+            mirrormere:
+              - '{Dockerfile,.dockerignore,go.mod,go.sum,Makefile,cmd/**,internal/**,api/**,web/ui/**,web/templates/**,web/static/**,widgets/**}'
+              - &test_only_negations
+                - '!**/*_test.go'
+                - '!**/*.test.{ts,tsx,js,cjs,mjs}'
+                - '!**/testdata/**'
+                - '!**/__tests__/**'
+                - '!**/{test,tests}/**'
+                - '!**/test_*.py'
+                - '!**/conftest.py'
+                - '!web/ui/src/test-utils/**'
+                - '!web/ui/src/sse/fake-event-source.ts'
+            mirrormere-cast-watcher:
+              - '{.dockerignore,go.mod,go.sum,client/cast-watcher/**}'
+              - *test_only_negations
+            mirrormere-eink-renderer:
+              - 'sidecars/eink-renderer/**'
+              - *test_only_negations
+            mirrormere-voice-fingerprinter:
+              - 'sidecars/voice-fingerprinter/**'
+              - *test_only_negations
+            mirrormere-ear:
+              - 'client/ear/**'
+              - *test_only_negations
+            mirrormere-remote:
+              - 'client/remote/**'
+              - *test_only_negations
+            mirrormere-hass-proxy:
+              - '{.dockerignore,go.mod,go.sum,sidecars/hass-proxy/**}'
+              - *test_only_negations
+            mirrormere-display:
+              - 'deploy/display/**'
+              - *test_only_negations
+
       - name: Compute Dynamic Build Matrix
         id: set-matrix
         run: |
           node -e '
             const filter = {
-              mirrormere: "${{ steps.filter.outputs.mirrormere }}",
-              "mirrormere-cast-watcher": "${{ steps.filter.outputs.mirrormere-cast-watcher }}",
-              "mirrormere-eink-renderer": "${{ steps.filter.outputs.mirrormere-eink-renderer }}",
-              "mirrormere-voice-fingerprinter": "${{ steps.filter.outputs.mirrormere-voice-fingerprinter }}",
-              "mirrormere-ear": "${{ steps.filter.outputs.mirrormere-ear }}",
-              "mirrormere-remote": "${{ steps.filter.outputs.mirrormere-remote }}",
-              "mirrormere-hass-proxy": "${{ steps.filter.outputs.mirrormere-hass-proxy }}",
-              "mirrormere-display": "${{ steps.filter.outputs.mirrormere-display }}"
+              mirrormere: "${{ steps.images.outputs.mirrormere }}",
+              "mirrormere-cast-watcher": "${{ steps.images.outputs.mirrormere-cast-watcher }}",
+              "mirrormere-eink-renderer": "${{ steps.images.outputs.mirrormere-eink-renderer }}",
+              "mirrormere-voice-fingerprinter": "${{ steps.images.outputs.mirrormere-voice-fingerprinter }}",
+              "mirrormere-ear": "${{ steps.images.outputs.mirrormere-ear }}",
+              "mirrormere-remote": "${{ steps.images.outputs.mirrormere-remote }}",
+              "mirrormere-hass-proxy": "${{ steps.images.outputs.mirrormere-hass-proxy }}",
+              "mirrormere-display": "${{ steps.images.outputs.mirrormere-display }}"
             };
 
             const catalog = [
