@@ -41,16 +41,16 @@ func NewDefaultLayoutEditorHandler(mgr *config.Manager, hub layoutEditorHub, loa
 
 // GetLayoutEditor handles GET /api/layout/editor.
 func (h *DefaultLayoutEditorHandler) GetLayoutEditor(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "GET, HEAD, OPTIONS", http.MethodGet, http.MethodHead) {
+	if !api.AllowMethods(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
 	if h.mgr == nil {
-		writeAPIError(w, http.StatusInternalServerError, "config manager not configured")
+		api.WriteError(w, http.StatusInternalServerError, "config manager not configured")
 		return
 	}
 	snap := h.mgr.CurrentSnapshot()
 	if snap == nil || snap.Config == nil {
-		writeAPIError(w, http.StatusInternalServerError, "current configuration not available")
+		api.WriteError(w, http.StatusInternalServerError, "current configuration not available")
 		return
 	}
 	if r.Method == http.MethodHead {
@@ -58,23 +58,23 @@ func (h *DefaultLayoutEditorHandler) GetLayoutEditor(w http.ResponseWriter, r *h
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.buildResponse(snap))
+	api.WriteJSON(w, http.StatusOK, h.buildResponse(snap))
 }
 
 // requireEditableLayout writes the error response and returns false unless the
 // config manager is available and layout editing is allowed.
 func (h *DefaultLayoutEditorHandler) requireEditableLayout(w http.ResponseWriter) bool {
 	if h.mgr == nil {
-		writeAPIError(w, http.StatusInternalServerError, "config manager not configured")
+		api.WriteError(w, http.StatusInternalServerError, "config manager not configured")
 		return false
 	}
 	snap := h.mgr.CurrentSnapshot()
 	if snap == nil || snap.Config == nil {
-		writeAPIError(w, http.StatusInternalServerError, "current configuration not available")
+		api.WriteError(w, http.StatusInternalServerError, "current configuration not available")
 		return false
 	}
 	if !snap.Config.Display.IsLayoutEditAllowed() {
-		writeAPIError(w, http.StatusForbidden, "layout editing is disabled by configuration")
+		api.WriteError(w, http.StatusForbidden, "layout editing is disabled by configuration")
 		return false
 	}
 	return true
@@ -82,7 +82,7 @@ func (h *DefaultLayoutEditorHandler) requireEditableLayout(w http.ResponseWriter
 
 // PutLayoutEditor handles PUT /api/layout/editor.
 func (h *DefaultLayoutEditorHandler) PutLayoutEditor(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "PUT, OPTIONS", http.MethodPut) {
+	if !api.AllowMethods(w, r, http.MethodPut) {
 		return
 	}
 	if !h.requireEditableLayout(w) {
@@ -90,12 +90,12 @@ func (h *DefaultLayoutEditorHandler) PutLayoutEditor(w http.ResponseWriter, r *h
 	}
 	var req api.LayoutEditorUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("invalid request payload: %v", err))
+		api.WriteError(w, http.StatusBadRequest, fmt.Sprintf("invalid request payload: %v", err))
 		return
 	}
 	overrides, err := parseWidgetPlacements(req.Widgets)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		api.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	newSnap, diff, err := h.mgr.ApplyLayoutOverride(&config.LayoutOverrideFile{
@@ -104,10 +104,10 @@ func (h *DefaultLayoutEditorHandler) PutLayoutEditor(w http.ResponseWriter, r *h
 	})
 	if err != nil {
 		if errors.Is(err, config.ErrLayoutEditDisabled) {
-			writeAPIError(w, http.StatusForbidden, err.Error())
+			api.WriteError(w, http.StatusForbidden, err.Error())
 			return
 		}
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		api.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if h.hub != nil {
@@ -115,7 +115,7 @@ func (h *DefaultLayoutEditorHandler) PutLayoutEditor(w http.ResponseWriter, r *h
 			h.logger.Error("failed to dispatch config reload", "error", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, h.buildResponse(newSnap))
+	api.WriteJSON(w, http.StatusOK, h.buildResponse(newSnap))
 }
 
 func parseWidgetPlacements(widgets []api.LayoutEditorWidgetPlacement) ([]config.WidgetOverride, error) {
@@ -143,7 +143,7 @@ func parseWidgetPlacements(widgets []api.LayoutEditorWidgetPlacement) ([]config.
 
 // DeleteLayoutEditor handles DELETE /api/layout/editor.
 func (h *DefaultLayoutEditorHandler) DeleteLayoutEditor(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "DELETE, OPTIONS", http.MethodDelete) {
+	if !api.AllowMethods(w, r, http.MethodDelete) {
 		return
 	}
 	if !h.requireEditableLayout(w) {
@@ -152,10 +152,10 @@ func (h *DefaultLayoutEditorHandler) DeleteLayoutEditor(w http.ResponseWriter, r
 	newSnap, diff, err := h.mgr.ResetLayoutOverride()
 	if err != nil {
 		if errors.Is(err, config.ErrLayoutEditDisabled) {
-			writeAPIError(w, http.StatusForbidden, err.Error())
+			api.WriteError(w, http.StatusForbidden, err.Error())
 			return
 		}
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		api.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if h.hub != nil {
@@ -163,7 +163,7 @@ func (h *DefaultLayoutEditorHandler) DeleteLayoutEditor(w http.ResponseWriter, r
 			h.logger.Error("failed to dispatch config reload", "error", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, h.buildResponse(newSnap))
+	api.WriteJSON(w, http.StatusOK, h.buildResponse(newSnap))
 }
 
 func (h *DefaultLayoutEditorHandler) buildResponse(snap *config.Snapshot) api.LayoutEditorResponse {

@@ -41,43 +41,43 @@ func NewDefaultListsHandler(opts ...ListsHandlerOption) *DefaultListsHandler {
 
 // CompleteListItem handles POST /api/lists/{list_id}/items/{item_id}/complete.
 func (h *DefaultListsHandler) CompleteListItem(w http.ResponseWriter, r *http.Request, listID, itemID string) {
-	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) {
+	if !api.AllowMethods(w, r, http.MethodPost) {
 		return
 	}
 	listID, itemID = strings.TrimSpace(listID), strings.TrimSpace(itemID)
 	if listID == "" || strings.Contains(listID, "..") || strings.Contains(listID, "/") {
-		writeAPIError(w, http.StatusBadRequest, "invalid list_id")
+		api.WriteError(w, http.StatusBadRequest, "invalid list_id")
 		return
 	}
 	if itemID == "" || strings.Contains(itemID, "..") || strings.Contains(itemID, "/") {
-		writeAPIError(w, http.StatusBadRequest, "invalid item_id")
+		api.WriteError(w, http.StatusBadRequest, "invalid item_id")
 		return
 	}
 
 	completer := h.completer
 	if completer == nil {
-		writeAPIError(w, http.StatusInternalServerError, "task completion not configured")
+		api.WriteError(w, http.StatusInternalServerError, "task completion not configured")
 		return
 	}
 
 	if completeErr := completer.CompleteListItem(r.Context(), listID, itemID); completeErr != nil {
 		switch {
 		case errors.Is(completeErr, tasks.ErrListNotFound):
-			writeAPIError(w, http.StatusNotFound, fmt.Sprintf("list '%s' not found", listID))
+			api.WriteError(w, http.StatusNotFound, fmt.Sprintf("list '%s' not found", listID))
 		case errors.Is(completeErr, tasks.ErrItemNotFound), errors.Is(completeErr, adapters.ErrUpstreamNotFound):
-			writeAPIError(w, http.StatusNotFound, fmt.Sprintf("item '%s' not found in list '%s'", itemID, listID))
+			api.WriteError(w, http.StatusNotFound, fmt.Sprintf("item '%s' not found in list '%s'", itemID, listID))
 		case errors.Is(completeErr, tasks.ErrCompletionUnsupported):
-			writeAPIError(w, http.StatusNotImplemented, "task completion not supported by provider")
+			api.WriteError(w, http.StatusNotImplemented, "task completion not supported by provider")
 		case errors.Is(completeErr, adapters.ErrUnauthorized):
-			writeAPIError(w, http.StatusUnauthorized, "upstream provider unauthorized")
+			api.WriteError(w, http.StatusUnauthorized, "upstream provider unauthorized")
 		default:
-			if upstreamErr, ok := errors.AsType[adapters.UpstreamHTTPError](completeErr); ok {
-				writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("upstream provider error (status %d)", upstreamErr.Code))
+			if upstreamErr, ok := errors.AsType[api.UpstreamHTTPError](completeErr); ok {
+				api.WriteError(w, http.StatusBadGateway, fmt.Sprintf("upstream provider error (status %d)", upstreamErr.Code))
 			} else {
-				writeAPIError(w, http.StatusInternalServerError, "failed to complete item: "+completeErr.Error())
+				api.WriteError(w, http.StatusInternalServerError, "failed to complete item: "+completeErr.Error())
 			}
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, api.ActionResponse{Status: "ok"})
+	api.WriteJSON(w, http.StatusOK, api.ActionResponse{Status: "ok"})
 }

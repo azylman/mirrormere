@@ -2,7 +2,6 @@ package display
 
 import (
 	"bytes"
-	"encoding/json"
 	"html/template"
 	"mime"
 	"net/http"
@@ -170,22 +169,6 @@ func NewHandler(opts ...HandlerOption) *Handler {
 	return h
 }
 
-func checkGetOrHead(w http.ResponseWriter, r *http.Request) bool {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return false
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return false
-	}
-	return true
-}
-
 func readFile(p string) ([]byte, bool) {
 	if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 		if data, err := os.ReadFile(p); err == nil {
@@ -209,7 +192,7 @@ func (h *Handler) resolveTemplateBytes() ([]byte, bool) {
 // household context. Query parameters other than hide_cursor and perf (including the old ?ui=)
 // are ignored.
 func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
-	if !checkGetOrHead(w, r) {
+	if !api.AllowMethods(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -217,7 +200,7 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 
 	raw, found := h.resolveTemplateBytes()
 	if !found {
-		writeJSONError(w, http.StatusNotFound, "display template not found")
+		api.WriteError(w, http.StatusNotFound, "display template not found")
 		return
 	}
 
@@ -272,14 +255,14 @@ func tryServeStaticFile(w http.ResponseWriter, r *http.Request, baseDir, clean s
 
 // GetStatic handles GET /static/{path...} requests with strict path traversal defenses.
 func (h *Handler) GetStatic(w http.ResponseWriter, r *http.Request, assetPath string) {
-	if !checkGetOrHead(w, r) {
+	if !api.AllowMethods(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
 
 	clean := filepath.Clean(assetPath)
 	if assetPath == "" || strings.Contains(assetPath, "..") || strings.HasPrefix(assetPath, ".") || filepath.IsAbs(assetPath) ||
 		clean == "." || strings.HasPrefix(clean, "..") || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "\\") {
-		writeJSONError(w, http.StatusBadRequest, "invalid asset path: path traversal detected")
+		api.WriteError(w, http.StatusBadRequest, "invalid asset path: path traversal detected")
 		return
 	}
 
@@ -289,7 +272,7 @@ func (h *Handler) GetStatic(w http.ResponseWriter, r *http.Request, assetPath st
 		}
 	}
 
-	writeJSONError(w, http.StatusNotFound, "static asset not found")
+	api.WriteError(w, http.StatusNotFound, "static asset not found")
 }
 
 var contentTypes = map[string]string{
@@ -314,15 +297,4 @@ func detectContentType(path string) string {
 		return t
 	}
 	return "application/octet-stream"
-}
-
-func writeJSONError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(api.ErrorResponse{
-		Status: "error",
-		Error:  msg,
-	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
 }

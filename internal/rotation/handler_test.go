@@ -135,21 +135,6 @@ func TestHandler_PostScreenPause(t *testing.T) {
 	}
 }
 
-func TestWriteJSONAndErrorHelpers(t *testing.T) {
-	t.Parallel()
-	rec := httptest.NewRecorder()
-	writeError(rec, http.StatusBadRequest, "sample error")
-	if rec.Code != http.StatusBadRequest || rec.Header().Get("Content-Type") != "application/json" {
-		t.Errorf("unexpected writeError")
-	}
-
-	rec2 := httptest.NewRecorder()
-	writeJSON(rec2, map[string]string{"result": "ok"})
-	if rec2.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec2.Code)
-	}
-}
-
 func TestHandler_GetScreens(t *testing.T) {
 	t.Parallel()
 	layoutSnap := ScreenLayoutSnapshot{

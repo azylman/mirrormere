@@ -32,7 +32,7 @@ func NewDefaultVideoHandler(coord VideoCoordinator) *DefaultVideoHandler {
 
 func (h *DefaultVideoHandler) ready(w http.ResponseWriter) bool {
 	if h.coord == nil {
-		writeAPIError(w, http.StatusInternalServerError, "video coordinator not configured")
+		api.WriteError(w, http.StatusInternalServerError, "video coordinator not configured")
 		return false
 	}
 	return true
@@ -40,7 +40,7 @@ func (h *DefaultVideoHandler) ready(w http.ResponseWriter) bool {
 
 // GetVideoState handles GET /api/video/state.
 func (h *DefaultVideoHandler) GetVideoState(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "GET, HEAD, OPTIONS", http.MethodGet, http.MethodHead) || !h.ready(w) {
+	if !api.AllowMethods(w, r, http.MethodGet, http.MethodHead) || !h.ready(w) {
 		return
 	}
 	if r.Method == http.MethodHead {
@@ -48,12 +48,12 @@ func (h *DefaultVideoHandler) GetVideoState(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIVideoStateResponse(h.coord.GetState()))
+	api.WriteJSON(w, http.StatusOK, toAPIVideoStateResponse(h.coord.GetState()))
 }
 
 // PostVideoTrigger handles POST /api/video/trigger.
 func (h *DefaultVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
+	if !api.AllowMethods(w, r, http.MethodPost) || !h.ready(w) {
 		return
 	}
 	stream := video.VideoStream{
@@ -62,7 +62,7 @@ func (h *DefaultVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Re
 		PlayerState: video.PlayerStatePlaying,
 	}
 	if err := json.NewDecoder(r.Body).Decode(&stream); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid video trigger request: malformed JSON")
+		api.WriteError(w, http.StatusBadRequest, "invalid video trigger request: malformed JSON")
 		return
 	}
 	reqID := strings.TrimSpace(stream.ID)
@@ -71,7 +71,7 @@ func (h *DefaultVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Re
 		if reqID == "all" || reqID == "*" {
 			msg = "invalid video trigger request: 'all' and '*' are reserved sentinels"
 		}
-		writeAPIError(w, http.StatusBadRequest, msg)
+		api.WriteError(w, http.StatusBadRequest, msg)
 		return
 	}
 	if stream.Type == "" {
@@ -86,10 +86,10 @@ func (h *DefaultVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Re
 
 	newState, err := h.coord.Trigger(stream)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		api.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIVideoStateResponse(newState))
+	api.WriteJSON(w, http.StatusOK, toAPIVideoStateResponse(newState))
 }
 
 // PostVideoDismiss handles POST /api/video/dismiss.
@@ -118,17 +118,17 @@ func (h *DefaultVideoHandler) PostVideoAction(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		switch {
 		case errors.Is(err, video.ErrStreamNotFound):
-			writeAPIError(w, http.StatusNotFound, "stream not active")
+			api.WriteError(w, http.StatusNotFound, "stream not active")
 		case errors.Is(err, video.ErrNotControllable):
-			writeAPIError(w, http.StatusUnprocessableEntity, "stream is not controllable")
+			api.WriteError(w, http.StatusUnprocessableEntity, "stream is not controllable")
 		case errors.Is(err, video.ErrControllerUnreachable):
-			writeAPIError(w, http.StatusBadGateway, "stream controller unreachable")
+			api.WriteError(w, http.StatusBadGateway, "stream controller unreachable")
 		default:
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			api.WriteError(w, http.StatusBadRequest, err.Error())
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, api.ActionResponse{Status: "ok"})
+	api.WriteJSON(w, http.StatusOK, api.ActionResponse{Status: "ok"})
 }
 
 // PostVideoState handles POST /api/video/state.
@@ -147,15 +147,15 @@ func (h *DefaultVideoHandler) PostVideoState(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *DefaultVideoHandler) decodeRequiredVideoPost(w http.ResponseWriter, r *http.Request, dst any, malformedMsg, missingMsg string, missing func() bool) bool {
-	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
+	if !api.AllowMethods(w, r, http.MethodPost) || !h.ready(w) {
 		return false
 	}
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
-		writeAPIError(w, http.StatusBadRequest, malformedMsg)
+		api.WriteError(w, http.StatusBadRequest, malformedMsg)
 		return false
 	}
 	if missing != nil && missing() {
-		writeAPIError(w, http.StatusBadRequest, missingMsg)
+		api.WriteError(w, http.StatusBadRequest, missingMsg)
 		return false
 	}
 	return true
@@ -164,13 +164,13 @@ func (h *DefaultVideoHandler) decodeRequiredVideoPost(w http.ResponseWriter, r *
 func writeStreamMutationResult(w http.ResponseWriter, err error, resp any) {
 	if err != nil {
 		if errors.Is(err, video.ErrStreamNotFound) {
-			writeAPIError(w, http.StatusNotFound, "stream not active")
+			api.WriteError(w, http.StatusNotFound, "stream not active")
 			return
 		}
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		api.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	api.WriteJSON(w, http.StatusOK, resp)
 }
 
 func toAPIVideoStateResponse(state video.VideoState) api.VideoStateResponse {
