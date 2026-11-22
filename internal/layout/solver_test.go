@@ -94,7 +94,7 @@ func TestFormatDeficitError_Formatting(t *testing.T) {
 	}
 }
 
-func verifyArchetypeScreens(t *testing.T, res *layout.Layout, wantScreens int) {
+func verifyArchetypeScreens(t *testing.T, res *layout.Layout, wantScreens int, wantReplicated string) {
 	t.Helper()
 	if res.TotalScreens != wantScreens || len(res.Screens) != wantScreens {
 		t.Fatalf("TotalScreens = %d, want %d", res.TotalScreens, wantScreens)
@@ -115,25 +115,46 @@ func verifyArchetypeScreens(t *testing.T, res *layout.Layout, wantScreens int) {
 			}
 		}
 	}
+	if wantReplicated != "" {
+		verifyReplicatedPinned(t, res, wantReplicated)
+	}
+}
+
+// verifyReplicatedPinned asserts id sits on every screen, Pinned, at one shared origin.
+func verifyReplicatedPinned(t *testing.T, res *layout.Layout, id string) {
+	t.Helper()
+	var origins [][2]int
+	for _, s := range res.Screens {
+		for _, pw := range s.Widgets {
+			if pw.WidgetID == id && pw.Pinned {
+				origins = append(origins, pw.Origin)
+			}
+		}
+	}
+	if len(origins) != len(res.Screens) || slices.ContainsFunc(origins, func(o [2]int) bool { return o != origins[0] }) {
+		t.Fatalf("pinned %s origins = %v, want one shared origin on each of %d screens", id, origins, len(res.Screens))
+	}
 }
 
 func TestSolve_Archetypes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name        string
-		widgets     []layout.WidgetInput
-		wantScreens int
+		name           string
+		widgets        []layout.WidgetInput
+		wantScreens    int
+		wantReplicated string
 	}{
-		{"2/3 + 1/3 Golden Ratio", []layout.WidgetInput{mkW("calendar", 4, 2, false), mkW("weather", 2, 1, false), mkW("chores", 2, 1, false)}, 1},
-		{"50/50 Split", []layout.WidgetInput{mkW("photos", 3, 2, false), mkW("hass", 3, 2, false)}, 1},
-		{"Tri-Column", []layout.WidgetInput{mkW("col1", 2, 2, false), mkW("col2", 2, 2, false), mkW("col3", 2, 2, false)}, 1},
-		{"Full Hero Canvas", []layout.WidgetInput{mkW("hero-photo", 6, 2, false)}, 1},
-		{"Horizontal Banners", []layout.WidgetInput{mkW("banner-top", 6, 1, false), mkW("banner-bottom", 6, 1, false)}, 1},
-		{"Mixed 4-cell widgets", []layout.WidgetInput{mkW("w-2x2", 2, 2, false), mkW("w-4x1", 4, 1, false), mkW("w-2x1a", 2, 1, false), mkW("w-2x1b", 2, 1, false)}, 1},
-		{"Multi-screen unpinned", []layout.WidgetInput{mkW("w-cal", 4, 2, false), mkW("w-tasks1", 2, 1, false), mkW("w-tasks2", 2, 1, false), mkW("w-photo1", 3, 2, false), mkW("w-photo2", 3, 2, false)}, 2},
-		{"Three screens pruning", []layout.WidgetInput{mkW("hero1", 6, 2, false), mkW("hero2", 6, 2, false), mkW("cal", 4, 2, false), mkW("t1", 2, 1, false), mkW("t2", 2, 1, false)}, 3},
-		{"Pinned full screen", []layout.WidgetInput{mkW("pinned-hero", 6, 2, true)}, 1},
-		{"Multiple pinned sorting", []layout.WidgetInput{mkW("pinned-b", 2, 1, true), mkW("pinned-a", 2, 1, true), mkW("pinned-c", 4, 1, true), mkW("pinned-d", 2, 2, true)}, 1},
+		{"2/3 + 1/3 Golden Ratio", []layout.WidgetInput{mkW("calendar", 4, 2, false), mkW("weather", 2, 1, false), mkW("chores", 2, 1, false)}, 1, ""},
+		{"50/50 Split", []layout.WidgetInput{mkW("photos", 3, 2, false), mkW("hass", 3, 2, false)}, 1, ""},
+		{"Tri-Column", []layout.WidgetInput{mkW("col1", 2, 2, false), mkW("col2", 2, 2, false), mkW("col3", 2, 2, false)}, 1, ""},
+		{"Full Hero Canvas", []layout.WidgetInput{mkW("hero-photo", 6, 2, false)}, 1, ""},
+		{"Horizontal Banners", []layout.WidgetInput{mkW("banner-top", 6, 1, false), mkW("banner-bottom", 6, 1, false)}, 1, ""},
+		{"Mixed 4-cell widgets", []layout.WidgetInput{mkW("w-2x2", 2, 2, false), mkW("w-4x1", 4, 1, false), mkW("w-2x1a", 2, 1, false), mkW("w-2x1b", 2, 1, false)}, 1, ""},
+		{"Multi-screen unpinned", []layout.WidgetInput{mkW("w-cal", 4, 2, false), mkW("w-tasks1", 2, 1, false), mkW("w-tasks2", 2, 1, false), mkW("w-photo1", 3, 2, false), mkW("w-photo2", 3, 2, false)}, 2, ""},
+		{"Three screens pruning", []layout.WidgetInput{mkW("hero1", 6, 2, false), mkW("hero2", 6, 2, false), mkW("cal", 4, 2, false), mkW("t1", 2, 1, false), mkW("t2", 2, 1, false)}, 3, ""},
+		{"Pinned full screen", []layout.WidgetInput{mkW("pinned-hero", 6, 2, true)}, 1, ""},
+		{"Multiple pinned sorting", []layout.WidgetInput{mkW("pinned-b", 2, 1, true), mkW("pinned-a", 2, 1, true), mkW("pinned-c", 4, 1, true), mkW("pinned-d", 2, 2, true)}, 1, ""},
+		{"Pinned replication", []layout.WidgetInput{mkW("pinned-cal", 4, 2, true), mkW("task-1", 2, 1, false), mkW("task-2", 2, 1, false), mkW("task-3", 2, 1, false), mkW("task-4", 2, 1, false)}, 2, "pinned-cal"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,43 +163,8 @@ func TestSolve_Archetypes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Solve failed: %v", err)
 			}
-			verifyArchetypeScreens(t, res, tc.wantScreens)
+			verifyArchetypeScreens(t, res, tc.wantScreens, tc.wantReplicated)
 		})
-	}
-}
-
-func TestSolve_PinnedReplication(t *testing.T) {
-	t.Parallel()
-	widgets := []layout.WidgetInput{
-		mkW("pinned-cal", 4, 2, true),
-		mkW("task-1", 2, 1, false), mkW("task-2", 2, 1, false),
-		mkW("task-3", 2, 1, false), mkW("task-4", 2, 1, false),
-	}
-	res, err := layout.Solve(widgets)
-	if err != nil {
-		t.Fatalf("Solve failed: %v", err)
-	}
-	if res.TotalScreens != 2 {
-		t.Fatalf("expected 2 screens, got %d", res.TotalScreens)
-	}
-	var origins [][2]int
-	for _, s := range res.Screens {
-		found := false
-		for _, pw := range s.Widgets {
-			if pw.WidgetID == "pinned-cal" {
-				found = true
-				if !pw.Pinned {
-					t.Errorf("expected PlacedWidget.Pinned true")
-				}
-				origins = append(origins, pw.Origin)
-			}
-		}
-		if !found {
-			t.Errorf("screen %d missing pinned widget", s.Index)
-		}
-	}
-	if len(origins) != 2 || origins[0] != origins[1] {
-		t.Fatalf("pinned widget origin mismatch across screens: %v", origins)
 	}
 }
 
@@ -363,25 +349,21 @@ func TestSolveGridWithBudget_PreservesConfigScreenAndWidgetOrder(t *testing.T) {
 	if res.TotalScreens != 4 {
 		t.Fatalf("TotalScreens = %d, want 4", res.TotalScreens)
 	}
-	wantScreen0 := []string{"calendar-grid", "grocery-tasks", "shared-photos"}
-	gotScreen0 := make([]string, 0, len(res.Screens[0].Widgets))
-	for _, w := range res.Screens[0].Widgets {
-		gotScreen0 = append(gotScreen0, w.WidgetID)
+	want := [][]string{{"calendar-grid", "grocery-tasks", "shared-photos"}, {"music-player-card", "recent-media"}, {"smart-home-dashboard"}}
+	if got := screenIDs(res)[:3]; !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("screens 0-2 widgets = %v, want %v", got, want)
 	}
-	if !slices.Equal(gotScreen0, wantScreen0) {
-		t.Fatalf("Screen 0 widgets = %v, want %v", gotScreen0, wantScreen0)
+}
+
+// screenIDs lists each screen's widget IDs in placement order.
+func screenIDs(res *layout.Layout) [][]string {
+	ids := make([][]string, len(res.Screens))
+	for i, scr := range res.Screens {
+		for _, w := range scr.Widgets {
+			ids[i] = append(ids[i], w.WidgetID)
+		}
 	}
-	wantScreen1 := []string{"music-player-card", "recent-media"}
-	gotScreen1 := make([]string, 0, len(res.Screens[1].Widgets))
-	for _, w := range res.Screens[1].Widgets {
-		gotScreen1 = append(gotScreen1, w.WidgetID)
-	}
-	if !slices.Equal(gotScreen1, wantScreen1) {
-		t.Fatalf("Screen 1 widgets = %v, want %v", gotScreen1, wantScreen1)
-	}
-	if len(res.Screens[2].Widgets) != 1 || res.Screens[2].Widgets[0].WidgetID != "smart-home-dashboard" {
-		t.Fatalf("Screen 2 widgets = %+v, want [smart-home-dashboard]", res.Screens[2].Widgets)
-	}
+	return ids
 }
 
 func mkExp(id, typ string, screen, col, row, cols, rows int, pinned bool) layout.ExplicitPlacement {
@@ -407,89 +389,28 @@ type solveExplicitCase struct {
 
 func solveExplicitValidCases() []solveExplicitCase {
 	return []solveExplicitCase{
-		{
-			name:        "empty placements fills single screen with spacer",
-			placements:  nil,
-			gridCols:    6,
-			gridRows:    2,
-			wantScreens: 1,
-			wantSpacers: 1,
-		},
-		{
-			name: "exact full 6x2 tiling without spacers",
-			placements: []layout.ExplicitPlacement{
-				mkExp("w1", "test", 0, 0, 0, 4, 2, false),
-				mkExp("w2", "test", 0, 4, 0, 2, 2, false),
-			},
-			gridCols:    6,
-			gridRows:    2,
-			wantScreens: 1,
-			wantSpacers: 0,
-		},
-		{
-			name: "single widget greedy auto-spacers",
-			placements: []layout.ExplicitPlacement{
-				mkExp("cal", "calendar", 0, 0, 0, 2, 1, false),
-			},
-			gridCols:    6,
-			gridRows:    2,
-			wantScreens: 1,
-			wantSpacers: 2,
-		},
-		{
-			name: "screen compaction unpinned screens 2 and 5 to 0 and 1",
-			placements: []layout.ExplicitPlacement{
-				mkExp("w1", "test", 2, 0, 0, 6, 2, false),
-				mkExp("w2", "test", 5, 0, 0, 6, 2, false),
-			},
-			gridCols:    6,
-			gridRows:    2,
-			wantScreens: 2,
-			wantSpacers: 0,
-		},
-		{
-			name: "pinned widget replicated across multi screens",
-			placements: []layout.ExplicitPlacement{
-				mkExp("pinned-banner", "banner", 0, 0, 0, 6, 1, true),
-				mkExp("unpinned-1", "test", 0, 0, 1, 6, 1, false),
-				mkExp("unpinned-2", "test", 1, 0, 1, 6, 1, false),
-			},
-			gridCols:    6,
-			gridRows:    2,
-			wantScreens: 2,
-			wantSpacers: 0,
-		},
-		{
-			name: "portrait 2x6 grid explicit placement",
-			placements: []layout.ExplicitPlacement{
-				mkExp("port-hero", "hero", 0, 0, 0, 2, 6, false),
-			},
-			gridCols:    2,
-			gridRows:    6,
-			wantScreens: 1,
-			wantSpacers: 0,
-		},
-		{
-			name: "portrait 3x6 grid explicit placement with auto-spacers",
-			placements: []layout.ExplicitPlacement{
-				mkExp("port-hero", "hero", 0, 0, 0, 2, 6, false),
-			},
-			gridCols:    3,
-			gridRows:    6,
-			wantScreens: 1,
-			wantSpacers: 1,
-		},
-		{
-			name: "portrait 3x6 grid explicit asymmetric split without spacers",
-			placements: []layout.ExplicitPlacement{
-				mkExp("photos", "photo-carousel", 0, 0, 0, 2, 6, false),
-				mkExp("tasks", "task-list", 0, 2, 0, 1, 6, false),
-			},
-			gridCols:    3,
-			gridRows:    6,
-			wantScreens: 1,
-			wantSpacers: 0,
-		},
+		{name: "empty placements fills single screen with spacer", gridCols: 6, gridRows: 2, wantScreens: 1, wantSpacers: 1},
+		{name: "exact full 6x2 tiling without spacers", gridCols: 6, gridRows: 2, wantScreens: 1, placements: []layout.ExplicitPlacement{
+			mkExp("w1", "test", 0, 0, 0, 4, 2, false), mkExp("w2", "test", 0, 4, 0, 2, 2, false),
+		}},
+		{name: "single widget greedy auto-spacers", gridCols: 6, gridRows: 2, wantScreens: 1, wantSpacers: 2, placements: []layout.ExplicitPlacement{
+			mkExp("cal", "calendar", 0, 0, 0, 2, 1, false),
+		}},
+		{name: "screen compaction unpinned screens 2 and 5 to 0 and 1", gridCols: 6, gridRows: 2, wantScreens: 2, placements: []layout.ExplicitPlacement{
+			mkExp("w1", "test", 2, 0, 0, 6, 2, false), mkExp("w2", "test", 5, 0, 0, 6, 2, false),
+		}},
+		{name: "pinned widget replicated across multi screens", gridCols: 6, gridRows: 2, wantScreens: 2, placements: []layout.ExplicitPlacement{
+			mkExp("pinned-banner", "banner", 0, 0, 0, 6, 1, true), mkExp("unpinned-1", "test", 0, 0, 1, 6, 1, false), mkExp("unpinned-2", "test", 1, 0, 1, 6, 1, false),
+		}},
+		{name: "portrait 2x6 grid explicit placement", gridCols: 2, gridRows: 6, wantScreens: 1, placements: []layout.ExplicitPlacement{
+			mkExp("port-hero", "hero", 0, 0, 0, 2, 6, false),
+		}},
+		{name: "portrait 3x6 grid explicit placement with auto-spacers", gridCols: 3, gridRows: 6, wantScreens: 1, wantSpacers: 1, placements: []layout.ExplicitPlacement{
+			mkExp("port-hero", "hero", 0, 0, 0, 2, 6, false),
+		}},
+		{name: "portrait 3x6 grid explicit asymmetric split without spacers", gridCols: 3, gridRows: 6, wantScreens: 1, placements: []layout.ExplicitPlacement{
+			mkExp("photos", "photo-carousel", 0, 0, 0, 2, 6, false), mkExp("tasks", "task-list", 0, 2, 0, 1, 6, false),
+		}},
 	}
 }
 

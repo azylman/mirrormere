@@ -2,7 +2,7 @@ package events
 
 import (
 	"context"
-	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -119,36 +119,29 @@ func TestHub_CloseAndEdgeCases(t *testing.T) {
 
 func TestHub_PublishSyncsStateProvider(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, eventType, payload, wantVal string
+	tests := []struct {
+		name, eventType, payload, wantSub string
 	}{
-		{"screen_rotate", EventScreenRotate, `{"current_screen":1,"total_screens":2,"interval_seconds":20}`, "1"},
-		{"audio_state", EventAudioState, `{"volume":85,"muted":true}`, "85"},
-		{"video_state", EventVideoState, `{"mode":"video","primary":{"id":"cast"}}`, "video"},
-		{"voice_state", EventVoiceState, `{"state":"thinking","transcript":"hello"}`, "thinking"},
-		{"theme_update", EventThemeUpdate, `{"theme":"night"}`, "night"},
-	} {
+		{"screen_rotate", EventScreenRotate, `{"current_screen":1,"total_screens":2,"interval_seconds":20}`, `"current_screen":1`},
+		{"audio_state", EventAudioState, `{"volume":85,"muted":true}`, `"volume":85`},
+		{"video_state", EventVideoState, `{"mode":"video","primary":{"id":"cast"}}`, `"mode":"video"`},
+		{"voice_state", EventVoiceState, `{"state":"thinking","transcript":"hello"}`, `"state":"thinking"`},
+		{"theme_update", EventThemeUpdate, `{"theme":"night"}`, `"theme":"night"`},
+	}
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			provider := NewInMemoryStateProvider(nil)
-			hub := NewHub(HubConfig{}, provider, nil)
+			hub := NewHub(HubConfig{}, NewInMemoryStateProvider(nil), nil)
 			defer hub.Close()
 			hub.Publish(tc.eventType, []byte(tc.payload))
-			var got string
-			switch tc.eventType {
-			case EventScreenRotate:
-				got = strconv.Itoa(provider.GetScreenRotateData().CurrentScreen)
-			case EventAudioState:
-				got = strconv.Itoa(provider.GetAudioState().Volume)
-			case EventVideoState:
-				got = provider.GetVideoState().Mode
-			case EventVoiceState:
-				got = provider.GetVoiceState().State
-			case EventThemeUpdate:
-				got = provider.GetTheme()
+			var frames []string
+			for _, evt := range hub.BuildHydration() {
+				if evt.Type == tc.eventType {
+					frames = append(frames, string(evt.Data))
+				}
 			}
-			if got != tc.wantVal {
-				t.Fatalf("got %q, want %q", got, tc.wantVal)
+			if len(frames) != 1 || !strings.Contains(frames[0], tc.wantSub) {
+				t.Fatalf("hydration %s frames = %q, want one containing %q", tc.eventType, frames, tc.wantSub)
 			}
 		})
 	}
