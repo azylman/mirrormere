@@ -10,34 +10,13 @@ import {
   hasMultiplePhotoAlbums,
 } from './PhotoCarouselWidget';
 import { useDisplayStore } from '../../store';
-import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
+import type { PhotoItem } from './photoCarouselHelpers';
+import { renderWidget, seedWidget, widgetMeta } from '../../test-utils/widget';
 
-function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
-  return {
-    type: 'photo-carousel',
-    config,
-    origin: [0, 0],
-    dimensions: [2, 2],
-    assets_base: '',
-  };
-}
-
-function setWidgetPhotos(
-  photos: { id?: string; url?: string; URL?: string; timestamp?: string; location?: string; album_name?: string; dominant_color?: string }[],
-  cycleSeconds?: number,
-  config: Record<string, unknown> = {},
-) {
-  useDisplayStore.setState({
-    widgets: {
-      ['w-photo-1']: {
-        meta: makeWidgetMeta(config),
-        data: { photos, ...(cycleSeconds !== undefined ? { cycle_interval_seconds: cycleSeconds } : {}) },
-        state: 'ready',
-        timestamp: '2026-10-31T12:00:00Z',
-      },
-    },
-  });
+/** Seeds the w-photo-1 carousel with `photos` and an optional cycle interval. */
+function setWidgetPhotos(photos: PhotoItem[], cycleSeconds?: number, config: Record<string, unknown> = {}) {
+  seedWidget('w-photo-1', widgetMeta('photo-carousel', config), { photos, ...(cycleSeconds !== undefined ? { cycle_interval_seconds: cycleSeconds } : {}) });
 }
 
 describe('PhotoCarouselWidget transport controls', () => {
@@ -69,11 +48,7 @@ describe('PhotoCarouselWidget transport controls', () => {
         { id: '2', url: 'https://example.com/p2.jpg' },
       ], 10);
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-        </PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const pausePill = container.querySelector('.photo-pause-pill') as HTMLButtonElement;
       expect(pausePill.getAttribute('data-paused')).toBe('false');
@@ -120,11 +95,7 @@ describe('PhotoCarouselWidget transport controls', () => {
       { id: '2', url: 'https://example.com/p2.jpg' },
     ], 60);
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     const controls = container.querySelector('.photo-transport-controls') as HTMLDivElement;
     expect(controls.classList.contains('visible')).toBe(false);
@@ -160,11 +131,7 @@ describe('PhotoCarouselWidget transport controls', () => {
     ], 10);
 
     const baselineTimers = vi.getTimerCount();
-    const { container, unmount } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { container, unmount } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     const pausePill = container.querySelector('.photo-pause-pill') as HTMLButtonElement;
     act(() => { fireEvent.click(pausePill); });
@@ -181,11 +148,7 @@ describe('PhotoCarouselWidget transport controls', () => {
       { id: '2', url: 'https://example.com/p2.jpg' },
     ], 20);
 
-    render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     act(() => { vi.advanceTimersByTime(5000); });
 
@@ -227,11 +190,7 @@ describe('PhotoCarouselWidget transport controls', () => {
       { id: '3', url: 'https://example.com/p3.jpg' },
     ], 20);
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     const root = container.querySelector('.widget-photo-carousel') as HTMLDivElement;
     act(() => { fireEvent.click(root); });
@@ -320,11 +279,7 @@ describe('PhotoCarouselWidget transport controls', () => {
       },
     ], 10);
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     const overlay1 = container.querySelector('.photo-metadata-overlay') as HTMLDivElement;
     expect(overlay1).not.toBeNull();

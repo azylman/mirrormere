@@ -3,18 +3,8 @@ import { render, fireEvent, act } from '@testing-library/react';
 import { PhotoCarouselWidget } from './PhotoCarouselWidget';
 import type { PhotoAlbumConfig } from './photoCarouselHelpers';
 import { useDisplayStore } from '../../store';
-import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
-
-function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
-  return {
-    type: 'photo-carousel',
-    config,
-    origin: [0, 0],
-    dimensions: [2, 2],
-    assets_base: '',
-  };
-}
+import { renderWidget, widgetMeta } from '../../test-utils/widget';
 
 describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
   const widgetId = 'w-photo-1';
@@ -37,7 +27,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
     useDisplayStore.setState({
       widgets: {
         [widgetId]: {
-          meta: makeWidgetMeta({ source: 'share_url' }),
+          meta: widgetMeta('photo-carousel', { source: 'share_url' }),
           data: { photos: [] },
           state: 'ready',
           timestamp: '2026-10-31T12:00:00Z',
@@ -45,11 +35,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       },
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     const empty = container.querySelector('.photo-empty');
     expect(empty?.querySelector('.empty-title')?.textContent).toBe('No photos in shared album');
@@ -60,7 +46,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
     useDisplayStore.setState({
       widgets: {
         [widgetId]: {
-          meta: makeWidgetMeta({ source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/test' }),
+          meta: widgetMeta('photo-carousel', { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/test' }),
           data: { photos: [] },
           state: 'ready',
           timestamp: '2026-10-31T12:00:00Z',
@@ -68,11 +54,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       },
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     const empty = container.querySelector('.photo-empty');
     expect(empty?.querySelector('.empty-title')?.textContent).toBe('No photos available');
@@ -87,7 +69,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
     useDisplayStore.setState({
       widgets: {
         [widgetId]: {
-          meta: makeWidgetMeta({ source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }),
+          meta: widgetMeta('photo-carousel', { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }),
           data: { photos: [] },
           state: 'ready',
           timestamp: '2026-10-31T12:00:00Z',
@@ -95,11 +77,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       },
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     const btn = container.querySelector('.photo-connect-btn') as HTMLButtonElement;
     expect(btn).not.toBeNull();
@@ -118,7 +96,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
     useDisplayStore.setState({
       widgets: {
         [widgetId]: {
-          meta: makeWidgetMeta({ source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }),
+          meta: widgetMeta('photo-carousel', { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }),
           data: { photos: [{ url: 'https://example.com/1.jpg' }] },
           state: 'ready',
           timestamp: '2026-10-31T12:00:00Z',
@@ -126,11 +104,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       },
     });
 
-    const { unmount } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { unmount } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     expect(syncMock).toHaveBeenCalledTimes(1);
     expect(syncMock).toHaveBeenCalledWith('https://photos.app.goo.gl/album1');
@@ -161,7 +135,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
     useDisplayStore.setState({
       widgets: {
         [widgetId]: {
-          meta: makeWidgetMeta({ source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }),
+          meta: widgetMeta('photo-carousel', { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }),
           data: { photos: [] },
           state: 'ready',
           timestamp: '2026-10-31T12:00:00Z',
@@ -169,11 +143,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       },
     });
 
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     expect(typeof window.onEmberPhotosSynced).toBe('function');
 
@@ -220,13 +190,13 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
     useDisplayStore.setState({
       widgets: {
         [widgetId]: {
-          meta: makeWidgetMeta({ source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }),
+          meta: widgetMeta('photo-carousel', { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }),
           data: { photos: [] },
           state: 'ready',
           timestamp: '2026-10-31T12:00:00Z',
         },
         ['w-photo-2']: {
-          meta: makeWidgetMeta({ source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album2' }),
+          meta: widgetMeta('photo-carousel', { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album2' }),
           data: { photos: [] },
           state: 'ready',
           timestamp: '2026-10-31T12:00:00Z',
@@ -234,11 +204,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       },
     });
 
-    const { unmount: unmount1 } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { unmount: unmount1 } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
     const { unmount: unmount2 } = render(
       <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
@@ -271,7 +237,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       useDisplayStore.setState({
         widgets: {
           [widgetId]: {
-            meta: makeWidgetMeta({
+            meta: widgetMeta('photo-carousel', {
               albums,
             }),
             data: { photos: [] },
@@ -281,11 +247,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
         },
       });
 
-      render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-        </PaneContext.Provider>,
-      );
+      renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       expect(syncMock).toHaveBeenCalledWith('https://photos.app.goo.gl/literal-ember');
     });
@@ -299,7 +261,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       useDisplayStore.setState({
         widgets: {
           [widgetId]: {
-            meta: makeWidgetMeta({
+            meta: widgetMeta('photo-carousel', {
               albums: [
                 { name: 'Env Album', source: 'ember_bridge' },
               ],
@@ -314,11 +276,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
         },
       });
 
-      render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-        </PaneContext.Provider>,
-      );
+      renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       expect(syncMock).toHaveBeenCalledWith('https://photos.app.goo.gl/from-backend-data');
     });
@@ -327,7 +285,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       useDisplayStore.setState({
         widgets: {
           [widgetId]: {
-            meta: makeWidgetMeta({
+            meta: widgetMeta('photo-carousel', {
               albums: [
                 { name: 'Shared 1', source: 'share_url', url: 'https://photos.app.goo.gl/shared1' },
               ],
@@ -339,11 +297,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
         },
       });
 
-      const { container } = render(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-        </PaneContext.Provider>,
-      );
+      const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const empty = container.querySelector('.photo-empty');
       expect(empty?.querySelector('.empty-title')?.textContent).toBe('No photos in shared album');
