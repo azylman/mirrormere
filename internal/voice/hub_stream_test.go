@@ -248,6 +248,7 @@ type streamingInteractCase struct {
 	wantNoChunks, wantFinal           bool
 	wantReplyEvent                    string
 	wantRemainderBytes                int
+	wantSpeakingCaptions              []string
 }
 
 func runHubInteractStreamingCase(t *testing.T, tc streamingInteractCase) {
@@ -256,7 +257,8 @@ func runHubInteractStreamingCase(t *testing.T, tc streamingInteractCase) {
 	if tc.tts != nil {
 		opts = append(opts, WithTTSClient(tc.tts))
 	}
-	h := NewHub(&config.VoiceHubConfig{Enabled: true}, NewCoordinator(nil), opts...)
+	rec := &recordingStateSink{}
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, NewCoordinator(nil, rec), opts...)
 	if tc.noTTSClient {
 		h.tts = nil
 	}
@@ -273,6 +275,26 @@ func runHubInteractStreamingCase(t *testing.T, tc streamingInteractCase) {
 	}
 	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk", "s1", sink, EdgeTimings{})
 	assertStreamingInteractResult(t, tc, err, getEvents())
+	if tc.wantSpeakingCaptions != nil {
+		assertSpeakingCaptions(t, rec, tc.wantSpeakingCaptions)
+	}
+}
+
+// assertSpeakingCaptions checks the kiosk caption sequence pushed while
+// speaking and that the turn ends in the speaking state.
+func assertSpeakingCaptions(t *testing.T, rec *recordingStateSink, want []string) {
+	t.Helper()
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var speaking []string
+	for _, s := range rec.states {
+		if s.State == StateSpeaking && s.Reply != nil {
+			speaking = append(speaking, *s.Reply)
+		}
+	}
+	if !reflect.DeepEqual(speaking, want) || rec.states[len(rec.states)-1].State != StateSpeaking {
+		t.Errorf("speaking captions: want %q, got %q (final state %s)", want, speaking, rec.states[len(rec.states)-1].State)
+	}
 }
 
 func assertStreamingInteractResult(t *testing.T, tc streamingInteractCase, err error, evs []recordedEvent) {
@@ -345,24 +367,24 @@ func TestHub_Interact_StreamingScenarios(t *testing.T) {
 	})
 
 	tests := []streamingInteractCase{
-		{"sentence_synthesized_via_tts", mkStreamBrain("It's sunny. Bring sunglasses.", nil, "It's sunny.", "Bring sunglasses."), mkTTS([]byte("synthesized-pcm"), "pcm", nil), false, false, nil, "", 2, false, true, "", 0},
-		{"pcm_buffering_and_remainder_flush", mkStreamBrain("Streaming PCM.", nil, "One.", "Two.", "Three."), pcmRemTTS, false, false, nil, "", 3, false, true, "", 3200},
-		{"streaming_brain_remote_tts_streaming_client", mkStreamBrain("Sentence one. Sentence two.", nil, "Sentence one.", "Sentence two."), &mockStreamingTTS{}, false, false, nil, "", 3, false, true, "", 0},
-		{"non_streaming_brain_streaming_tts", mkBrain("Full non-streaming reply.", nil), &mockStreamingTTS{}, false, false, nil, "", 2, false, true, "", 0},
-		{"non_streaming_pcm_remainder", mkBrain("Short reply.", nil), shortRemTTS, false, false, nil, "", 2, false, true, "", 2000},
-		{"empty_whitespace_reply", mkBrain("   ", nil), &mockStreamingTTS{}, false, false, nil, "", 0, true, false, "", 0},
-		{"text_only_without_local_tts", mkStreamBrain("Hi there.", nil, "Hi there."), nil, true, false, nil, "", 0, true, false, "Hi there.", 0},
-		{"sentence_fallback_to_full_reply_tts_success", mkStreamBrain("One. Two.", nil, "One.", "Two."), fallbackTTS, false, false, nil, "", 2, false, true, "", 0},
-		{"sentence_fallback_to_full_reply_tts_failure", mkStreamBrain("One.", nil, "One."), mkTTS(nil, "", errors.New("tts down")), false, false, nil, "tts_error", 0, false, false, "", 0},
-		{"no_sentence_tts_fails", mkStreamBrain("Plain.", nil), mkTTS(nil, "", errors.New("tts down")), false, false, nil, "tts_error", 0, false, false, "", 0},
-		{"brain_error", &mockStreamingBrain{err: errors.New("boom")}, mkTTS([]byte("a"), "pcm", nil), false, false, ErrBrainFailed, "brain_error", 0, false, false, "", 0},
-		{"streaming_mp3_fails_fast", mkStreamBrain("MP3 sentence.", nil, "MP3 sentence."), mp3TTS, false, false, ErrUnsupportedAudioFormat, "", 0, true, false, "", 0},
-		{"non_streaming_mp3_fails_fast", mkBrain("Streaming MP3 reply.", nil), mp3TTS, false, false, ErrUnsupportedAudioFormat, "tts_error", 0, true, false, "", 0},
-		{"streaming_rate_change_fails_fast", mkStreamBrain("Sentence one. Sentence two.", nil, "Sentence one.", "Sentence two."), rateChangeTTS, false, false, ErrMixedPCMFormat, "", 0, false, false, "", 0},
-		{"non_streaming_rate_change_fails_fast", mkBrain("hello there", nil), rateChangeTTS, false, false, ErrMixedPCMFormat, "tts_error", 0, false, false, "", 0},
-		{"streaming_tts_fallback_on_error", mkBrain("Fallback test.", nil), dropTTS, false, false, nil, "tts_error", 0, false, false, "", 0},
-		{"audio_chunk_sink_error_tolerance", mkStreamBrain("One.", nil, "One."), mkTTS([]byte("x"), "pcm", nil), false, true, nil, "", 0, false, false, "", 0},
-		{"streaming_brain_remote_tts_plain_client", mkStreamBrain("First sentence. Second sentence.", nil, "First sentence.", "Second sentence."), mkTTS(makeValidWAV(1600), "pcm", nil), false, false, nil, "", 3, false, true, "", 0},
+		{"sentence_synthesized_via_tts", mkStreamBrain("It's sunny. Bring sunglasses.", nil, "It's sunny.", "Bring sunglasses."), mkTTS([]byte("synthesized-pcm"), "pcm", nil), false, false, nil, "", 2, false, true, "", 0, []string{"It's sunny.", "It's sunny. Bring sunglasses.", "It's sunny. Bring sunglasses."}},
+		{"pcm_buffering_and_remainder_flush", mkStreamBrain("Streaming PCM.", nil, "One.", "Two.", "Three."), pcmRemTTS, false, false, nil, "", 3, false, true, "", 3200, nil},
+		{"streaming_brain_remote_tts_streaming_client", mkStreamBrain("Sentence one. Sentence two.", nil, "Sentence one.", "Sentence two."), &mockStreamingTTS{}, false, false, nil, "", 3, false, true, "", 0, nil},
+		{"non_streaming_brain_streaming_tts", mkBrain("Full non-streaming reply.", nil), &mockStreamingTTS{}, false, false, nil, "", 2, false, true, "", 0, nil},
+		{"non_streaming_pcm_remainder", mkBrain("Short reply.", nil), shortRemTTS, false, false, nil, "", 2, false, true, "", 2000, nil},
+		{"empty_whitespace_reply", mkBrain("   ", nil), &mockStreamingTTS{}, false, false, nil, "", 0, true, false, "", 0, nil},
+		{"text_only_without_local_tts", mkStreamBrain("Hi there.", nil, "Hi there."), nil, true, false, nil, "", 0, true, false, "Hi there.", 0, nil},
+		{"sentence_fallback_to_full_reply_tts_success", mkStreamBrain("One. Two.", nil, "One.", "Two."), fallbackTTS, false, false, nil, "", 2, false, true, "", 0, nil},
+		{"sentence_fallback_to_full_reply_tts_failure", mkStreamBrain("One.", nil, "One."), mkTTS(nil, "", errors.New("tts down")), false, false, nil, "tts_error", 0, false, false, "", 0, nil},
+		{"no_sentence_tts_fails", mkStreamBrain("Plain.", nil), mkTTS(nil, "", errors.New("tts down")), false, false, nil, "tts_error", 0, false, false, "", 0, nil},
+		{"brain_error", &mockStreamingBrain{err: errors.New("boom")}, mkTTS([]byte("a"), "pcm", nil), false, false, ErrBrainFailed, "brain_error", 0, false, false, "", 0, nil},
+		{"streaming_mp3_fails_fast", mkStreamBrain("MP3 sentence.", nil, "MP3 sentence."), mp3TTS, false, false, ErrUnsupportedAudioFormat, "", 0, true, false, "", 0, nil},
+		{"non_streaming_mp3_fails_fast", mkBrain("Streaming MP3 reply.", nil), mp3TTS, false, false, ErrUnsupportedAudioFormat, "tts_error", 0, true, false, "", 0, nil},
+		{"streaming_rate_change_fails_fast", mkStreamBrain("Sentence one. Sentence two.", nil, "Sentence one.", "Sentence two."), rateChangeTTS, false, false, ErrMixedPCMFormat, "", 0, false, false, "", 0, nil},
+		{"non_streaming_rate_change_fails_fast", mkBrain("hello there", nil), rateChangeTTS, false, false, ErrMixedPCMFormat, "tts_error", 0, false, false, "", 0, nil},
+		{"streaming_tts_fallback_on_error", mkBrain("Fallback test.", nil), dropTTS, false, false, nil, "tts_error", 0, false, false, "", 0, nil},
+		{"audio_chunk_sink_error_tolerance", mkStreamBrain("One.", nil, "One."), mkTTS([]byte("x"), "pcm", nil), false, true, nil, "", 0, false, false, "", 0, nil},
+		{"streaming_brain_remote_tts_plain_client", mkStreamBrain("First sentence. Second sentence.", nil, "First sentence.", "Second sentence."), mkTTS(makeValidWAV(1600), "pcm", nil), false, false, nil, "", 3, false, true, "", 0, nil},
 	}
 
 	for _, tc := range tests {
@@ -370,36 +392,6 @@ func TestHub_Interact_StreamingScenarios(t *testing.T) {
 			t.Parallel()
 			runHubInteractStreamingCase(t, tc)
 		})
-	}
-}
-
-func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
-	t.Parallel()
-	rec := &recordingStateSink{}
-	coord := NewCoordinator(nil, rec)
-	brain := mkStreamBrain("It's sunny. High of 72.", nil, "It's sunny.", "High of 72.")
-	h := NewHub(&config.VoiceHubConfig{Enabled: true}, coord, WithSTTClient(&mockSTT{text: "weather?"}), WithBrainClient(brain), WithTTSClient(mkTTS([]byte("local"), "pcm", nil)))
-	sink, _ := collectEvents()
-	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	rec.mu.Lock()
-	var speaking []string
-	for _, s := range rec.states {
-		if s.State == StateSpeaking && s.Reply != nil {
-			speaking = append(speaking, *s.Reply)
-		}
-	}
-	want := []string{"It's sunny.", "It's sunny. High of 72.", "It's sunny. High of 72."}
-	if !reflect.DeepEqual(speaking, want) || rec.states[len(rec.states)-1].State != StateSpeaking {
-		t.Errorf("speaking captions: want %q, got %q", want, speaking)
-	}
-	rec.mu.Unlock()
-	coord.Reset()
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if last := rec.states[len(rec.states)-1]; last.State != StateIdle {
-		t.Errorf("expected final state idle after reset, got %s", last.State)
 	}
 }
 
