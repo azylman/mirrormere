@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -190,25 +189,9 @@ func (p *HeaderWeatherPoller) FetchOnce(ctx context.Context) (*events.HeaderWeat
 	}
 	parsedURL.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create header weather request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := p.client.Do(req)
+	bodyBytes, err := fetchOpenMeteo(ctx, p.client, parsedURL.String(), "header weather")
 	if err != nil {
 		return nil, err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxHTTPResponseBodySize))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read header weather response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
 	}
 
 	var data headerOpenMeteoResponse

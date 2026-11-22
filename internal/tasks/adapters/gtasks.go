@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/httpx"
 	"github.com/azylman/mirrormere/internal/tasks"
 )
 
@@ -307,18 +308,15 @@ func (a *GTasksAdapter) getAccessToken(ctx context.Context, forceRefresh bool) (
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := a.client.Do(req)
+	body, status, err := httpx.GetBounded(ctx, a.client, req, 64*1024)
 	if err != nil {
-		return "", fmt.Errorf("oauth token request failed: %w", err)
+		if status == 0 {
+			return "", fmt.Errorf("oauth token request failed: %w", err)
+		}
+		return "", fmt.Errorf("failed to read oauth token response: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	if readErr != nil {
-		return "", fmt.Errorf("failed to read oauth token response: %w", readErr)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("oauth token refresh failed with status %d: %s", resp.StatusCode, string(body))
+	if status != http.StatusOK {
+		return "", fmt.Errorf("oauth token refresh failed with status %d: %s", status, string(body))
 	}
 
 	var tokenResp oauthTokenResponse

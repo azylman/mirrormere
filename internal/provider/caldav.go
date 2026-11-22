@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -14,6 +13,8 @@ import (
 	"time"
 
 	ical "github.com/arran4/golang-ical"
+
+	"github.com/azylman/mirrormere/internal/httpx"
 )
 
 // CalDAVClient manages CalDAV protocol communication (RFC 4791, RFC 3744, RFC 4918)
@@ -87,24 +88,21 @@ func (c *CalDAVClient) FetchCalendarEvents(ctx context.Context, source CalendarS
 
 	applyCalDAVAuth(req, source)
 
-	resp, err := c.client.Do(req)
-	if err != nil {
+	// Slowloris defense on response read
+	body, status, err := httpx.GetBounded(ctx, c.client, req, maxCalendarFeedBytes+1)
+	if err != nil && status == 0 {
 		return nil, fmt.Errorf("caldav http request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("caldav authentication failed (HTTP %d): invalid credentials for %s", resp.StatusCode, redactURL(targetURL))
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return nil, fmt.Errorf("caldav authentication failed (HTTP %d): invalid credentials for %s", status, redactURL(targetURL))
 	}
-	if resp.StatusCode == http.StatusNotFound {
+	if status == http.StatusNotFound {
 		return nil, fmt.Errorf("caldav calendar collection not found (HTTP 404): %s", redactURL(targetURL))
 	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMultiStatus {
-		return nil, fmt.Errorf("caldav report failed with HTTP %d for %s", resp.StatusCode, redactURL(targetURL))
+	if status != http.StatusOK && status != http.StatusMultiStatus {
+		return nil, fmt.Errorf("caldav report failed with HTTP %d for %s", status, redactURL(targetURL))
 	}
-
-	// Slowloris defense on response read
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCalendarFeedBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading caldav response body: %w", err)
 	}
@@ -141,26 +139,22 @@ func (c *CalDAVClient) doPropfind(ctx context.Context, targetURL, depth, xmlBody
 	req.Header.Set("User-Agent", "Mirrormere-CalDAV/1.0")
 	applyCalDAVAuth(req, source)
 
-	resp, err := c.client.Do(req)
-	if err != nil {
+	body, status, err := httpx.GetBounded(ctx, c.client, req, maxCalendarFeedBytes+1)
+	if err != nil && status == 0 {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMultiStatus {
-		return nil, resp.StatusCode, nil
+	if status != http.StatusOK && status != http.StatusMultiStatus {
+		return nil, status, nil
 	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCalendarFeedBytes+1))
 	if err != nil || len(body) > maxCalendarFeedBytes {
-		return nil, resp.StatusCode, err
+		return nil, status, err
 	}
 
 	var ms propfindMultiStatus
 	if err := xml.Unmarshal(body, &ms); err != nil {
-		return nil, resp.StatusCode, err
+		return nil, status, err
 	}
-	return &ms, resp.StatusCode, nil
+	return &ms, status, nil
 }
 
 // DiscoverCalendarURL resolves the specific calendar collection URL from an endpoint, principal, or home-set.
