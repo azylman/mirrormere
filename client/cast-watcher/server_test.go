@@ -135,17 +135,6 @@ func TestActionServer_HandleHealthz(t *testing.T) {
 	}
 }
 
-type errResponseWriter struct{ header http.Header }
-
-func (e *errResponseWriter) Header() http.Header      { return e.header }
-func (*errResponseWriter) Write([]byte) (int, error)  { return 0, errors.New("simulated write error") }
-func (*errResponseWriter) WriteHeader(statusCode int) {}
-
-func TestWriteJSON_Error(t *testing.T) {
-	t.Parallel()
-	writeJSON(&errResponseWriter{header: make(http.Header)}, http.StatusOK, map[string]string{"foo": "bar"})
-}
-
 func TestExtractTargetTime(t *testing.T) {
 	t.Parallel()
 	nestedVal := any(42.5)

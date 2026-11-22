@@ -99,18 +99,18 @@ func (h *DefaultWidgetActionHandler) PostWidgetAction(w http.ResponseWriter, r *
 
 // handleWidgetAction processes a POST /api/widgets/{widget_id}/action request.
 func (h *DefaultWidgetActionHandler) handleWidgetAction(w http.ResponseWriter, r *http.Request, widgetID string) {
-	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) {
+	if !api.AllowMethods(w, r, http.MethodPost) {
 		return
 	}
 	widgetID = strings.TrimSpace(widgetID)
 	if widgetID == "" || strings.Contains(widgetID, "..") || strings.Contains(widgetID, "/") {
-		writeAPIError(w, http.StatusBadRequest, "invalid widget_id")
+		api.WriteError(w, http.StatusBadRequest, "invalid widget_id")
 		return
 	}
 
 	domain, service, serviceData, err := h.parseRequest(w, r)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		api.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -120,10 +120,10 @@ func (h *DefaultWidgetActionHandler) handleWidgetAction(w http.ResponseWriter, r
 			data, err := respCaller.CallWidgetActionWithResponse(r.Context(), widgetID, domain, service, serviceData)
 			if err != nil {
 				code, msg := h.mapActionError(err)
-				writeAPIError(w, code, msg)
+				api.WriteError(w, code, msg)
 				return
 			}
-			writeJSON(w, http.StatusOK, WidgetActionResponse{
+			api.WriteJSON(w, http.StatusOK, WidgetActionResponse{
 				Status:   "ok",
 				WidgetID: widgetID,
 				Data:     data,
@@ -133,10 +133,10 @@ func (h *DefaultWidgetActionHandler) handleWidgetAction(w http.ResponseWriter, r
 
 		if err := h.caller.CallWidgetAction(r.Context(), widgetID, domain, service, serviceData); err != nil {
 			code, msg := h.mapActionError(err)
-			writeAPIError(w, code, msg)
+			api.WriteError(w, code, msg)
 			return
 		}
-		writeJSON(w, http.StatusOK, WidgetActionResponse{
+		api.WriteJSON(w, http.StatusOK, WidgetActionResponse{
 			Status:   "ok",
 			WidgetID: widgetID,
 		})
@@ -149,20 +149,20 @@ func (h *DefaultWidgetActionHandler) handleWidgetAction(w http.ResponseWriter, r
 		return
 	}
 
-	writeAPIError(w, http.StatusInternalServerError, ErrWidgetActionNotConfigured.Error())
+	api.WriteError(w, http.StatusInternalServerError, ErrWidgetActionNotConfigured.Error())
 }
 
 func (h *DefaultWidgetActionHandler) proxyDirectHA(w http.ResponseWriter, r *http.Request, widgetID, domain, service string, serviceData map[string]any) {
 	reqURL := fmt.Sprintf("%s/api/services/%s/%s", strings.TrimRight(h.baseURL, "/"), url.PathEscape(domain), url.PathEscape(service))
 	bodyBytes, err := json.Marshal(serviceData)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "failed to marshal service data: "+err.Error())
+		api.WriteError(w, http.StatusBadRequest, "failed to marshal service data: "+err.Error())
 		return
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, reqURL, bytes.NewReader(bodyBytes))
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "failed to create upstream request: "+err.Error())
+		api.WriteError(w, http.StatusInternalServerError, "failed to create upstream request: "+err.Error())
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -177,28 +177,28 @@ func (h *DefaultWidgetActionHandler) proxyDirectHA(w http.ResponseWriter, r *htt
 
 	resp, err := client.Do(req)
 	if err != nil {
-		writeAPIError(w, http.StatusBadGateway, "upstream service call failed: "+err.Error())
+		api.WriteError(w, http.StatusBadGateway, "upstream service call failed: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		writeAPIError(w, http.StatusBadGateway, "failed to read response body: "+err.Error())
+		api.WriteError(w, http.StatusBadGateway, "failed to read response body: "+err.Error())
 		return
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		code := resp.StatusCode
 		switch code {
 		case http.StatusUnauthorized:
-			writeAPIError(w, http.StatusUnauthorized, "upstream unauthorized")
+			api.WriteError(w, http.StatusUnauthorized, "upstream unauthorized")
 		case http.StatusNotFound:
-			writeAPIError(w, http.StatusNotFound, "upstream service or entity not found")
+			api.WriteError(w, http.StatusNotFound, "upstream service or entity not found")
 		default:
 			if code >= 400 && code < 500 {
-				writeAPIError(w, code, strings.TrimSpace(string(respBody)))
+				api.WriteError(w, code, strings.TrimSpace(string(respBody)))
 			} else {
-				writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("upstream returned status %d: %s", code, strings.TrimSpace(string(respBody))))
+				api.WriteError(w, http.StatusBadGateway, fmt.Sprintf("upstream returned status %d: %s", code, strings.TrimSpace(string(respBody))))
 			}
 		}
 		return
@@ -211,7 +211,7 @@ func (h *DefaultWidgetActionHandler) proxyDirectHA(w http.ResponseWriter, r *htt
 		}
 	}
 
-	writeJSON(w, http.StatusOK, WidgetActionResponse{
+	api.WriteJSON(w, http.StatusOK, WidgetActionResponse{
 		Status:   "ok",
 		WidgetID: widgetID,
 		Data:     data,

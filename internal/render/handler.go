@@ -73,28 +73,14 @@ func (h *Handler) SetCSSPath(path string) {
 // GetWidgetRender handles GET /api/widgets/{widget_id}/render requests. The optional
 // "node" query parameter is the requesting display's voice node_id.
 func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetID string) {
-	if !handleCORSAndMethod(w, r) {
-		return
-	}
-
-	if h.engine == nil {
-		writeJSONError(w, http.StatusInternalServerError, "rendering engine not configured")
-		return
-	}
-
-	overrides, err := parseWidgetOverrides(r.URL.Query())
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
+	overrides, ok := h.resolveWidgetRequest(w, r)
+	if !ok {
 		return
 	}
 
 	htmlBytes, err := h.engine.RenderWidgetWithOverrides(r.Context(), widgetID, r.URL.Query().Get("node"), overrides)
 	if err != nil {
-		if notFound, ok := errors.AsType[WidgetNotFoundError](err); ok {
-			writeJSONError(w, http.StatusNotFound, notFound.Error())
-			return
-		}
-		writeJSONError(w, http.StatusInternalServerError, "failed to render widget: "+err.Error())
+		writeWidgetLookupError(w, err, "failed to render widget: ")
 		return
 	}
 
@@ -105,6 +91,35 @@ func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widget
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
+}
+
+// resolveWidgetRequest runs the prelude shared by the HTML and JSON widget routes: CORS and method check,
+// engine presence, and date/view override parsing. It writes the error response itself and returns false
+// when the request must stop.
+func (h *Handler) resolveWidgetRequest(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
+	if !api.AllowMethods(w, r, http.MethodGet, http.MethodHead) {
+		return nil, false
+	}
+	if h.engine == nil {
+		api.WriteError(w, http.StatusInternalServerError, "rendering engine not configured")
+		return nil, false
+	}
+	overrides, err := parseWidgetOverrides(r.URL.Query())
+	if err != nil {
+		api.WriteError(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
+	return overrides, true
+}
+
+// writeWidgetLookupError maps a widget render/resolve failure to 404 for unknown widgets and to 500 with
+// prefix otherwise.
+func writeWidgetLookupError(w http.ResponseWriter, err error, prefix string) {
+	if notFound, ok := errors.AsType[WidgetNotFoundError](err); ok {
+		api.WriteError(w, http.StatusNotFound, notFound.Error())
+		return
+	}
+	api.WriteError(w, http.StatusInternalServerError, prefix+err.Error())
 }
 
 // parseWidgetOverrides validates the date and view query parameters shared by the HTML and JSON widget routes
@@ -131,28 +146,14 @@ func parseWidgetOverrides(query url.Values) (map[string]any, error) {
 // and runtime state as JSON for client-side rendering. Calendar-grid widgets include view_model, the
 // server-resolved week and month geometry over the merged config.
 func (h *Handler) GetWidgetJSON(w http.ResponseWriter, r *http.Request, widgetID string) {
-	if !handleCORSAndMethod(w, r) {
-		return
-	}
-
-	if h.engine == nil {
-		writeJSONError(w, http.StatusInternalServerError, "rendering engine not configured")
-		return
-	}
-
-	overrides, err := parseWidgetOverrides(r.URL.Query())
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
+	overrides, ok := h.resolveWidgetRequest(w, r)
+	if !ok {
 		return
 	}
 
 	ctx, err := h.engine.WidgetContext(r.Context(), widgetID, r.URL.Query().Get("node"), overrides)
 	if err != nil {
-		if notFound, ok := errors.AsType[WidgetNotFoundError](err); ok {
-			writeJSONError(w, http.StatusNotFound, notFound.Error())
-			return
-		}
-		writeJSONError(w, http.StatusInternalServerError, "failed to resolve widget: "+err.Error())
+		writeWidgetLookupError(w, err, "failed to resolve widget: ")
 		return
 	}
 
@@ -171,7 +172,7 @@ func (h *Handler) GetWidgetJSON(w http.ResponseWriter, r *http.Request, widgetID
 	if ctx.Type == "calendar-grid" {
 		viewModel, vmErr := h.calendarViewModel(ctx)
 		if vmErr != nil {
-			writeJSONError(w, http.StatusInternalServerError, "failed to build calendar view model: "+vmErr.Error())
+			api.WriteError(w, http.StatusInternalServerError, "failed to build calendar view model: "+vmErr.Error())
 			return
 		}
 		resp.ViewModel = viewModel
@@ -179,7 +180,7 @@ func (h *Handler) GetWidgetJSON(w http.ResponseWriter, r *http.Request, widgetID
 
 	body, err := json.Marshal(resp)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to encode widget: "+err.Error())
+		api.WriteError(w, http.StatusInternalServerError, "failed to encode widget: "+err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -212,31 +213,31 @@ func (h *Handler) calendarViewModel(ctx Context) (map[string]any, error) {
 
 // GetWidgetAsset handles GET /widget-types/{type}/assets/{path} requests with path traversal protection.
 func (h *Handler) GetWidgetAsset(w http.ResponseWriter, r *http.Request, widgetType string, assetPath string) {
-	if !handleCORSAndMethod(w, r) {
+	if !api.AllowMethods(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
 
 	// 1. Strict path traversal defense
 	if assetPath == "" || strings.Contains(assetPath, "..") || filepath.IsAbs(assetPath) {
-		writeJSONError(w, http.StatusBadRequest, "invalid asset path: path traversal detected")
+		api.WriteError(w, http.StatusBadRequest, "invalid asset path: path traversal detected")
 		return
 	}
 
 	clean := filepath.Clean(assetPath)
 	if clean == "." || strings.HasPrefix(clean, "..") || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "\\") {
-		writeJSONError(w, http.StatusBadRequest, "invalid asset path: path traversal detected")
+		api.WriteError(w, http.StatusBadRequest, "invalid asset path: path traversal detected")
 		return
 	}
 
 	if h.resolver == nil {
-		writeJSONError(w, http.StatusInternalServerError, "package resolver not configured")
+		api.WriteError(w, http.StatusInternalServerError, "package resolver not configured")
 		return
 	}
 
 	// 2. Resolve widget package
 	pkg, err := h.resolver.LoadPackage(widgetType)
 	if err != nil || pkg == nil || !pkg.HasAssets() {
-		writeJSONError(w, http.StatusNotFound, "asset not found")
+		api.WriteError(w, http.StatusNotFound, "asset not found")
 		return
 	}
 
@@ -244,13 +245,13 @@ func (h *Handler) GetWidgetAsset(w http.ResponseWriter, r *http.Request, widgetT
 	target := filepath.Join(pkg.AssetsDir, filepath.FromSlash(clean))
 	rel, err := filepath.Rel(pkg.AssetsDir, target)
 	if err != nil || strings.HasPrefix(rel, "..") || rel == "." {
-		writeJSONError(w, http.StatusBadRequest, "invalid asset path: path traversal detected")
+		api.WriteError(w, http.StatusBadRequest, "invalid asset path: path traversal detected")
 		return
 	}
 
 	fi, err := os.Stat(target)
 	if err != nil || fi.IsDir() {
-		writeJSONError(w, http.StatusNotFound, "asset not found")
+		api.WriteError(w, http.StatusNotFound, "asset not found")
 		return
 	}
 
@@ -284,7 +285,7 @@ func tryServeCombinedStyle(w http.ResponseWriter, r *http.Request, cssPath, cust
 
 // ServeStyle handles GET /style.css requests, serving the configured stylesheet from disk.
 func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
-	if !handleCORSAndMethod(w, r) {
+	if !api.AllowMethods(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
 
@@ -296,13 +297,13 @@ func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
 	h.mu.RUnlock()
 
 	if cssPath == "" {
-		writeJSONError(w, http.StatusNotFound, "stylesheet not configured")
+		api.WriteError(w, http.StatusNotFound, "stylesheet not configured")
 		return
 	}
 
 	fi, err := os.Stat(cssPath)
 	if err != nil || fi.IsDir() {
-		writeJSONError(w, http.StatusNotFound, "stylesheet not found")
+		api.WriteError(w, http.StatusNotFound, "stylesheet not found")
 		return
 	}
 
@@ -311,31 +312,4 @@ func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.ServeFile(w, r, cssPath)
-}
-
-func handleCORSAndMethod(w http.ResponseWriter, r *http.Request) bool {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return false
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return false
-	}
-	return true
-}
-
-func writeJSONError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(api.ErrorResponse{
-		Status: "error",
-		Error:  msg,
-	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
 }

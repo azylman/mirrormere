@@ -6,16 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
 )
-
-func TestUpstreamHTTPError(t *testing.T) {
-	t.Parallel()
-	err := adapters.UpstreamHTTPError{Code: 503, URL: "https://user:pass@example.com/api?token=secret"}
-	if err.StatusCode() != 503 || !strings.Contains(err.Error(), "example.com") || strings.Contains(err.Error(), "secret") {
-		t.Fatalf("unexpected err: %v", err)
-	}
-}
 
 func TestTodoistAdapter_CompleteItem(t *testing.T) {
 	t.Parallel()
@@ -56,7 +49,7 @@ func TestTodoistAdapter_CompleteItem(t *testing.T) {
 			} else if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
 				t.Fatalf("expected %q, got %v", tc.wantErr, err)
 			}
-			var httpErr adapters.UpstreamHTTPError
+			var httpErr api.UpstreamHTTPError
 			if tc.wantCode != 0 && (!errors.As(err, &httpErr) || httpErr.Code != tc.wantCode) {
 				t.Fatalf("expected code %d, got %v", tc.wantCode, err)
 			}

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
 )
@@ -389,7 +390,7 @@ func TestGTasksAdapter_CompleteItem(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if tc.wantCode != 0 {
-				var httpErr adapters.UpstreamHTTPError
+				var httpErr api.UpstreamHTTPError
 				if !errors.As(err, &httpErr) || httpErr.Code != tc.wantCode {
 					t.Fatalf("expected UpstreamHTTPError with code %d, got %v", tc.wantCode, err)
 				}

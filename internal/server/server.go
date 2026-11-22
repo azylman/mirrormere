@@ -11,6 +11,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/covflush"
 )
 
@@ -247,7 +248,7 @@ func (s *Server) setupRoutes() {
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, OPTIONS")
-			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+			api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
 	s.mux.HandleFunc("/api/lists/{list_id}/items/{item_id}/complete", dispatchHandler(s, func() ListsHandler { return s.listsHandler }, isNil, func(h ListsHandler, w http.ResponseWriter, r *http.Request) {

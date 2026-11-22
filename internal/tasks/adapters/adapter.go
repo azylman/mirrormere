@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/tasks"
 )
 
@@ -21,16 +22,6 @@ var (
 	ErrUpstreamNotFound = errors.New("upstream task list not found")
 	ErrUnauthorized     = errors.New("upstream unauthorized: token expired or invalid")
 )
-
-type UpstreamHTTPError struct {
-	Code int
-	URL  string
-}
-
-func (e UpstreamHTTPError) Error() string {
-	return fmt.Sprintf("upstream returned http status %d for %s", e.Code, sanitizeURL(e.URL))
-}
-func (e UpstreamHTTPError) StatusCode() int { return e.Code }
 
 type Adapter interface {
 	Name() string
@@ -72,7 +63,7 @@ func mapUpstreamStatus(code int, targetURL string) error {
 	case http.StatusNotFound:
 		return ErrUpstreamNotFound
 	default:
-		return UpstreamHTTPError{Code: code, URL: targetURL}
+		return api.UpstreamHTTPError{Code: code, URL: targetURL}
 	}
 }
 
@@ -87,7 +78,7 @@ func doBearerGet(ctx context.Context, client *http.Client, targetURL, token, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("%s failed for %s: %w", errPrefix, sanitizeURL(targetURL), err)
+		return nil, 0, fmt.Errorf("%s failed for %s: %w", errPrefix, api.SanitizeURL(targetURL), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if statusErr := mapUpstreamStatus(resp.StatusCode, targetURL); statusErr != nil {
@@ -100,13 +91,4 @@ func doBearerGet(ctx context.Context, client *http.Client, targetURL, token, err
 		return nil, resp.StatusCode, ErrPayloadTooLarge
 	}
 	return bytes.TrimSpace(buf.Bytes()), resp.StatusCode, nil
-}
-
-func sanitizeURL(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil || u == nil {
-		return rawURL
-	}
-	u.User, u.RawQuery = nil, ""
-	return u.String()
 }

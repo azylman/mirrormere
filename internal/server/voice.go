@@ -55,41 +55,41 @@ func NewDefaultVoiceHandler(coord VoiceCoordinator, hub VoiceHub, opts ...Defaul
 
 // PostVoiceState handles POST /api/voice/state.
 func (h *DefaultVoiceHandler) PostVoiceState(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) {
+	if !api.AllowMethods(w, r, http.MethodPost) {
 		return
 	}
 	if h.coord == nil {
-		writeAPIError(w, http.StatusInternalServerError, "voice coordinator not configured")
+		api.WriteError(w, http.StatusInternalServerError, "voice coordinator not configured")
 		return
 	}
 	var req api.VoiceStateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid voice state request payload: "+err.Error())
+		api.WriteError(w, http.StatusBadRequest, "invalid voice state request payload: "+err.Error())
 		return
 	} else if !voice.IsValidState(req.State) {
-		writeAPIError(w, http.StatusBadRequest, voice.ErrInvalidState.Error())
+		api.WriteError(w, http.StatusBadRequest, voice.ErrInvalidState.Error())
 		return
 	}
 	if _, err := h.coord.SetState(req.State, req.Transcript, req.Reply, req.TTSEngine); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		api.WriteError(w, http.StatusBadRequest, err.Error())
 	} else {
-		writeJSON(w, http.StatusOK, api.VoiceStateResponse{Status: "ok"})
+		api.WriteJSON(w, http.StatusOK, api.VoiceStateResponse{Status: "ok"})
 	}
 }
 
 // PostVoiceHeartbeat handles POST /api/voice/heartbeat.
 func (h *DefaultVoiceHandler) PostVoiceHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) {
+	if !api.AllowMethods(w, r, http.MethodPost) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var req api.VoiceHeartbeatRequest
 	var id string
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid heartbeat payload: "+err.Error())
+		api.WriteError(w, http.StatusBadRequest, "invalid heartbeat payload: "+err.Error())
 		return
 	} else if id = strings.TrimSpace(req.NodeID); id == "" {
-		writeAPIError(w, http.StatusBadRequest, "missing required 'node_id' field")
+		api.WriteError(w, http.StatusBadRequest, "missing required 'node_id' field")
 		return
 	}
 	if m := h.metrics; m != nil {
@@ -104,7 +104,7 @@ func (h *DefaultVoiceHandler) PostVoiceHeartbeat(w http.ResponseWriter, r *http.
 			m.RecordPlaybackDuration(id, *req.LastPlaybackSec)
 		}
 	}
-	writeJSON(w, http.StatusOK, api.ActionResponse{Status: "ok"})
+	api.WriteJSON(w, http.StatusOK, api.ActionResponse{Status: "ok"})
 }
 
 func parseTimingSec(r *http.Request, field string) float64 {
@@ -128,15 +128,15 @@ func voiceInteractErrCode(err error) int {
 
 // PostVoiceInteract handles POST /api/voice/interact.
 func (h *DefaultVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) {
+	if !api.AllowMethods(w, r, http.MethodPost) {
 		return
 	}
 	flusher, ok := w.(http.Flusher)
 	if h.hub == nil || !h.hub.IsEnabled() {
-		writeAPIError(w, http.StatusServiceUnavailable, "voice hub is disabled")
+		api.WriteError(w, http.StatusServiceUnavailable, "voice hub is disabled")
 		return
 	} else if !ok {
-		writeAPIError(w, http.StatusInternalServerError, "streaming unsupported")
+		api.WriteError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
 
@@ -146,7 +146,7 @@ func (h *DefaultVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.R
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		api.WriteError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
 		return
 	}
 	if r.MultipartForm != nil {
@@ -160,7 +160,7 @@ func (h *DefaultVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.R
 
 	file, _, err := r.FormFile("audio")
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "missing required 'audio' form field")
+		api.WriteError(w, http.StatusBadRequest, "missing required 'audio' form field")
 		return
 	}
 	defer file.Close()
@@ -195,7 +195,7 @@ func (h *DefaultVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.R
 		sinkMu.Lock()
 		defer sinkMu.Unlock()
 		if !wroteHeader {
-			writeAPIError(w, voiceInteractErrCode(err), err.Error())
+			api.WriteError(w, voiceInteractErrCode(err), err.Error())
 		}
 	}
 }
