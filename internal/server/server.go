@@ -106,7 +106,6 @@ type Config struct {
 	Host                                                      string
 	Port                                                      int
 	ReadTimeout, ReadHeaderTimeout, WriteTimeout, IdleTimeout time.Duration
-	ActionHandler                                             WidgetActionHandler
 	AudioHandler                                              AudioHandler
 	DisplayHandler                                            DisplayHandler
 	EventsHandler                                             http.Handler
@@ -183,10 +182,6 @@ type Server struct {
 // New constructs a configured Server instance.
 func New(cfg Config) *Server {
 	cfg.ApplyDefaults()
-	actionHandler := cfg.WidgetActionHandler
-	if actionHandler == nil {
-		actionHandler = cfg.ActionHandler
-	}
 	s := &Server{
 		cfg: cfg, mux: http.NewServeMux(), ready: make(chan struct{}),
 		audioHandler:        cfg.AudioHandler,
@@ -199,7 +194,7 @@ func New(cfg Config) *Server {
 		screenHandler:       cfg.ScreenHandler,
 		videoHandler:        cfg.VideoHandler,
 		voiceHandler:        cfg.VoiceHandler,
-		widgetActionHandler: actionHandler,
+		widgetActionHandler: cfg.WidgetActionHandler,
 	}
 	s.setupRoutes()
 	s.httpServer = &http.Server{
