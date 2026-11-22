@@ -17,40 +17,28 @@ describe('useAudio & AudioController', () => {
     delete window.audioManager;
   });
 
-  describe('constants & computeEffectiveVolume', () => {
-    it('computes effective volume correctly under normal conditions', () => {
-      expect(computeEffectiveVolume(75)).toBe(0.60);
-      expect(computeEffectiveVolume(100)).toBe(0.80);
-      expect(computeEffectiveVolume(50)).toBe(0.40);
-      expect(computeEffectiveVolume(0)).toBe(0);
-    });
-
-    it('clamps volume inputs below 0 and above 100', () => {
-      expect(computeEffectiveVolume(-20)).toBe(0);
-      expect(computeEffectiveVolume(150)).toBe(0.80);
-      expect(computeEffectiveVolume(Number.NaN)).toBe(0);
-    });
-
-    it('computes 0 volume when muted', () => {
-      expect(computeEffectiveVolume(75, true, false)).toBe(0);
-      expect(computeEffectiveVolume(100, true, false)).toBe(0);
-    });
-
-    it('computes ducked volume (20% attenuation) when ducked', () => {
-      // 75% volume -> (75/100) * 0.80 * 0.20 = 0.12
-      expect(computeEffectiveVolume(75, false, true)).toBe(0.12);
-      // 100% volume -> (100/100) * 0.80 * 0.20 = 0.16
-      expect(computeEffectiveVolume(100, false, true)).toBe(0.16);
-    });
-
-    it('computes 0 volume when both ducked and muted', () => {
-      expect(computeEffectiveVolume(75, true, true)).toBe(0);
-    });
-
-    it('rounds results to 4 decimal places', () => {
-      // 33% volume -> (33/100) * 0.80 = 0.264
-      expect(computeEffectiveVolume(33)).toBe(0.264);
-    });
+  describe('computeEffectiveVolume', () => {
+    // Effective volume = clamp(volume, 0, 100) / 100 * 0.80, * 0.20 when ducked, 0 when muted, rounded to 4 places.
+    const tests: { name: string; volume: number; muted?: boolean; ducked?: boolean; want: number }[] = [
+      { name: 'normal: 75%', volume: 75, want: 0.6 },
+      { name: 'normal: 100%', volume: 100, want: 0.8 },
+      { name: 'normal: 50%', volume: 50, want: 0.4 },
+      { name: 'normal: 0%', volume: 0, want: 0 },
+      { name: 'clamps below 0', volume: -20, want: 0 },
+      { name: 'clamps above 100', volume: 150, want: 0.8 },
+      { name: 'clamps NaN to 0', volume: Number.NaN, want: 0 },
+      { name: 'muted: 75%', volume: 75, muted: true, ducked: false, want: 0 },
+      { name: 'muted: 100%', volume: 100, muted: true, ducked: false, want: 0 },
+      { name: 'ducked: 75% attenuated to 20%', volume: 75, muted: false, ducked: true, want: 0.12 },
+      { name: 'ducked: 100% attenuated to 20%', volume: 100, muted: false, ducked: true, want: 0.16 },
+      { name: 'ducked and muted', volume: 75, muted: true, ducked: true, want: 0 },
+      { name: 'rounds to 4 decimal places', volume: 33, want: 0.264 },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(computeEffectiveVolume(tc.volume, tc.muted, tc.ducked)).toBe(tc.want);
+      });
+    }
   });
 
   describe('AudioController class', () => {
