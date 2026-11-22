@@ -139,6 +139,7 @@ jobs:
                 - '!**/test_*.py'
                 - '!**/conftest.py'
                 - '!web/ui/src/test-utils/**'
+                - '!internal/testutil/**'
                 - '!web/ui/src/sse/fake-event-source.ts'
             mirrormere-cast-watcher:
               - '{.dockerignore,go.mod,go.sum,client/cast-watcher/**}'

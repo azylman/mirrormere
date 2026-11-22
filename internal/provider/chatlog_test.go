@@ -11,6 +11,7 @@ import (
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/testutil"
+	"github.com/azylman/mirrormere/internal/testutil/eventstest"
 )
 
 func chatLogSnapshot() *config.Snapshot {
@@ -29,7 +30,7 @@ func TestChatLogWidget_NoPollingWorkerAndEmptyCache(t *testing.T) {
 		created = true
 		return nil
 	})
-	coord := provider.NewCoordinator(provider.CoordinatorConfig{Registry: reg, Broadcaster: &mockBroadcaster{}, StateSink: sink}, chatLogSnapshot())
+	coord := provider.NewCoordinator(provider.CoordinatorConfig{Registry: reg, Broadcaster: &eventstest.Broadcaster{}, StateSink: sink}, chatLogSnapshot())
 	defer func() { _ = coord.Stop() }()
 	if _, ok := sink.widgetStates["chat"]; created || !ok {
 		t.Fatal("chat-log provider instantiated or missing initial state")
@@ -38,10 +39,10 @@ func TestChatLogWidget_NoPollingWorkerAndEmptyCache(t *testing.T) {
 
 func TestChatLogWidget_PushValidatesStoresAndBroadcasts(t *testing.T) {
 	t.Parallel()
-	store, bc := chatlog.NewStore(), &mockBroadcaster{}
+	store, bc := chatlog.NewStore(), &eventstest.Broadcaster{}
 	coord := provider.NewCoordinator(provider.CoordinatorConfig{Broadcaster: bc, StateSink: newMockStateSink(), ChatLog: store}, chatLogSnapshot())
 	defer func() { _ = coord.Stop() }()
-	bc.waitForPublish(time.Second)
+	bc.WaitForPublish(time.Second)
 
 	if _, err := coord.PushWidgetData(context.Background(), "chat", map[string]any{"messages": []any{map[string]any{"role": "human", "text": "hi"}}}); err != nil {
 		t.Fatalf("push: %v", err)
@@ -49,7 +50,7 @@ func TestChatLogWidget_PushValidatesStoresAndBroadcasts(t *testing.T) {
 	if got := testutil.As[[]any](t, store.View("chat", "node")["messages"]); len(got) != 1 || testutil.As[map[string]any](t, got[0])["text"] != "hi" {
 		t.Fatalf("bad store: %v", got)
 	}
-	if _, ok := bc.waitForPublish(time.Second); !ok {
+	if _, ok := bc.WaitForPublish(time.Second); !ok {
 		t.Fatal("must broadcast")
 	}
 

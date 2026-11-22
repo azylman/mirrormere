@@ -15,6 +15,7 @@ import (
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/layout"
 	"github.com/azylman/mirrormere/internal/render"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
@@ -48,7 +49,7 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 		snapshot: snap,
 		states:   map[string]mockState{"sensor-1": {data: map[string]any{"temp": "68F"}, state: "healthy"}, "b1": {data: "string-not-map", state: "healthy"}, "cal-1": {data: map[string]any{}, state: "healthy"}},
 	}
-	resolver := &mockResolver{packages: pkgs}
+	resolver := &testutil.Packages{ByType: pkgs}
 	return render.NewHandler(render.NewEngine(resolver, provider), resolver, render.WithCSSPath(filepath.Join(tmpDir, "hud.css"))), tmpDir, pkg
 }
 

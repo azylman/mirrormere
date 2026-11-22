@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/config"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 type mockEmbedder struct {
@@ -39,10 +40,6 @@ func (m *mockIdentifier) Identify(ctx context.Context, _ []byte) (SpeakerMatch, 
 	}
 	return SpeakerMatch{Speaker: m.id, Score: 0.83}, m.err
 }
-
-type errReader struct{}
-
-func (errReader) Read([]byte) (int, error) { return 0, errors.New("read error") }
 
 func assertSpeakerMatchingCases(t *testing.T, spk, mixed, uncomp []Fingerprint) {
 	t.Helper()
@@ -136,7 +133,7 @@ func assertDefaultEmbedClientErrors(t *testing.T, srvURL string) {
 			t.Fatalf("expected error for %q", badURL)
 		}
 	}
-	if err := readHTTPError(&http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(errReader{})}, "test"); err == nil || !strings.Contains(err.Error(), "unknown error") {
+	if err := readHTTPError(&http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(testutil.ErrReader{})}, "test"); err == nil || !strings.Contains(err.Error(), "unknown error") {
 		t.Fatalf("expected unknown error, got %v", err)
 	}
 }

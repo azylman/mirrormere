@@ -13,20 +13,8 @@ import (
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/layout"
+	"github.com/azylman/mirrormere/internal/testutil/eventstest"
 )
-
-type mockBroadcaster struct {
-	mu     sync.Mutex
-	events []string
-	datas  [][]byte
-}
-
-func (m *mockBroadcaster) Publish(eventType string, data []byte) *events.Event {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.events, m.datas = append(m.events, eventType), append(m.datas, data)
-	return &events.Event{Type: eventType, Data: data}
-}
 
 func makeTestSnapshot(totalScreens, intervalSec, pauseDurationSec int) *config.Snapshot {
 	screens := make([]layout.Screen, totalScreens)
@@ -41,7 +29,7 @@ func makeTestSnapshot(totalScreens, intervalSec, pauseDurationSec int) *config.S
 
 func TestCoordinator_LifecycleAndUpdateConfig(t *testing.T) {
 	t.Parallel()
-	mb := &mockBroadcaster{}
+	mb := &eventstest.Broadcaster{}
 	snap := makeTestSnapshot(3, 30, 120)
 	coord := NewCoordinator(Config{Broadcaster: mb}, snap)
 	defer coord.Stop()
@@ -115,7 +103,7 @@ func TestCoordinator_Navigation(t *testing.T) {
 			if tc.total > 0 {
 				snap = makeTestSnapshot(tc.total, 30, 120)
 			}
-			coord := NewCoordinator(Config{Broadcaster: &mockBroadcaster{}}, snap)
+			coord := NewCoordinator(Config{Broadcaster: &eventstest.Broadcaster{}}, snap)
 			defer coord.Stop()
 			action := coord.AdvanceScreen
 			if tc.isSelect {
@@ -134,7 +122,7 @@ func TestCoordinator_Navigation(t *testing.T) {
 
 func TestCoordinator_AutoRotateAndPauseTimers(t *testing.T) {
 	t.Parallel()
-	coord := NewCoordinator(Config{Broadcaster: &mockBroadcaster{}}, makeTestSnapshot(2, 1, 120))
+	coord := NewCoordinator(Config{Broadcaster: &eventstest.Broadcaster{}}, makeTestSnapshot(2, 1, 120))
 	defer coord.Stop()
 
 	if cur, err := coord.PauseRotation(-1); err != nil || cur != 0 || !coord.paused {
@@ -164,7 +152,7 @@ func TestCoordinator_AutoRotateAndPauseTimers(t *testing.T) {
 	coord.Stop()
 	coord.onPauseTimeout(pGen)
 
-	coord2 := NewCoordinator(Config{Broadcaster: &mockBroadcaster{}}, makeTestSnapshot(2, 1, 120))
+	coord2 := NewCoordinator(Config{Broadcaster: &eventstest.Broadcaster{}}, makeTestSnapshot(2, 1, 120))
 	defer coord2.Stop()
 	coord2.mu.Lock()
 	rGen := coord2.timerGen
@@ -205,7 +193,7 @@ func TestCoordinator_AutoRotateAndPauseTimers(t *testing.T) {
 
 func TestCoordinator_Concurrency(t *testing.T) {
 	t.Parallel()
-	mb := &mockBroadcaster{}
+	mb := &eventstest.Broadcaster{}
 	coord := NewCoordinator(Config{Broadcaster: mb}, makeTestSnapshot(4, 30, 120))
 	defer coord.Stop()
 
@@ -248,12 +236,10 @@ func TestCoordinator_Concurrency(t *testing.T) {
 	runWorker(func() { _, _ = coord.SelectScreen(1) })
 	wg.Wait()
 
-	mb.mu.Lock()
-	defer mb.mu.Unlock()
-	for i, v := range slices.Backward(mb.events) {
-		if v == events.EventScreenRotate {
+	for _, evt := range slices.Backward(mb.Events()) {
+		if evt.Type == events.EventScreenRotate {
 			var lastRotate events.ScreenRotateData
-			if err := json.Unmarshal(mb.datas[i], &lastRotate); err == nil && lastRotate.CurrentScreen == coord.CurrentScreen() {
+			if err := json.Unmarshal(evt.Data, &lastRotate); err == nil && lastRotate.CurrentScreen == coord.CurrentScreen() {
 				return
 			}
 		}
@@ -263,7 +249,7 @@ func TestCoordinator_Concurrency(t *testing.T) {
 
 func TestCoordinator_ScreenLayout(t *testing.T) {
 	t.Parallel()
-	coord := NewCoordinator(Config{Broadcaster: &mockBroadcaster{}}, makeTestSnapshot(3, 45, 120))
+	coord := NewCoordinator(Config{Broadcaster: &eventstest.Broadcaster{}}, makeTestSnapshot(3, 45, 120))
 	if _, err := coord.SelectScreen(2); err != nil {
 		t.Fatalf("SelectScreen: %v", err)
 	}

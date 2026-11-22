@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/provider"
+	"github.com/azylman/mirrormere/internal/testutil"
 )
 
 type mockWidgetPusher struct {
@@ -32,10 +33,6 @@ func (m *mockWidgetPusher) PushWidgetPhotos(ctx context.Context, id string, phot
 	}
 	return provider.WidgetPayload{WidgetID: id, State: "ok"}, nil
 }
-
-type errReader struct{}
-
-func (errReader) Read([]byte) (int, error) { return 0, errors.New("read error simulated") }
 
 func mkPusher(ts string, err error) provider.WidgetPusher {
 	return &mockWidgetPusher{pushFunc: func(_ context.Context, id string, data map[string]any) (provider.WidgetPayload, error) {
@@ -117,7 +114,7 @@ func TestPushHandler_PostWidgetPush(t *testing.T) {
 		{"options_preflight", "OPTIONS", "tile-1", nil, pDefault, 204, "POST, OPTIONS", "*", "", ""},
 		{"method_not_allowed", "GET", "tile-1", nil, pDefault, 405, "POST, OPTIONS", "", `{"status":"error","error":"method not allowed"}`, ""},
 		{"nil_pusher", "POST", "tile-1", strings.NewReader(`{}`), nil, 500, "", "", `{"status":"error","error":"pusher not configured"}`, ""},
-		{"read_body_err", "POST", "tile-1", errReader{}, pDefault, 400, "", "", "failed to read request body", ""},
+		{"read_body_err", "POST", "tile-1", testutil.ErrReader{}, pDefault, 400, "", "", "failed to read request body", ""},
 		{"invalid_json", "POST", "tile-1", strings.NewReader(`{bad`), pDefault, 400, "", "", "invalid JSON payload", ""},
 		{"non_object_json", "POST", "tile-1", strings.NewReader(`[1]`), pDefault, 400, "", "", "payload must be a JSON object", ""},
 		{"not_found", "POST", "tile-missing", strings.NewReader(`{}`), mkPusher("", provider.ErrWidgetNotFound), 404, "", "", "not found in active configuration", ""},
@@ -144,7 +141,7 @@ func TestPushHandler_PostWidgetPhotos(t *testing.T) {
 		{"options_preflight", "OPTIONS", "tile-1", nil, pDefault, 204, "POST, OPTIONS", "*", "", ""},
 		{"method_not_allowed", "GET", "tile-1", nil, pDefault, 405, "POST, OPTIONS", "", `{"status":"error","error":"method not allowed"}`, ""},
 		{"nil_pusher", "POST", "tile-1", strings.NewReader(validJSON), nil, 500, "", "", `{"status":"error","error":"pusher not configured"}`, ""},
-		{"read_body_err", "POST", "tile-1", errReader{}, pDefault, 400, "", "", "failed to read request body", ""},
+		{"read_body_err", "POST", "tile-1", testutil.ErrReader{}, pDefault, 400, "", "", "failed to read request body", ""},
 		{"invalid_json", "POST", "tile-1", strings.NewReader(`{bad`), pDefault, 400, "", "", "invalid JSON payload", ""},
 		{"missing_photos", "POST", "tile-1", strings.NewReader(`{"album_name":"test"}`), pDefault, 400, "", "", "photos field is required", ""},
 		{"not_found", "POST", "tile-missing", strings.NewReader(validJSON), mkPhotoPusher("", provider.ErrWidgetNotFound), 404, "", "", "not found in active configuration", ""},

@@ -83,20 +83,6 @@ func createMultipartReq(method, url, fieldName string, extraFields map[string]st
 	return req
 }
 
-type nonFlusherResponseWriter struct {
-	header http.Header
-	code   int
-	body   bytes.Buffer
-}
-
-func (w *nonFlusherResponseWriter) Header() http.Header         { return w.header }
-func (w *nonFlusherResponseWriter) Write(b []byte) (int, error) { return w.body.Write(b) }
-func (w *nonFlusherResponseWriter) WriteHeader(code int) {
-	if w.code == 0 {
-		w.code = code
-	}
-}
-
 func TestDefaultVoiceHandler_PostVoiceState(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -223,17 +209,14 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 			} else {
 				req = createMultipartReq(tc.method, "/api/voice/interact", tc.audioField, tc.extraFields)
 			}
-			var rec http.ResponseWriter
-			recRec := httptest.NewRecorder()
-			rec = recRec
+			rec, nf := httptest.NewRecorder(), &testutil.NonFlusher{}
+			var code int
 			if tc.nonFlusher {
-				rec = &nonFlusherResponseWriter{header: make(http.Header)}
-			}
-			h.PostVoiceInteract(rec, req)
-
-			code := recRec.Code
-			if tc.nonFlusher {
-				code = testutil.As[*nonFlusherResponseWriter](t, rec).code
+				h.PostVoiceInteract(nf, req)
+				code = nf.Code
+			} else {
+				h.PostVoiceInteract(rec, req)
+				code = rec.Code
 			}
 			if code != tc.wantCode {
 				t.Fatalf("code = %d, want %d", code, tc.wantCode)

@@ -18,49 +18,8 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/testutil"
+	"github.com/azylman/mirrormere/internal/testutil/eventstest"
 )
-
-type mockBroadcaster struct {
-	mu        sync.Mutex
-	events    []*events.Event
-	publishCh chan *events.Event
-}
-
-func (m *mockBroadcaster) Publish(eventType string, data []byte) *events.Event {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	evt := &events.Event{ID: "evt_mock", Type: eventType, Data: data, Timestamp: time.Now()}
-	m.events = append(m.events, evt)
-	if m.publishCh == nil {
-		m.publishCh = make(chan *events.Event, 64)
-	}
-	select {
-	case m.publishCh <- evt:
-	default:
-	}
-	return evt
-}
-
-func (m *mockBroadcaster) waitForPublish(timeout time.Duration) (*events.Event, bool) {
-	m.mu.Lock()
-	if m.publishCh == nil {
-		m.publishCh = make(chan *events.Event, 64)
-	}
-	ch := m.publishCh
-	m.mu.Unlock()
-	select {
-	case evt := <-ch:
-		return evt, true
-	case <-time.After(timeout):
-		return nil, false
-	}
-}
-
-func (m *mockBroadcaster) getEvents() []*events.Event {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]*events.Event(nil), m.events...)
-}
 
 type widgetStateEntry struct {
 	data             any
@@ -194,10 +153,10 @@ func waitSignal(t *testing.T, ch <-chan struct{}, desc string) {
 	}
 }
 
-func waitForPayload(t *testing.T, b *mockBroadcaster, id, key, state string) provider.WidgetPayload {
+func waitForPayload(t *testing.T, b *eventstest.Broadcaster, id, key, state string) provider.WidgetPayload {
 	t.Helper()
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
-		if evt, ok := b.waitForPublish(200 * time.Millisecond); ok {
+		if evt, ok := b.WaitForPublish(200 * time.Millisecond); ok {
 			var p provider.WidgetPayload
 			if json.Unmarshal(evt.Data, &p) == nil && (id == "" || p.WidgetID == id) && (state == "" || p.State == state) && (key == "" || (p.Data != nil && testutil.As[map[string]any](t, p.Data)[key] != nil)) {
 				return p
@@ -208,8 +167,8 @@ func waitForPayload(t *testing.T, b *mockBroadcaster, id, key, state string) pro
 	return provider.WidgetPayload{}
 }
 
-func hasEvent(b *mockBroadcaster, id, state string) bool {
-	for _, e := range b.getEvents() {
+func hasEvent(b *eventstest.Broadcaster, id, state string) bool {
+	for _, e := range b.Events() {
 		var p provider.WidgetPayload
 		if e.Type == events.EventWidgetUpdate && json.Unmarshal(e.Data, &p) == nil && p.WidgetID == id && p.State == state {
 			return true
@@ -290,7 +249,7 @@ func regPushParked(types ...string) provider.Registry {
 	return r
 }
 
-func newCoord(r provider.Registry, b *mockBroadcaster, s *mockStateSink, snap *config.Snapshot) *provider.ProviderCoordinator {
+func newCoord(r provider.Registry, b *eventstest.Broadcaster, s *mockStateSink, snap *config.Snapshot) *provider.ProviderCoordinator {
 	cfg := provider.CoordinatorConfig{Registry: r}
 	if b != nil {
 		cfg.Broadcaster = b
@@ -304,11 +263,11 @@ func newCoord(r provider.Registry, b *mockBroadcaster, s *mockStateSink, snap *c
 func TestProviderCoordinator_ZeroPollingOptimizations(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ id, typ string }{{"spacer-tile", "spacer"}, {"chromecast-tile", "live-view"}} {
-		b, s := &mockBroadcaster{}, newMockStateSink()
+		b, s := &eventstest.Broadcaster{}, newMockStateSink()
 		coord := newCoord(nil, b, s, mkSnap("", map[string]*domain.Package{tc.typ: mkPkg(tc.typ, tc.typ, 0, nil)}, mkWidget(tc.id, tc.typ, 30, nil)))
 		p, ok := coord.Cache().Get(tc.id)
 		d, st, _, sOk := s.getState(tc.id)
-		if !ok || p.State != provider.StateHealthy || !sOk || st != provider.StateHealthy || len(testutil.As[map[string]any](t, p.Data)) != 0 || len(testutil.As[map[string]any](t, d)) != 0 || len(b.getEvents()) != 1 || coord.RefreshWidget(tc.id) == nil {
+		if !ok || p.State != provider.StateHealthy || !sOk || st != provider.StateHealthy || len(testutil.As[map[string]any](t, p.Data)) != 0 || len(testutil.As[map[string]any](t, d)) != 0 || len(b.Events()) != 1 || coord.RefreshWidget(tc.id) == nil {
 			t.Fatalf("unexpected state or error for %s", tc.id)
 		}
 		_ = coord.Stop()
@@ -324,20 +283,20 @@ func TestProviderCoordinator_LifecycleAndSWR(t *testing.T) {
 
 func assertCoordinatorHealthyWeatherAndRefresh(t *testing.T) {
 	t.Helper()
-	mockP1, b1, s1 := newControllableMockProvider(), &mockBroadcaster{}, newMockStateSink()
+	mockP1, b1, s1 := newControllableMockProvider(), &eventstest.Broadcaster{}, newMockStateSink()
 	coord1 := newCoord(regOne("mock-weather", mockP1), b1, s1, mkSnap("", nil, config.WidgetConfig{
 		ID: "weather-tile", Type: "mock-weather", Dimensions: []int{2, 1}, RefreshIntervalSeconds: new(60),
 		Config: map[string]any{"city": "Alpha"}, Endpoint: "https://api.example.com/weather", Token: "secret123",
 	}))
 	defer coord1.Stop()
-	if _, ok := b1.waitForPublish(2 * time.Second); !ok {
+	if _, ok := b1.WaitForPublish(2 * time.Second); !ok {
 		t.Fatal("timeout waiting for initial broadcast")
 	}
 	if p, ok := coord1.Cache().Get("weather-tile"); !ok || p.State != provider.StateHealthy {
 		t.Fatalf("expected healthy weather-tile, got %+v", p)
 	}
 	refresh(t, coord1, "weather-tile")
-	if _, ok := b1.waitForPublish(2 * time.Second); !ok || mockP1.fetchCount.Load() < 2 {
+	if _, ok := b1.WaitForPublish(2 * time.Second); !ok || mockP1.fetchCount.Load() < 2 {
 		t.Fatalf("manual refresh failed: ok=%v, count=%d", ok, mockP1.fetchCount.Load())
 	}
 }
@@ -346,12 +305,12 @@ func assertCoordinatorStockDegradedAndRecovery(t *testing.T) {
 	t.Helper()
 	mockStocks := newControllableMockProvider()
 	mockStocks.fetchFunc = func(ctx context.Context) (any, error) { return map[string]any{"price": 150.0}, nil }
-	bStocks, sStocks := &mockBroadcaster{}, newMockStateSink()
+	bStocks, sStocks := &eventstest.Broadcaster{}, newMockStateSink()
 	coordStocks := newCoord(regOne("mock-stocks", mockStocks), bStocks, sStocks, mkSnap("", nil, mkWidget("stock-tile", "mock-stocks", 10, nil)))
 	defer coordStocks.Stop()
 	waitSignal(t, mockStocks.fetchSignal, "initial fetch")
 	p1 := waitForState(t, coordStocks.Cache(), "stock-tile", provider.StateHealthy)
-	if _, ok := bStocks.waitForPublish(2 * time.Second); !ok {
+	if _, ok := bStocks.WaitForPublish(2 * time.Second); !ok {
 		t.Fatal("timeout waiting for initial broadcast")
 	}
 	lkgTimestamp := p1.Timestamp
@@ -359,10 +318,10 @@ func assertCoordinatorStockDegradedAndRecovery(t *testing.T) {
 	refresh(t, coordStocks, "stock-tile")
 	waitSignal(t, mockStocks.fetchSignal, "first failure fetch")
 	p2 := waitForState(t, coordStocks.Cache(), "stock-tile", provider.StateDegraded)
-	if _, ok := bStocks.waitForPublish(2 * time.Second); !ok || p2.Timestamp != lkgTimestamp || testutil.As[map[string]any](t, p2.Data)["price"] != 150.0 {
+	if _, ok := bStocks.WaitForPublish(2 * time.Second); !ok || p2.Timestamp != lkgTimestamp || testutil.As[map[string]any](t, p2.Data)["price"] != 150.0 {
 		t.Fatalf("expected preserved LKG data, got %+v", p2)
 	}
-	eventsCountDegraded := len(bStocks.getEvents())
+	eventsCountDegraded := len(bStocks.Events())
 	refresh(t, coordStocks, "stock-tile")
 	waitSignal(t, mockStocks.fetchSignal, "consecutive failure fetch")
 	ticker := time.NewTicker(time.Millisecond)
@@ -372,7 +331,7 @@ func assertCoordinatorStockDegradedAndRecovery(t *testing.T) {
 			t.Fatal("timeout waiting for consecutive failure record")
 		}
 	}
-	if n := len(bStocks.getEvents()); n != eventsCountDegraded {
+	if n := len(bStocks.Events()); n != eventsCountDegraded {
 		t.Fatalf("redundant broadcast on degraded retry: %d != %d", n, eventsCountDegraded)
 	}
 	mockStocks.setFetch(func(ctx context.Context) (any, error) { return map[string]any{"price": 155.0}, nil })
@@ -393,7 +352,7 @@ func assertCoordinatorFailuresAndPushUpdate(t *testing.T) {
 	}
 	regFail.Register("mock-failing", func() provider.Provider { return mockFail })
 	regFail.Register("failing-init", func() provider.Provider { return mockInitFail })
-	bFail, sFail := &mockBroadcaster{}, newMockStateSink()
+	bFail, sFail := &eventstest.Broadcaster{}, newMockStateSink()
 	coordFail := newCoord(regFail, bFail, sFail, mkSnap("", nil,
 		mkWidget("failing-tile", "mock-failing", 0, nil),
 		mkWidget("unregistered-widget", "unregistered-type", 0, nil),
@@ -420,7 +379,7 @@ func TestProviderCoordinator_PushSubscriptionAndAtomicity(t *testing.T) {
 
 func assertCoordinatorStreamingProvider(t *testing.T) {
 	t.Helper()
-	mockStream, bStream, sStream := newControllableMockProvider(), &mockBroadcaster{}, newMockStateSink()
+	mockStream, bStream, sStream := newControllableMockProvider(), &eventstest.Broadcaster{}, newMockStateSink()
 	coordStream := newCoord(regOne("streaming-provider", mockStream), bStream, sStream, mkSnap("", nil, mkWidget("streaming-tile", "streaming-provider", 0, nil)))
 	defer coordStream.Stop()
 	waitSignal(t, mockStream.fetchSignal, "initial fetch")
@@ -442,7 +401,7 @@ func assertCoordinatorDynamicProviderUpdate(t *testing.T) {
 	mockP1, mockP2, mockRem := newControllableMockProvider(), newControllableMockProvider(), newControllableMockProvider()
 	regDyn := regSeq("dynamic-provider", mockP1, mockP2)
 	regDyn.Register("removable-provider", func() provider.Provider { return mockRem })
-	bDyn, sDyn := &mockBroadcaster{}, newMockStateSink()
+	bDyn, sDyn := &eventstest.Broadcaster{}, newMockStateSink()
 	coordDyn := newCoord(regDyn, bDyn, sDyn, mkSnap("", nil,
 		mkWidget("tile-dyn", "dynamic-provider", 0, map[string]any{"city": "Tokyo"}),
 		mkWidget("w-remove-me", "removable-provider", 0, nil),
@@ -479,7 +438,7 @@ func assertCoordinatorAtomicUpdateInterleaving(t *testing.T) {
 	mockA1, mockA2 := newControllableMockProvider(), newControllableMockProvider()
 	hookCalled, releaseHook := make(chan struct{}, 1), make(chan struct{})
 	coordAtom := provider.NewCoordinator(provider.CoordinatorConfig{
-		Registry: regSeq("interleaved-provider", mockA1, mockA2), Broadcaster: &mockBroadcaster{}, StateSink: newMockStateSink(),
+		Registry: regSeq("interleaved-provider", mockA1, mockA2), Broadcaster: &eventstest.Broadcaster{}, StateSink: newMockStateSink(),
 		OnBeforeRecordPush: func(widgetID string) {
 			if widgetID == "tile-atomic" {
 				select {
@@ -523,7 +482,7 @@ func assertCoordinatorAtomicUpdateInterleaving(t *testing.T) {
 
 func TestProviderCoordinator_LiveConfigReload(t *testing.T) {
 	t.Parallel()
-	b, s := &mockBroadcaster{}, newMockStateSink()
+	b, s := &eventstest.Broadcaster{}, newMockStateSink()
 	coord := newCoord(regTypes("type-one", "type-two"), b, s, mkSnap("", nil, mkWidget("w-retain", "type-one", 0, nil), mkWidget("w-remove", "type-one", 0, nil)))
 	defer coord.Stop()
 	waitForState(t, coord.Cache(), "w-retain", provider.StateHealthy)
@@ -638,7 +597,7 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 
 func assertPushWidgetDataSuccess(t *testing.T) (*provider.ProviderCoordinator, map[string]*domain.Package, []config.WidgetConfig, map[string]any) {
 	t.Helper()
-	b, s := &mockBroadcaster{}, newMockStateSink()
+	b, s := &eventstest.Broadcaster{}, newMockStateSink()
 	pkgs := map[string]*domain.Package{
 		"custom-sensor":     mkPkg("custom-sensor", "http", 0, map[string]any{"type": "object", "required": []any{"temperature", "humidity"}, "properties": map[string]any{"temperature": map[string]any{"type": "number"}, "humidity": map[string]any{"type": "number"}}}),
 		"bad-schema-widget": mkPkg("bad-schema-widget", "http", 0, map[string]any{"type": 12345}),
@@ -665,7 +624,7 @@ func assertPushWidgetDataSuccess(t *testing.T) (*provider.ProviderCoordinator, m
 	if sinkData, sinkState, _, found := s.getState("tile-custom"); !found || sinkState != provider.StateHealthy || testutil.As[map[string]any](t, sinkData)["temperature"] != 23.5 {
 		t.Fatalf("stateSink invalid: %v, %s, %v", found, sinkState, sinkData)
 	}
-	if evt, ok := b.waitForPublish(time.Second); !ok || evt.Type != events.EventWidgetUpdate {
+	if evt, ok := b.WaitForPublish(time.Second); !ok || evt.Type != events.EventWidgetUpdate {
 		t.Fatalf("broadcaster invalid: ok=%v, evt=%+v", ok, evt)
 	}
 	if p2, err := coord.PushWidgetData(ctx, "tile-custom", validData); err != nil || p2.WidgetID != "tile-custom" {
@@ -720,7 +679,7 @@ func TestProviderCoordinator_PushWidgetPhotos(t *testing.T) {
 
 func assertPushWidgetPhotosSuccess(t *testing.T) (*provider.ProviderCoordinator, map[string]*domain.Package, []config.WidgetConfig, []string) {
 	t.Helper()
-	b, s := &mockBroadcaster{}, newMockStateSink()
+	b, s := &eventstest.Broadcaster{}, newMockStateSink()
 	pkgs := map[string]*domain.Package{
 		"photo-carousel": mkPkg("photo-carousel", "photos", 0, nil),
 		"custom-sensor":  mkPkg("custom-sensor", "http", 0, nil),
@@ -736,7 +695,7 @@ func assertPushWidgetPhotosSuccess(t *testing.T) (*provider.ProviderCoordinator,
 	coord := newCoord(reg, b, s, mkSnap("", pkgs, widgets...))
 
 	waitForState(t, coord.Cache(), "tile-ember", provider.StateHealthy)
-	_, _ = b.waitForPublish(time.Second)
+	_, _ = b.WaitForPublish(time.Second)
 
 	ctx := context.Background()
 	validPhotos := []string{"https://lh3.googleusercontent.com/pw/AL9nZEW1", "https://lh3.googleusercontent.com/pw/AL9nZEW2"}
@@ -755,7 +714,7 @@ func assertPushWidgetPhotosSuccess(t *testing.T) (*provider.ProviderCoordinator,
 	if sinkData, sinkState, _, found := s.getState("tile-ember"); !found || sinkState != provider.StateHealthy || testutil.As[*provider.PhotoSnapshot](t, sinkData).AlbumName != "Ember Vacation" {
 		t.Fatalf("stateSink invalid: %v, %s, %v", found, sinkState, sinkData)
 	}
-	if evt, found := b.waitForPublish(time.Second); !found || evt.Type != events.EventWidgetUpdate {
+	if evt, found := b.WaitForPublish(time.Second); !found || evt.Type != events.EventWidgetUpdate {
 		t.Fatalf("broadcaster invalid: found=%v, evt=%+v", found, evt)
 	}
 
