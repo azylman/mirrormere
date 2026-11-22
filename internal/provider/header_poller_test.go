@@ -13,6 +13,7 @@ import (
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/provider"
+	"github.com/azylman/mirrormere/internal/testutil"
 	"github.com/azylman/mirrormere/internal/testutil/eventstest"
 )
 
@@ -68,19 +69,11 @@ type headerFetchTestCase struct {
 func runHeaderWeatherFetchCase(t *testing.T, tc headerFetchTestCase) {
 	t.Helper()
 	t.Parallel()
-	var reqMu sync.Mutex
-	var reqQuery string
 	baseURL, client := tc.baseURL, (*http.Client)(nil)
+	var captured *testutil.Captured
 	if tc.status > 0 {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			reqMu.Lock()
-			reqQuery = r.URL.RawQuery
-			reqMu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(tc.status)
-			_, _ = w.Write([]byte(tc.body))
-		}))
-		defer ts.Close()
+		var ts *httptest.Server
+		ts, captured = newOpenMeteoServer(t, tc.status, tc.body)
 		baseURL, client = ts.URL, ts.Client()
 	}
 	sink, broadcaster := &mockHeaderSink{}, &eventstest.Broadcaster{}
@@ -108,9 +101,10 @@ func runHeaderWeatherFetchCase(t *testing.T, tc headerFetchTestCase) {
 		return
 	}
 	assertHeaderWeatherFields(t, hw, tc)
-	reqMu.Lock()
-	qCaptured := reqQuery
-	reqMu.Unlock()
+	var qCaptured string
+	if reqs := captured.Requests(); len(reqs) > 0 {
+		qCaptured = reqs[len(reqs)-1].RawQuery
+	}
 	for _, q := range tc.wantQuery {
 		if !strings.Contains(qCaptured, q) {
 			t.Errorf("query %q missing %q", qCaptured, q)
@@ -200,11 +194,7 @@ func TestHeaderWeatherPoller_StartStopUpdate(t *testing.T) {
 
 func TestProviderCoordinator_HeaderWeatherPoller_Lifecycle(t *testing.T) {
 	t.Parallel()
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(sampleHeaderOpenMeteoJSON()))
-	}))
-	defer ts.Close()
+	ts, _ := newOpenMeteoServer(t, 0, sampleHeaderOpenMeteoJSON())
 
 	sink, broadcaster := &mockHeaderSink{}, &eventstest.Broadcaster{}
 	snap := &config.Snapshot{Config: &config.Config{Timezone: "America/Los_Angeles", Display: config.DisplayConfig{
