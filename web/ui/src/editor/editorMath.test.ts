@@ -28,37 +28,21 @@ const makeWidget = (overrides: Partial<LayoutEditorWidget> = {}): LayoutEditorWi
 
 describe('editorMath', () => {
   describe('computeWidgetBitmask', () => {
-    it('computes 1x1 mask at origin [0, 0]', () => {
-      expect(computeWidgetBitmask([0, 0], [1, 1], 6)).toBe(1);
-    });
-
-    it('computes 2x1 mask at origin [0, 0] on 6-col grid', () => {
-      expect(computeWidgetBitmask([0, 0], [2, 1], 6)).toBe(0b000000000011);
-    });
-
-    it('computes 2x1 mask at origin [4, 1] on 6-col grid', () => {
-      // Row 1 starts at bit 6. Col 4 is bit 10, Col 5 is bit 11.
-      expect(computeWidgetBitmask([4, 1], [2, 1], 6)).toBe((0b11 << 4) << 6);
-    });
-
-    it('computes 2x2 mask on 3x6 portrait grid', () => {
-      // 3 cols, row 0 (bits 0, 1) and row 1 (bits 3, 4) -> 0b11011 = 27
-      expect(computeWidgetBitmask([0, 0], [2, 2], 3)).toBe(27);
-    });
-
-    it('computes [2, R] and [1, R] side-by-side bitmasks on 3x6 portrait grid', () => {
-      // [2, 3] at [0, 0]: rows 0..2 cols 0, 1 -> bits (0,1), (3,4), (6,7) -> 3 | 24 | 192 = 219
-      const leftMask = computeWidgetBitmask([0, 0], [2, 3], 3);
-      expect(leftMask).toBe(219);
-
-      // [1, 3] at [2, 0]: rows 0..2 col 2 -> bits 2, 5, 8 -> 4 | 32 | 256 = 292
-      const rightMask = computeWidgetBitmask([2, 0], [1, 3], 3);
-      expect(rightMask).toBe(292);
-
-      // Non-overlapping side-by-side split filling rows 0..2 across all 3 columns (bits 0..8 = 511)
-      expect(leftMask & rightMask).toBe(0);
-      expect(leftMask | rightMask).toBe(0b111111111);
-    });
+    // Bit index = row * cols + col.
+    const tests: { name: string; origin: [number, number]; dims: [number, number]; cols: number; want: number }[] = [
+      { name: '1x1 at origin [0, 0]', origin: [0, 0], dims: [1, 1], cols: 6, want: 1 },
+      { name: '2x1 at origin [0, 0] on 6-col grid', origin: [0, 0], dims: [2, 1], cols: 6, want: 0b11 },
+      { name: '2x1 at origin [4, 1] on 6-col grid (bits 10, 11)', origin: [4, 1], dims: [2, 1], cols: 6, want: 0b110000000000 },
+      { name: '2x2 on 3-col portrait grid (bits 0, 1, 3, 4)', origin: [0, 0], dims: [2, 2], cols: 3, want: 27 },
+      // [2, 3] left and [1, 3] right are disjoint (219 & 292 = 0) and fill bits 0..8 (219 | 292 = 511).
+      { name: '[2, 3] left half of 3-col portrait grid', origin: [0, 0], dims: [2, 3], cols: 3, want: 219 },
+      { name: '[1, 3] right column of 3-col portrait grid', origin: [2, 0], dims: [1, 3], cols: 3, want: 292 },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(computeWidgetBitmask(tc.origin, tc.dims, tc.cols)).toBe(tc.want);
+      });
+    }
   });
 
   describe('computeScreenMask and getOccupiedCellCount', () => {
@@ -108,78 +92,38 @@ describe('editorMath', () => {
   });
 
   describe('canPlaceWidget', () => {
-    const widgets: LayoutEditorWidget[] = [
-      makeWidget({ widget_id: 'w1', screen: 0, origin: [0, 0], dimensions: [2, 1] }),
+    const one = [makeWidget({ widget_id: 'w1', screen: 0, origin: [0, 0], dimensions: [2, 1] })];
+    const two = [...one, makeWidget({ widget_id: 'w2', screen: 1, origin: [2, 0], dimensions: [2, 1] })];
+    const portrait = [makeWidget({ widget_id: 'photo', screen: 0, origin: [0, 0], dimensions: [2, 3] })];
+    type Target = Parameters<typeof canPlaceWidget>[1];
+    const at = (origin: [number, number], dimensions: [number, number], screen = 0, pinned = false): Target => ({
+      widget_id: 'x',
+      screen,
+      origin,
+      dimensions,
+      pinned,
+    });
+    const tests: { name: string; widgets: LayoutEditorWidget[]; target: Target; cols: number; rows: number; want: boolean }[] = [
+      { name: 'rejects negative col', widgets: one, target: at([-1, 0], [2, 1]), cols: 6, rows: 2, want: false },
+      { name: 'rejects negative row', widgets: one, target: at([0, -1], [2, 1]), cols: 6, rows: 2, want: false },
+      { name: 'rejects width overflow', widgets: one, target: at([5, 0], [2, 1]), cols: 6, rows: 2, want: false },
+      { name: 'rejects row past the bottom', widgets: one, target: at([0, 2], [1, 1]), cols: 6, rows: 2, want: false },
+      { name: 'rejects zero width', widgets: one, target: at([0, 0], [0, 1]), cols: 6, rows: 2, want: false },
+      { name: 'allows free cells on same screen', widgets: one, target: at([2, 0], [2, 1]), cols: 6, rows: 2, want: true },
+      { name: 'rejects occupied cells on same screen', widgets: one, target: at([1, 0], [2, 1]), cols: 6, rows: 2, want: false },
+      { name: 'allows same cells on a different screen', widgets: one, target: at([0, 0], [2, 1], 1), cols: 6, rows: 2, want: true },
+      { name: 'pinned target collides on screen 0', widgets: two, target: at([0, 0], [2, 1], 0, true), cols: 6, rows: 2, want: false },
+      { name: 'pinned target collides on screen 1', widgets: two, target: at([2, 0], [2, 1], 0, true), cols: 6, rows: 2, want: false },
+      { name: 'pinned target clear on every screen', widgets: two, target: at([4, 0], [2, 1], 0, true), cols: 6, rows: 2, want: true },
+      { name: 'portrait [1, 3] beside [2, 3] fits', widgets: portrait, target: at([2, 0], [1, 3]), cols: 3, rows: 6, want: true },
+      { name: 'portrait [1, 3] overlapping col 1', widgets: portrait, target: at([1, 0], [1, 3]), cols: 3, rows: 6, want: false },
+      { name: 'portrait [2, 3] at col 2 overflows', widgets: portrait, target: at([2, 0], [2, 3]), cols: 3, rows: 6, want: false },
     ];
-
-    it('rejects out of bounds origins and dimensions', () => {
-      expect(canPlaceWidget(widgets, { widget_id: 'x', screen: 0, origin: [-1, 0], dimensions: [2, 1] }, 6, 2)).toBe(false);
-      expect(canPlaceWidget(widgets, { widget_id: 'x', screen: 0, origin: [0, -1], dimensions: [2, 1] }, 6, 2)).toBe(false);
-      expect(canPlaceWidget(widgets, { widget_id: 'x', screen: 0, origin: [5, 0], dimensions: [2, 1] }, 6, 2)).toBe(false);
-      expect(canPlaceWidget(widgets, { widget_id: 'x', screen: 0, origin: [0, 2], dimensions: [1, 1] }, 6, 2)).toBe(false);
-      expect(canPlaceWidget(widgets, { widget_id: 'x', screen: 0, origin: [0, 0], dimensions: [0, 1] }, 6, 2)).toBe(false);
-    });
-
-    it('allows placement in free cells on same screen', () => {
-      expect(canPlaceWidget(widgets, { widget_id: 'x', screen: 0, origin: [2, 0], dimensions: [2, 1] }, 6, 2)).toBe(true);
-    });
-
-    it('rejects placement in occupied cells on same screen', () => {
-      expect(canPlaceWidget(widgets, { widget_id: 'x', screen: 0, origin: [1, 0], dimensions: [2, 1] }, 6, 2)).toBe(false);
-    });
-
-    it('allows placement in same cells on different screen', () => {
-      expect(canPlaceWidget(widgets, { widget_id: 'x', screen: 1, origin: [0, 0], dimensions: [2, 1] }, 6, 2)).toBe(true);
-    });
-
-    it('handles pinned target checking all screens', () => {
-      const multi = [
-        makeWidget({ widget_id: 'w1', screen: 0, origin: [0, 0], dimensions: [2, 1] }),
-        makeWidget({ widget_id: 'w2', screen: 1, origin: [2, 0], dimensions: [2, 1] }),
-      ];
-      // Origin [0, 0] collides on screen 0
-      expect(canPlaceWidget(multi, { widget_id: 'pin', screen: 0, origin: [0, 0], dimensions: [2, 1], pinned: true }, 6, 2)).toBe(false);
-      // Origin [2, 0] collides on screen 1
-      expect(canPlaceWidget(multi, { widget_id: 'pin', screen: 0, origin: [2, 0], dimensions: [2, 1], pinned: true }, 6, 2)).toBe(false);
-      // Origin [4, 0] is clear on both screens
-      expect(canPlaceWidget(multi, { widget_id: 'pin', screen: 0, origin: [4, 0], dimensions: [2, 1], pinned: true }, 6, 2)).toBe(true);
-    });
-
-    it('supports [2, R] and [1, R] side-by-side placement on 3x6 portrait grid', () => {
-      const portraitWidgets: LayoutEditorWidget[] = [
-        makeWidget({ widget_id: 'photo', screen: 0, origin: [0, 0], dimensions: [2, 3] }),
-      ];
-
-      // Placing [1, 3] beside [2, 3] in column 2 fits
-      expect(
-        canPlaceWidget(
-          portraitWidgets,
-          { widget_id: 'tasks', screen: 0, origin: [2, 0], dimensions: [1, 3] },
-          3,
-          6,
-        ),
-      ).toBe(true);
-
-      // Placing [1, 3] overlapping column 1 fails
-      expect(
-        canPlaceWidget(
-          portraitWidgets,
-          { widget_id: 'tasks', screen: 0, origin: [1, 0], dimensions: [1, 3] },
-          3,
-          6,
-        ),
-      ).toBe(false);
-
-      // Placing [2, 3] at col 2 overflows 3 cols
-      expect(
-        canPlaceWidget(
-          portraitWidgets,
-          { widget_id: 'other', screen: 0, origin: [2, 0], dimensions: [2, 3] },
-          3,
-          6,
-        ),
-      ).toBe(false);
-    });
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(canPlaceWidget(tc.widgets, tc.target, tc.cols, tc.rows)).toBe(tc.want);
+      });
+    }
   });
 
   describe('compactScreens', () => {
@@ -203,26 +147,57 @@ describe('editorMath', () => {
   });
 
   describe('moveOrSwapWidget', () => {
-    it('returns unchanged if widget is not found', () => {
-      const widgets = [makeWidget({ widget_id: 'w1' })];
-      expect(moveOrSwapWidget(widgets, 'unknown', 0, [2, 0], 6, 2)).toEqual(widgets);
-    });
-
-    it('returns unchanged if destination is identical', () => {
-      const widgets = [makeWidget({ widget_id: 'w1', screen: 0, origin: [0, 0] })];
-      expect(moveOrSwapWidget(widgets, 'w1', 0, [0, 0], 6, 2)).toEqual(widgets);
-    });
-
-    it('returns unchanged if pinned widget is dropped on same origin on activeScreen > 0', () => {
-      const widgets = [makeWidget({ widget_id: 'pin', pinned: true, screen: 0, origin: [2, 0] })];
-      expect(moveOrSwapWidget(widgets, 'pin', 1, [2, 0], 6, 2)).toEqual(widgets);
-    });
-
-    it('returns unchanged if destination is out of bounds', () => {
-      const widgets = [makeWidget({ widget_id: 'w1', origin: [0, 0], dimensions: [2, 1] })];
-      expect(moveOrSwapWidget(widgets, 'w1', 0, [5, 0], 6, 2)).toEqual(widgets);
-      expect(moveOrSwapWidget(widgets, 'w1', 0, [-1, 0], 6, 2)).toEqual(widgets);
-    });
+    const pinFirst = (...rest: LayoutEditorWidget[]) => [
+      makeWidget({ widget_id: 'pin', pinned: true, screen: 0, origin: [0, 0], dimensions: [2, 1] }),
+      ...rest,
+    ];
+    const u1 = makeWidget({ widget_id: 'u1', screen: 1, origin: [2, 0], dimensions: [2, 1] });
+    const unchanged: { name: string; widgets: LayoutEditorWidget[]; id: string; screen: number; dest: [number, number] }[] = [
+      { name: 'unknown widget', widgets: [makeWidget()], id: 'unknown', screen: 0, dest: [2, 0] },
+      { name: 'identical destination', widgets: [makeWidget()], id: 'w1', screen: 0, dest: [0, 0] },
+      {
+        name: 'pinned dropped on its own origin on activeScreen > 0',
+        widgets: [makeWidget({ widget_id: 'pin', pinned: true, origin: [2, 0] })],
+        id: 'pin',
+        screen: 1,
+        dest: [2, 0],
+      },
+      { name: 'destination overflows the right edge', widgets: [makeWidget()], id: 'w1', screen: 0, dest: [5, 0] },
+      { name: 'destination left of the grid', widgets: [makeWidget()], id: 'w1', screen: 0, dest: [-1, 0] },
+      {
+        // On screen 1, pin at [2, 0] would collide with u0 on screen 0.
+        name: 'pinned swap that collides on another screen',
+        widgets: pinFirst(makeWidget({ widget_id: 'u0', screen: 0, origin: [2, 0], dimensions: [2, 1] }), u1),
+        id: 'pin',
+        screen: 1,
+        dest: [2, 0],
+      },
+      { name: 'swap between pinned and unpinned across different screens', widgets: pinFirst(u1), id: 'u1', screen: 0, dest: [0, 0] },
+      {
+        // pin (width 2) at w1's origin [5, 0] overflows, and pinned widgets are not reflowed.
+        name: 'swap that puts the pinned widget out of bounds at the source origin',
+        widgets: [makeWidget({ origin: [5, 0], dimensions: [1, 1] }), ...pinFirst()],
+        id: 'w1',
+        screen: 0,
+        dest: [0, 0],
+      },
+      {
+        // pin at [0, 0] would cover [0..1, 0] and still overlap w1 at [1, 0].
+        name: 'swap whose swapped positions still collide with a pinned widget',
+        widgets: [
+          makeWidget({ origin: [0, 0], dimensions: [1, 1] }),
+          makeWidget({ widget_id: 'pin', pinned: true, origin: [1, 0], dimensions: [2, 1] }),
+        ],
+        id: 'w1',
+        screen: 0,
+        dest: [1, 0],
+      },
+    ];
+    for (const tc of unchanged) {
+      it(`returns unchanged: ${tc.name}`, () => {
+        expect(moveOrSwapWidget(tc.widgets, tc.id, tc.screen, tc.dest, 6, 2)).toEqual(tc.widgets);
+      });
+    }
 
     it('moves into free space directly', () => {
       const widgets = [makeWidget({ widget_id: 'w1', screen: 0, origin: [0, 0], dimensions: [2, 1] })];
@@ -282,17 +257,6 @@ describe('editorMath', () => {
       expect(u1?.screen).toBe(1);
       expect(pin?.origin).toEqual([2, 0]);
       expect(pin?.screen).toBe(0);
-    });
-
-    it('rejects swap between pinned and unpinned if pinned widget collides on another screen', () => {
-      const widgets = [
-        makeWidget({ widget_id: 'pin', pinned: true, screen: 0, origin: [0, 0], dimensions: [2, 1] }),
-        makeWidget({ widget_id: 'u0', pinned: false, screen: 0, origin: [2, 0], dimensions: [2, 1] }),
-        makeWidget({ widget_id: 'u1', pinned: false, screen: 1, origin: [2, 0], dimensions: [2, 1] }),
-      ];
-      // On screen 1, dragging pin to [2, 0] would put pin at [2, 0], colliding with u0 on screen 0
-      const res = moveOrSwapWidget(widgets, 'pin', 1, [2, 0], 6, 2);
-      expect(res).toEqual(widgets);
     });
 
     it('swaps and reflows when overlapping with multiple widgets', () => {
@@ -375,47 +339,29 @@ describe('editorMath', () => {
       expect(resolvePreviewOrigin(widgets, 'unknown', 0, [1, 0], 6, 2)).toEqual([1, 0]);
     });
 
-    it('rejects swap between pinned and unpinned across different screens', () => {
-      const widgets = [
-        makeWidget({ widget_id: 'pin', pinned: true, screen: 0, origin: [0, 0], dimensions: [2, 1] }),
-        makeWidget({ widget_id: 'u1', pinned: false, screen: 1, origin: [2, 0], dimensions: [2, 1] }),
-      ];
-      const res = moveOrSwapWidget(widgets, 'u1', 0, [0, 0], 6, 2);
-      expect(res).toEqual(widgets);
-    });
-
-    it('rejects swap if pinned widget would be out of bounds at source origin', () => {
-      const widgets = [
-        makeWidget({ widget_id: 'w1', screen: 0, origin: [5, 0], dimensions: [1, 1] }),
-        makeWidget({ widget_id: 'pin', pinned: true, screen: 0, origin: [0, 0], dimensions: [2, 1] }),
-      ];
-      // pin has width 2, at origin [5, 0] 5+2=7 > 6 and pinned widgets are not reflowed
-      const res = moveOrSwapWidget(widgets, 'w1', 0, [0, 0], 6, 2);
-      expect(res).toEqual(widgets);
-    });
-
-    it('rejects swap if swapped positions still collide with a pinned widget', () => {
-      const widgets = [
-        makeWidget({ widget_id: 'w1', screen: 0, origin: [0, 0], dimensions: [1, 1] }),
-        makeWidget({ widget_id: 'pin', pinned: true, screen: 0, origin: [1, 0], dimensions: [2, 1] }),
-      ];
-      // Moving w1 to [1, 0] overlaps pin. Putting pin at [0, 0] means pin occupies [0..1, 0] and w1 occupies [1, 0].
-      const res = moveOrSwapWidget(widgets, 'w1', 0, [1, 0], 6, 2);
-      expect(res).toEqual(widgets);
-    });
   });
 
   describe('moveWidgetToScreen', () => {
-    it('returns unchanged for unknown id or negative target screen', () => {
-      const widgets = [makeWidget({ widget_id: 'w1' })];
-      expect(moveWidgetToScreen(widgets, 'unknown', 1, 6, 2)).toEqual(widgets);
-      expect(moveWidgetToScreen(widgets, 'w1', -1, 6, 2)).toEqual(widgets);
-    });
-
-    it('returns unchanged if already on target screen and unpinned', () => {
-      const widgets = [makeWidget({ widget_id: 'w1', screen: 0, pinned: false })];
-      expect(moveWidgetToScreen(widgets, 'w1', 0, 6, 2)).toEqual(widgets);
-    });
+    const unchanged: { name: string; widgets: LayoutEditorWidget[]; id: string; screen: number }[] = [
+      { name: 'unknown id', widgets: [makeWidget()], id: 'unknown', screen: 1 },
+      { name: 'negative target screen', widgets: [makeWidget()], id: 'w1', screen: -1 },
+      { name: 'already on target screen and unpinned', widgets: [makeWidget()], id: 'w1', screen: 0 },
+      {
+        name: 'target screen is 100% full',
+        widgets: [
+          makeWidget(),
+          makeWidget({ widget_id: 'full1', screen: 1, origin: [0, 0], dimensions: [6, 1] }),
+          makeWidget({ widget_id: 'full2', screen: 1, origin: [0, 1], dimensions: [6, 1] }),
+        ],
+        id: 'w1',
+        screen: 1,
+      },
+    ];
+    for (const tc of unchanged) {
+      it(`returns unchanged: ${tc.name}`, () => {
+        expect(moveWidgetToScreen(tc.widgets, tc.id, tc.screen, 6, 2)).toEqual(tc.widgets);
+      });
+    }
 
     it('places at current origin on target screen when free', () => {
       const widgets = [
@@ -440,25 +386,28 @@ describe('editorMath', () => {
       expect(w1?.origin).toEqual([2, 0]); // Next open slot
     });
 
-    it('returns unchanged if target screen is 100% full', () => {
-      const widgets = [
-        makeWidget({ widget_id: 'w1', screen: 0, origin: [0, 0], dimensions: [2, 1] }),
-        makeWidget({ widget_id: 'full1', screen: 1, origin: [0, 0], dimensions: [6, 1] }),
-        makeWidget({ widget_id: 'full2', screen: 1, origin: [0, 1], dimensions: [6, 1] }),
-      ];
-      expect(moveWidgetToScreen(widgets, 'w1', 1, 6, 2)).toEqual(widgets);
-    });
   });
 
   describe('resizeWidget', () => {
-    it('returns unchanged for unknown id, identical dimensions, or invalid bounds', () => {
-      const widgets = [makeWidget({ widget_id: 'w1', dimensions: [2, 1] })];
-      expect(resizeWidget(widgets, 'unknown', [3, 2], 6, 2)).toEqual(widgets);
-      expect(resizeWidget(widgets, 'w1', [2, 1], 6, 2)).toEqual(widgets);
-      expect(resizeWidget(widgets, 'w1', [0, 1], 6, 2)).toEqual(widgets);
-      expect(resizeWidget(widgets, 'w1', [7, 1], 6, 2)).toEqual(widgets);
-      expect(resizeWidget(widgets, 'w1', [2, 3], 6, 2)).toEqual(widgets);
-    });
+    // Fills every cell except w1's two, so nothing larger than [2, 1] fits anywhere.
+    const packed = [
+      makeWidget(),
+      makeWidget({ widget_id: 'b1', origin: [2, 0], dimensions: [4, 1] }),
+      makeWidget({ widget_id: 'b2', origin: [0, 1], dimensions: [6, 1] }),
+    ];
+    const unchanged: { name: string; widgets: LayoutEditorWidget[]; id: string; dims: [number, number] }[] = [
+      { name: 'unknown id', widgets: [makeWidget()], id: 'unknown', dims: [3, 2] },
+      { name: 'identical dimensions', widgets: [makeWidget()], id: 'w1', dims: [2, 1] },
+      { name: 'zero width', widgets: [makeWidget()], id: 'w1', dims: [0, 1] },
+      { name: 'wider than the grid', widgets: [makeWidget()], id: 'w1', dims: [7, 1] },
+      { name: 'taller than the grid', widgets: [makeWidget()], id: 'w1', dims: [2, 3] },
+      { name: 'no slot fits the new dimensions', widgets: packed, id: 'w1', dims: [4, 2] },
+    ];
+    for (const tc of unchanged) {
+      it(`returns unchanged: ${tc.name}`, () => {
+        expect(resizeWidget(tc.widgets, tc.id, tc.dims, 6, 2)).toEqual(tc.widgets);
+      });
+    }
 
     it('resizes in place if current origin fits new dimensions', () => {
       const widgets = [makeWidget({ widget_id: 'w1', origin: [0, 0], dimensions: [2, 1] })];
@@ -485,22 +434,23 @@ describe('editorMath', () => {
       expect(res.find((w) => w.widget_id === 'w1')?.origin).toEqual([0, 0]); // Col 0 is open!
     });
 
-    it('returns unchanged if no slot fits new dimensions', () => {
-      const widgets = [
-        makeWidget({ widget_id: 'w1', origin: [0, 0], dimensions: [2, 1] }),
-        makeWidget({ widget_id: 'b1', origin: [2, 0], dimensions: [4, 1] }),
-        makeWidget({ widget_id: 'b2', origin: [0, 1], dimensions: [6, 1] }),
-      ];
-      // Trying to expand to [4, 2] needs 8 cells, only 2 open cells exist
-      expect(resizeWidget(widgets, 'w1', [4, 2], 6, 2)).toEqual(widgets);
-    });
   });
 
   describe('togglePinWidget', () => {
-    it('returns unchanged for unknown id', () => {
-      const widgets = [makeWidget({ widget_id: 'w1' })];
-      expect(togglePinWidget(widgets, 'unknown', 6, 2)).toEqual(widgets);
-    });
+    const unchanged: { name: string; widgets: LayoutEditorWidget[]; id: string }[] = [
+      { name: 'unknown id', widgets: [makeWidget()], id: 'unknown' },
+      {
+        // w1 at [0, 0] collides with w2 on screen 1.
+        name: 'pinning collides on another screen',
+        widgets: [makeWidget(), makeWidget({ widget_id: 'w2', screen: 1, origin: [0, 0], dimensions: [2, 1] })],
+        id: 'w1',
+      },
+    ];
+    for (const tc of unchanged) {
+      it(`returns unchanged: ${tc.name}`, () => {
+        expect(togglePinWidget(tc.widgets, tc.id, 6, 2)).toEqual(tc.widgets);
+      });
+    }
 
     it('unpins a currently pinned widget onto the active screen', () => {
       const widgets = [
@@ -535,13 +485,5 @@ describe('editorMath', () => {
       expect(w1?.screen).toBe(0);
     });
 
-    it('rejects pinning when position collides on another screen', () => {
-      const widgets = [
-        makeWidget({ widget_id: 'w1', screen: 0, origin: [0, 0], dimensions: [2, 1] }),
-        makeWidget({ widget_id: 'w2', screen: 1, origin: [0, 0], dimensions: [2, 1] }),
-      ];
-      // w1 at [0, 0] collides with w2 on screen 1
-      expect(togglePinWidget(widgets, 'w1', 6, 2)).toEqual(widgets);
-    });
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BufferedEvent } from '../sse/batch';
-import type { ScreenRotatePayload, ScreensResponse } from '../sse/types';
+import type { ScreenRotatePayload, ScreensResponse, SystemStatusPayload } from '../sse/types';
 import { rotateChangesLayout, useDisplayStore } from './index';
 
 const initial = useDisplayStore.getState();
@@ -84,84 +84,64 @@ describe('carousel store', () => {
   });
 
   describe('layoutVersion', () => {
-    it('bumps on widget.reload', () => {
-      useDisplayStore.getState().applyEvents([{ type: 'widget.reload', data: { type: 'clock' } }]);
-      expect(useDisplayStore.getState().layoutVersion).toBe(1);
+    const status = (extra: Partial<SystemStatusPayload>): BufferedEvent => ({
+      type: 'system.status',
+      data: { online: true, time: 't', config_status: 'ok', config_error: null, ...extra },
     });
-
-    it('bumps when the config status or error changes', () => {
-      useDisplayStore.getState().applyEvents([
-        { type: 'system.status', data: { online: true, time: 't', config_status: 'error', config_error: 'bad' } },
-      ]);
-      expect(useDisplayStore.getState().layoutVersion).toBe(1);
-
-      useDisplayStore.getState().applyEvents([
-        { type: 'system.status', data: { online: true, time: 't', config_status: 'error', config_error: 'bad' } },
-      ]);
-      expect(useDisplayStore.getState().layoutVersion).toBe(1);
-    });
-
-    it('bumps when the boot id changes after the first one is known', () => {
-      useDisplayStore.getState().applyEvents([
-        { type: 'system.status', data: { online: true, time: 't', config_status: 'ok', config_error: null, boot_id: 'a' } },
-      ]);
-      expect(useDisplayStore.getState().layoutVersion).toBe(0);
-
-      useDisplayStore.getState().applyEvents([
-        { type: 'system.status', data: { online: true, time: 't', config_status: 'ok', config_error: null, boot_id: 'b' } },
-      ]);
-      expect(useDisplayStore.getState().layoutVersion).toBe(1);
-    });
-
-    it('does not bump for ordinary status heartbeats', () => {
-      useDisplayStore.getState().applyEvents([
-        { type: 'system.status', data: { online: true, time: 't', config_status: 'ok', config_error: null } },
-      ]);
-      expect(useDisplayStore.getState().layoutVersion).toBe(0);
-    });
+    const configError = status({ config_status: 'error', config_error: 'bad' });
+    // Each batch is applied in turn; wantVersions[i] is layoutVersion after batch i.
+    const tests: { name: string; batches: BufferedEvent[][]; wantVersions: number[] }[] = [
+      { name: 'bumps on widget.reload', batches: [[{ type: 'widget.reload', data: { type: 'clock' } }]], wantVersions: [1] },
+      { name: 'bumps once when the config status or error changes', batches: [[configError], [configError]], wantVersions: [1, 1] },
+      {
+        name: 'bumps when the boot id changes after the first one is known',
+        batches: [[status({ boot_id: 'a' })], [status({ boot_id: 'b' })]],
+        wantVersions: [0, 1],
+      },
+      { name: 'does not bump for ordinary status heartbeats', batches: [[status({})]], wantVersions: [0] },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        const got = tc.batches.map((batch) => {
+          useDisplayStore.getState().applyEvents(batch);
+          return useDisplayStore.getState().layoutVersion;
+        });
+        expect(got).toEqual(tc.wantVersions);
+      });
+    }
   });
 
   describe('rotateChangesLayout', () => {
     const current = screens.screens;
+    const placed = (widget_id: string, origin: [number, number], dimensions: [number, number]) => ({ widget_id, origin, dimensions });
     const payload = (overrides: Partial<ScreenRotatePayload> = {}): ScreenRotatePayload => ({
       current_screen: 1,
       total_screens: 3,
       interval_seconds: 30,
-      widgets: [{ widget_id: 'w-1', origin: [0, 0], dimensions: [2, 2] }],
+      widgets: [placed('w-1', [0, 0], [2, 2])],
       ...overrides,
     });
-
-    it('is false for an empty layout, because nothing is known yet', () => {
-      expect(rotateChangesLayout([], payload({ total_screens: 5 }))).toBe(false);
-    });
-
-    it('is false for identical placements', () => {
-      expect(rotateChangesLayout(current, payload())).toBe(false);
-    });
-
-    it('is true for a changed total_screens', () => {
-      expect(rotateChangesLayout(current, payload({ total_screens: 4 }))).toBe(true);
-    });
-
-    it('is true when the current screen is missing from the layout', () => {
-      expect(rotateChangesLayout(current, payload({ current_screen: 7, total_screens: 3 }))).toBe(true);
-    });
-
-    it('is true for a moved widget', () => {
-      expect(rotateChangesLayout(current, payload({ widgets: [{ widget_id: 'w-1', origin: [1, 0], dimensions: [2, 2] }] }))).toBe(true);
-    });
-
-    it('is true for a resized widget and for an added or removed widget', () => {
-      expect(rotateChangesLayout(current, payload({ widgets: [{ widget_id: 'w-1', origin: [0, 0], dimensions: [3, 2] }] }))).toBe(true);
-      expect(
-        rotateChangesLayout(current, payload({ widgets: [{ widget_id: 'w-1', origin: [0, 0], dimensions: [2, 2] }, { widget_id: 'x', origin: [0, 0], dimensions: [1, 1] }] })),
-      ).toBe(true);
-      expect(rotateChangesLayout(current, payload({ widgets: [] }))).toBe(true);
-    });
-
-    it('is true for a changed widget id', () => {
-      expect(rotateChangesLayout(current, payload({ widgets: [{ widget_id: 'w-9', origin: [0, 0], dimensions: [2, 2] }] }))).toBe(true);
-    });
+    const tests: { name: string; layout: ScreensResponse['screens']; payload: ScreenRotatePayload; want: boolean }[] = [
+      { name: 'false for an empty layout, because nothing is known yet', layout: [], payload: payload({ total_screens: 5 }), want: false },
+      { name: 'false for identical placements', layout: current, payload: payload(), want: false },
+      { name: 'true for a changed total_screens', layout: current, payload: payload({ total_screens: 4 }), want: true },
+      { name: 'true when the current screen is missing from the layout', layout: current, payload: payload({ current_screen: 7 }), want: true },
+      { name: 'true for a moved widget', layout: current, payload: payload({ widgets: [placed('w-1', [1, 0], [2, 2])] }), want: true },
+      { name: 'true for a resized widget', layout: current, payload: payload({ widgets: [placed('w-1', [0, 0], [3, 2])] }), want: true },
+      {
+        name: 'true for an added widget',
+        layout: current,
+        payload: payload({ widgets: [placed('w-1', [0, 0], [2, 2]), placed('x', [0, 0], [1, 1])] }),
+        want: true,
+      },
+      { name: 'true for a removed widget', layout: current, payload: payload({ widgets: [] }), want: true },
+      { name: 'true for a changed widget id', layout: current, payload: payload({ widgets: [placed('w-9', [0, 0], [2, 2])] }), want: true },
+    ];
+    for (const tc of tests) {
+      it(tc.name, () => {
+        expect(rotateChangesLayout(tc.layout, tc.payload)).toBe(tc.want);
+      });
+    }
   });
 
   describe('layoutVersion on rotate and resume', () => {
