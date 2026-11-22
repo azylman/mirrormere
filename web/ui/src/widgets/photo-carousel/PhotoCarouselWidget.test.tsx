@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, act } from '@testing-library/react';
+import { fireEvent, act } from '@testing-library/react';
 import {
   PhotoCarouselWidget,
   getSizedPhotoURL,
@@ -28,6 +28,11 @@ import { stubResizeObserver } from '../../test-utils/resizeObserver';
 /** Seeds the w-photo-1 carousel with `photos` and an optional cycle interval. */
 function setWidgetPhotos(photos: PhotoItem[], cycleSeconds?: number, config: Record<string, unknown> = {}) {
   seedWidget('w-photo-1', widgetMeta('photo-carousel', config), { photos, ...(cycleSeconds !== undefined ? { cycle_interval_seconds: cycleSeconds } : {}) });
+}
+
+/** The w-photo-1 carousel inside a PaneContext, for rerender() after renderWidget(). */
+function photoPane(isCurrentPane: boolean, paneIndex = 0) {
+  return <PaneContext.Provider value={{ isCurrentPane, paneIndex }}><PhotoCarouselWidget id="w-photo-1" type="photo-carousel" /></PaneContext.Provider>;
 }
 
 describe('PhotoCarouselWidget helpers', () => {
@@ -279,13 +284,9 @@ describe('PhotoCarouselWidget component', () => {
     expect(loading?.textContent).toContain('Loading photos...');
 
     // Also renders loading state when state is healthy but photos array is not yet present
-    useDisplayStore.setState({
-      widgets: { [widgetId]: { meta: widgetMeta('photo-carousel', {}), data: {}, state: 'healthy', timestamp: '2026-10-31T12:00:00Z' } },
-    });
+    seedWidget(widgetId, widgetMeta('photo-carousel', {}), {}, 'healthy');
 
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-    );
+    rerender(photoPane(true));
 
     loading = container.querySelector('.photo-loading');
     expect(loading).not.toBeNull();
@@ -293,9 +294,7 @@ describe('PhotoCarouselWidget component', () => {
   });
 
   it('renders empty state when photos array is empty', () => {
-    useDisplayStore.setState({
-      widgets: { [widgetId]: { meta: widgetMeta('photo-carousel', {}), data: { photos: [] }, state: 'ready', timestamp: '2026-10-31T12:00:00Z' } },
-    });
+    seedWidget(widgetId, widgetMeta('photo-carousel', {}), { photos: [] });
 
     const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
@@ -485,11 +484,7 @@ describe('PhotoCarouselWidget component', () => {
   it('pauses cycle timer and clears transitions when not current pane', async () => {
     setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }], 10);
 
-    const { rerender, container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
+    const { rerender, container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel', { pane: { isCurrentPane: false } });
 
     act(() => {
       vi.advanceTimersByTime(30000);
@@ -499,9 +494,7 @@ describe('PhotoCarouselWidget component', () => {
     expect(currentFg?.getAttribute('src')).toContain('p1.jpg');
 
     // Make it current pane
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-    );
+    rerender(photoPane(true));
   });
 
   it('sizes photo URLs via ResizeObserver without synchronous getBoundingClientRect', () => {
@@ -547,9 +540,7 @@ describe('PhotoCarouselWidget component', () => {
     expect(container.querySelector('.photo-loading')).not.toBeNull();
 
     setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }], 10);
-    rerender(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-    );
+    rerender(photoPane(true));
 
     act(() => {
       ro.resize(1400, 900);
@@ -817,15 +808,7 @@ describe('PhotoCarouselWidget component', () => {
     window.Image = MockImage;
 
       try {
-        useDisplayStore.setState({
-          widgets: {
-            [widgetId]: {
-              meta: widgetMeta('photo-carousel', {}),
-              data: { photos: [{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }, { url: 'https://example.com/p3.jpg' }], cycle_interval_seconds: 10 },
-              state: 'ready', timestamp: '2026-10-31T12:00:00Z',
-            },
-          },
-        });
+        seedWidget(widgetId, widgetMeta('photo-carousel', {}), { photos: [{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }, { url: 'https://example.com/p3.jpg' }], cycle_interval_seconds: 10 });
         renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
         act(() => { vi.advanceTimersByTime(10000); });
         expect(resolveDecode).not.toBeNull();
@@ -853,15 +836,7 @@ describe('PhotoCarouselWidget component', () => {
       window.Image = MockImage;
 
       try {
-        useDisplayStore.setState({
-          widgets: {
-            [widgetId]: {
-              meta: widgetMeta('photo-carousel', {}),
-              data: { photos: [{ id: '1', url: 'https://example.com/p1.jpg' }, { id: '2', url: 'https://example.com/p2.jpg' }, { id: '3', url: 'https://example.com/p3.jpg' }], cycle_interval_seconds: 10 },
-              state: 'ready', timestamp: '2026-10-31T12:00:00Z',
-            },
-          },
-        });
+        seedWidget(widgetId, widgetMeta('photo-carousel', {}), { photos: [{ id: '1', url: 'https://example.com/p1.jpg' }, { id: '2', url: 'https://example.com/p2.jpg' }, { id: '3', url: 'https://example.com/p3.jpg' }], cycle_interval_seconds: 10 });
         const { container, rerender } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
         const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
         expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
@@ -882,7 +857,7 @@ describe('PhotoCarouselWidget component', () => {
             },
           });
         });
-        rerender(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
+        rerender(photoPane(true));
         expect(currentFg.getAttribute('src')).toBe('https://example.com/p2.jpg=w1024-h768');
         expect(photoDeckStateById.get(widgetId)?.currentKey).toBe('https://example.com/p2.jpg');
       } finally {
@@ -901,23 +876,14 @@ describe('PhotoCarouselWidget component', () => {
     window.Image = MockImage;
 
     try {
-      useDisplayStore.setState({
-        widgets: {
-          [widgetId]: {
-            meta: widgetMeta('photo-carousel', {}),
-            data: {
-              photos: [
-                { id: '1', url: 'https://example.com/p1.jpg' },
-                { id: '2', url: 'https://example.com/p2.jpg' },
-                { id: '3', url: 'https://example.com/p3.jpg' },
-              ],
-              cycle_interval_seconds: 10,
-            },
-            state: 'ready',
-            timestamp: '2026-10-31T12:00:00Z',
-          },
-        },
- });
+      seedWidget(widgetId, widgetMeta('photo-carousel', {}), {
+        photos: [
+          { id: '1', url: 'https://example.com/p1.jpg' },
+          { id: '2', url: 'https://example.com/p2.jpg' },
+          { id: '3', url: 'https://example.com/p3.jpg' },
+        ],
+        cycle_interval_seconds: 10,
+      });
 
       const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
@@ -983,22 +949,13 @@ describe('PhotoCarouselWidget component', () => {
     window.Image = MockImage;
 
     try {
-      useDisplayStore.setState({
-        widgets: {
-          [widgetId]: {
-            meta: widgetMeta('photo-carousel', {}),
-            data: {
-              photos: [
-                { id: '1', url: 'https://example.com/p1.jpg' },
-                { id: '2', url: 'https://example.com/p2.jpg' },
-              ],
-              cycle_interval_seconds: 10,
-            },
-            state: 'ready',
-            timestamp: '2026-10-31T12:00:00Z',
-          },
-        },
- });
+      seedWidget(widgetId, widgetMeta('photo-carousel', {}), {
+        photos: [
+          { id: '1', url: 'https://example.com/p1.jpg' },
+          { id: '2', url: 'https://example.com/p2.jpg' },
+        ],
+        cycle_interval_seconds: 10,
+      });
 
       const { container, rerender } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
@@ -1007,28 +964,18 @@ describe('PhotoCarouselWidget component', () => {
  });
 
       // Pause by switching pane away (screen rotation)
-      rerender(
-        <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 1 }}>
-          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-        </PaneContext.Provider>,
-      );
+      rerender(photoPane(false, 1));
 
       const deck = photoDeckStateById.get(widgetId);
       expect(deck?.remainingMs).toBe(6000);
 
       // Mount an inactive neighbour pane - must not overwrite remainingMs
-      const { unmount: unmountNeighbour } = render(
-        <PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 2 }}>
-          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-        </PaneContext.Provider>,
-      );
+      const { unmount: unmountNeighbour } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel', { pane: { isCurrentPane: false, paneIndex: 2 } });
       unmountNeighbour();
       expect(deck?.remainingMs).toBe(6000);
 
       // Rotate back to active pane
-      rerender(
-        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>,
-      );
+      rerender(photoPane(true));
 
       // Advance 5 seconds - not yet triggered (needs 6s)
       act(() => { vi.advanceTimersByTime(5000);
@@ -1066,23 +1013,14 @@ describe('PhotoCarouselWidget component', () => {
     window.Image = MockImage;
 
     try {
-      useDisplayStore.setState({
-        widgets: {
-          [widgetId]: {
-            meta: widgetMeta('photo-carousel', {}),
-            data: {
-              photos: [
-                { id: '1', url: 'https://example.com/p1.jpg' },
-                { id: '2', url: '' }, // Broken URL
-                { id: '3', url: 'https://example.com/p3.jpg' },
-              ],
-              cycle_interval_seconds: 10,
-            },
-            state: 'ready',
-            timestamp: '2026-10-31T12:00:00Z',
-          },
-        },
- });
+      seedWidget(widgetId, widgetMeta('photo-carousel', {}), {
+        photos: [
+          { id: '1', url: 'https://example.com/p1.jpg' },
+          { id: '2', url: '' }, // Broken URL
+          { id: '3', url: 'https://example.com/p3.jpg' },
+        ],
+        cycle_interval_seconds: 10,
+      });
 
       const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
@@ -1522,11 +1460,11 @@ describe('PhotoCarouselWidget component', () => {
       const { container, rerender } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
       fireEvent.click(container.querySelector('button.photo-video-play-btn')!);
       expect(container.querySelector('video.photo-video-player')).not.toBeNull();
-      rerender(<PaneContext.Provider value={{ isCurrentPane: false, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
+      rerender(photoPane(false));
       expect(container.querySelector('video.photo-video-player')).toBeNull();
       expect(container.querySelector('button.photo-video-play-btn')).not.toBeNull();
 
-      rerender(<PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}><PhotoCarouselWidget id={widgetId} type="photo-carousel" /></PaneContext.Provider>);
+      rerender(photoPane(true));
       fireEvent.click(container.querySelector('button.photo-video-play-btn')!);
       expect(container.querySelector('video.photo-video-player')).not.toBeNull();
       act(() => { useDisplayStore.setState({ video: { mode: 'video', primary: null, pip: null } }); });

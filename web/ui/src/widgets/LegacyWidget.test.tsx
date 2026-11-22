@@ -5,6 +5,7 @@ import { useDisplayStore, type WidgetEntry } from '../store';
 import { LegacyWidget } from './LegacyWidget';
 import { hoistTypeStylesheets, legacyRenderURL, mountHooks, prepareFragment, unmountAll } from './legacyFragment';
 import { itemAt } from '../test-utils/lookup';
+import { renderWidget } from '../test-utils/widget';
 
 const ID = 'legacy-1';
 
@@ -375,11 +376,7 @@ describe('legacy fragment helpers', () => {
       });
     });
 
-    const { unmount } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <LegacyWidget id="legacy-empty-meta" type="" />
-      </PaneContext.Provider>
-    );
+    const { unmount } = renderWidget(LegacyWidget, 'legacy-empty-meta', '');
 
     unmount();
   });

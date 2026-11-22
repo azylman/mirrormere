@@ -4,6 +4,7 @@ import { PaneContext } from '../../carousel/PaneContext';
 import { useDisplayStore } from '../../store';
 import { PlexRecentWidget, type PlexItem, type SeerrResultItem } from './PlexRecentWidget';
 import { itemAt } from '../../test-utils/lookup';
+import { seedWidget, widgetMeta } from '../../test-utils/widget';
 
 const mockRecentItems: PlexItem[] = [
   {
@@ -343,22 +344,7 @@ describe('PlexRecentWidget', () => {
   });
 
   it('respects custom api_base configured in widget meta', async () => {
-    useDisplayStore.setState({
-      widgets: {
-        'plex-custom': {
-          meta: {
-            type: 'plex-recent',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: { api_base: '/custom-gateway' },
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {},
-          timestamp: '2026-11-01T12:00:00Z',
-        },
-      },
-    });
+    seedWidget('plex-custom', widgetMeta('plex-recent', { api_base: '/custom-gateway' }, [3, 2]), {}, 'healthy');
 
     render(<PlexRecentWidget id="plex-custom" type="plex-recent" />);
 
@@ -441,16 +427,7 @@ describe('PlexRecentWidget', () => {
   });
 
   it('covers fallback badges, TV play failure, Seerr search/request errors, and modal close buttons', async () => {
-    useDisplayStore.setState({
-      widgets: {
-        'plex-cov': {
-          state: 'ready',
-          data: null,
-          timestamp: '2026-01-01T00:00:00Z',
-          meta: { type: 'plex-recent', assets_base: '', origin: [0, 0], dimensions: [1, 1], config: { api_base: '/custom-plex/' } },
-        },
-      },
-    });
+    seedWidget('plex-cov', widgetMeta('plex-recent', { api_base: '/custom-plex/' }, [1, 1]), null);
     const edgeItems: PlexItem[] = [
       { id: '1', title: 'No Badge Movie', year: 2025, category: 'movie' },
       { id: '2', title: 'No Badge TV', category: 'tv' },
