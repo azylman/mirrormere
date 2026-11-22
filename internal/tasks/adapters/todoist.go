@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/tasks"
 )
 
@@ -186,7 +187,7 @@ func fetchPaginated[T any](ctx context.Context, a *TodoistAdapter, rawURL, resou
 
 		items, nextCursor, parseErr := unmarshalPageOrSlice[T](body)
 		if parseErr != nil {
-			return nil, fmt.Errorf("failed to parse todoist %s from %s: %w", resourceLabel, sanitizeURL(targetURL), parseErr)
+			return nil, fmt.Errorf("failed to parse todoist %s from %s: %w", resourceLabel, api.SanitizeURL(targetURL), parseErr)
 		}
 		all = append(all, items...)
 
@@ -218,7 +219,7 @@ func (a *TodoistAdapter) resolveProjectID(ctx context.Context) (string, string, 
 		}
 		var p todoistProject
 		if err := json.Unmarshal(body, &p); err != nil {
-			return "", "", fmt.Errorf("failed to parse todoist project from %s: %w", sanitizeURL(projectURL), err)
+			return "", "", fmt.Errorf("failed to parse todoist project from %s: %w", api.SanitizeURL(projectURL), err)
 		}
 		id := string(p.ID)
 		if id == "" {

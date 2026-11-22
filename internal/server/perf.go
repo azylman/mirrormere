@@ -73,16 +73,16 @@ func handlePerf(hists map[string]*prometheus.HistogramVec) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
-			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+			api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		var req api.PerfBatchRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, perfMaxBodyBytes)).Decode(&req); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid JSON body")
+			api.WriteError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
 		if err := validatePerfBatch(req, hists); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			api.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		for _, sample := range req.Samples {

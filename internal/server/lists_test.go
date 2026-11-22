@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/server"
 	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
@@ -42,7 +43,7 @@ func TestDefaultListsHandler_CompleteListItem(t *testing.T) {
 		{"err_upstream_not_found", http.MethodPost, "groceries", "i1", true, adapters.ErrUpstreamNotFound, http.StatusNotFound},
 		{"err_completion_unsupported", http.MethodPost, "groceries", "i1", true, tasks.ErrCompletionUnsupported, http.StatusNotImplemented},
 		{"err_unauthorized", http.MethodPost, "groceries", "i1", true, adapters.ErrUnauthorized, http.StatusUnauthorized},
-		{"err_upstream_500", http.MethodPost, "groceries", "i1", true, adapters.UpstreamHTTPError{Code: 500}, http.StatusBadGateway},
+		{"err_upstream_500", http.MethodPost, "groceries", "i1", true, api.UpstreamHTTPError{Code: 500}, http.StatusBadGateway},
 		{"err_internal", http.MethodPost, "groceries", "i1", true, errors.New("upstream error"), http.StatusInternalServerError},
 		{"no_completer", http.MethodPost, "groceries", "i1", false, nil, http.StatusInternalServerError},
 	}

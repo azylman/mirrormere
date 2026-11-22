@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,7 +58,7 @@ func mkPhotoPusher(ts string, err error) provider.WidgetPusher {
 func TestNewPushHandler(t *testing.T) {
 	t.Parallel()
 	p := mkPusher("", nil)
-	if provider.NewPushHandler(p, nil) == nil || provider.NewPushHandler(p, slog.Default()) == nil {
+	if provider.NewPushHandler(p) == nil {
 		t.Fatal("expected non-nil PushHandler")
 	}
 }
@@ -79,7 +78,7 @@ type pushHandlerTestCase struct {
 
 func assertPushHandlerCase(t *testing.T, tc pushHandlerTestCase, pathSuffix string, callHandler func(*provider.PushHandler, http.ResponseWriter, *http.Request, string)) {
 	t.Helper()
-	h := provider.NewPushHandler(tc.pusher, nil)
+	h := provider.NewPushHandler(tc.pusher)
 	b := tc.body
 	if b == nil {
 		b = http.NoBody
@@ -124,8 +123,8 @@ func TestPushHandler_PostWidgetPush(t *testing.T) {
 	pDefault := mkPusher("", nil)
 	tests := []pushHandlerTestCase{
 		{"options_preflight", "OPTIONS", "tile-1", nil, pDefault, 204, "POST, OPTIONS", "*", "", ""},
-		{"method_not_allowed", "GET", "tile-1", nil, pDefault, 405, "POST, OPTIONS", "", "method not allowed", ""},
-		{"nil_pusher", "POST", "tile-1", strings.NewReader(`{}`), nil, 500, "", "", "pusher not configured", ""},
+		{"method_not_allowed", "GET", "tile-1", nil, pDefault, 405, "POST, OPTIONS", "", `{"status":"error","error":"method not allowed"}`, ""},
+		{"nil_pusher", "POST", "tile-1", strings.NewReader(`{}`), nil, 500, "", "", `{"status":"error","error":"pusher not configured"}`, ""},
 		{"read_body_err", "POST", "tile-1", errReader{}, pDefault, 400, "", "", "failed to read request body", ""},
 		{"invalid_json", "POST", "tile-1", strings.NewReader(`{bad`), pDefault, 400, "", "", "invalid JSON payload", ""},
 		{"non_object_json", "POST", "tile-1", strings.NewReader(`[1]`), pDefault, 400, "", "", "payload must be a JSON object", ""},
@@ -134,7 +133,7 @@ func TestPushHandler_PostWidgetPush(t *testing.T) {
 		{"non_http_conflict", "POST", "tile-cal", strings.NewReader(`{}`), mkPusher("", provider.ErrNonHTTPWidgetPushForbidden), 409, "", "", "strictly limited to widgets using the http provider", ""},
 		{"schema_val_err", "POST", "tile-weather", strings.NewReader(`{}`), mkPusher("", errors.Join(provider.ErrSchemaValidation, errors.New("type mismatch"))), 400, "", "", "type mismatch", ""},
 		{"internal_err", "POST", "tile-err", strings.NewReader(`{}`), mkPusher("", errors.New("db down")), 500, "", "", "push ingestion error", ""},
-		{"valid_push", "POST", "tile-sensor", strings.NewReader(`{"t":21.5}`), mkPusher("2026-09-26T00:00:00Z", nil), 200, "", "", "", "2026-09-26T00:00:00Z"},
+		{"valid_push", "POST", "tile-sensor", strings.NewReader(`{"t":21.5}`), mkPusher("2026-09-26T00:00:00Z", nil), 200, "", "", `{"status":"ok","updated_at":"2026-09-26T00:00:00Z","widget_id":"tile-sensor"}`, "2026-09-26T00:00:00Z"},
 	}
 
 	for _, tc := range tests {
@@ -151,8 +150,8 @@ func TestPushHandler_PostWidgetPhotos(t *testing.T) {
 	const validJSON = `{"photos":["https://lh3.googleusercontent.com/pw/TEST"],"album_name":"Vacation"}`
 	tests := []pushHandlerTestCase{
 		{"options_preflight", "OPTIONS", "tile-1", nil, pDefault, 204, "POST, OPTIONS", "*", "", ""},
-		{"method_not_allowed", "GET", "tile-1", nil, pDefault, 405, "POST, OPTIONS", "", "method not allowed", ""},
-		{"nil_pusher", "POST", "tile-1", strings.NewReader(validJSON), nil, 500, "", "", "pusher not configured", ""},
+		{"method_not_allowed", "GET", "tile-1", nil, pDefault, 405, "POST, OPTIONS", "", `{"status":"error","error":"method not allowed"}`, ""},
+		{"nil_pusher", "POST", "tile-1", strings.NewReader(validJSON), nil, 500, "", "", `{"status":"error","error":"pusher not configured"}`, ""},
 		{"read_body_err", "POST", "tile-1", errReader{}, pDefault, 400, "", "", "failed to read request body", ""},
 		{"invalid_json", "POST", "tile-1", strings.NewReader(`{bad`), pDefault, 400, "", "", "invalid JSON payload", ""},
 		{"missing_photos", "POST", "tile-1", strings.NewReader(`{"album_name":"test"}`), pDefault, 400, "", "", "photos field is required", ""},
