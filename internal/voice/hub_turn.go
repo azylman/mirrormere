@@ -87,42 +87,47 @@ func (h *Hub) transcribeWithSpeaker(
 	return transcript, match, nil
 }
 
-func startThinkingHeartbeat(doneCtx context.Context, interval time.Duration, safeSink SSEEventSink) func() {
-	stopCh := make(chan struct{})
-	var stopOnce sync.Once
-	stop := func() {
-		stopOnce.Do(func() {
-			close(stopCh)
-		})
+// thinkingHeartbeat emits a "thinking" event every interval (measured on clk)
+// until stopped, until doneCtx ends, or until the sink returns an error.
+type thinkingHeartbeat struct {
+	mu       sync.Mutex
+	doneErr  func() error
+	interval time.Duration
+	sink     SSEEventSink
+	clk      clock
+	start    time.Time
+	timer    stopper
+	stopped  bool
+}
+
+func startThinkingHeartbeat(doneCtx context.Context, interval time.Duration, safeSink SSEEventSink, clk clock) func() {
+	hb := &thinkingHeartbeat{doneErr: doneCtx.Err, interval: interval, sink: safeSink, clk: clk, start: clk.Now()}
+	hb.mu.Lock()
+	hb.timer = clk.AfterFunc(interval, hb.tick)
+	hb.mu.Unlock()
+	return hb.stop
+}
+
+func (hb *thinkingHeartbeat) tick() {
+	hb.mu.Lock()
+	defer hb.mu.Unlock()
+	if hb.stopped || hb.doneErr() != nil {
+		return
 	}
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		tickerStart := time.Now()
-		for {
-			select {
-			case <-stopCh:
-				return
-			case <-doneCtx.Done():
-				return
-			case tick := <-ticker.C:
-				select {
-				case <-stopCh:
-					return
-				default:
-				}
-				elapsedSec := int(math.Round(tick.Sub(tickerStart).Seconds()))
-				if elapsedSec <= 0 {
-					elapsedSec = 1
-				}
-				if sinkErr := safeSink("thinking", map[string]int{"elapsed_seconds": elapsedSec}); sinkErr != nil {
-					slog.Debug("thinking heartbeat sink error", "error", sinkErr)
-					return
-				}
-			}
-		}
-	}()
-	return stop
+	elapsedSec := max(int(math.Round(hb.clk.Now().Sub(hb.start).Seconds())), 1)
+	if sinkErr := hb.sink("thinking", map[string]int{"elapsed_seconds": elapsedSec}); sinkErr != nil {
+		slog.Debug("thinking heartbeat sink error", "error", sinkErr)
+		return
+	}
+	hb.timer = hb.clk.AfterFunc(hb.interval, hb.tick)
+}
+
+// stop is idempotent; once it returns no further "thinking" event is emitted.
+func (hb *thinkingHeartbeat) stop() {
+	hb.mu.Lock()
+	defer hb.mu.Unlock()
+	hb.stopped = true
+	hb.timer.Stop()
 }
 
 func (h *Hub) synthesizeStreamedSentence(
@@ -140,7 +145,7 @@ func (h *Hub) synthesizeStreamedSentence(
 	if ttsTimeout <= 0 {
 		ttsTimeout = 10 * time.Second
 	}
-	ttsCtx, resetTTS, stopTTS := newInactivityContext(ctx, ttsTimeout)
+	ttsCtx, resetTTS, stopTTS := newInactivityContext(ctx, ttsTimeout, h.clock)
 	defer stopTTS()
 	t0 := time.Now()
 	var pushErr error
@@ -274,10 +279,10 @@ func (h *Hub) deliberateStreaming(
 	onStatus func(status string),
 	emitNonStreamingReply func(reply string) error,
 ) (string, error) {
-	streamCtx, resetStream, stopStream := newInactivityContext(ctx, brainTimeout)
+	streamCtx, resetStream, stopStream := newInactivityContext(ctx, brainTimeout, h.clock)
 	defer stopStream()
 
-	stopThinking := startThinkingHeartbeat(streamCtx, heartbeatInterval, safeSink)
+	stopThinking := startThinkingHeartbeat(streamCtx, heartbeatInterval, safeSink, h.clock)
 	defer stopThinking()
 
 	streamOnStatus := func(status string) {
@@ -333,10 +338,10 @@ func (h *Hub) deliberateUnary(
 	onStatus func(status string),
 	emitNonStreamingReply func(reply string) error,
 ) error {
-	brainCtx, resetBrain, stopBrain := newInactivityContext(ctx, brainTimeout)
+	brainCtx, resetBrain, stopBrain := newInactivityContext(ctx, brainTimeout, h.clock)
 	defer stopBrain()
 
-	stopThinking := startThinkingHeartbeat(brainCtx, heartbeatInterval, safeSink)
+	stopThinking := startThinkingHeartbeat(brainCtx, heartbeatInterval, safeSink, h.clock)
 	defer stopThinking()
 
 	unaryOnStatus := func(status string) {
