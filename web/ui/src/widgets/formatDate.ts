@@ -7,6 +7,56 @@ const SHORT_MONTHS = [
 const FULL_WEEKDAYS = [
   'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
 ];
+interface FormatArgs {
+  layout: string;
+  val: unknown;
+  cacheKey: string | null;
+}
+/**
+ * Resolves the shared (layout, value, tz) calling convention of formatTime/formatDate:
+ * one argument means value with the default layout; '' or 'default' layouts keep the default.
+ * Returns null for empty values and a cache key for string, number and valid Date values.
+ */
+function resolveFormatArgs(
+  defaultLayout: string,
+  layoutOrValue: unknown,
+  value: unknown,
+  tz: string | undefined
+): FormatArgs | null {
+  let layout = defaultLayout;
+  let val: unknown = layoutOrValue;
+  if (value !== undefined) {
+    if (typeof layoutOrValue === 'string' && layoutOrValue !== '' && layoutOrValue !== 'default') {
+      layout = layoutOrValue;
+    }
+    val = value;
+  }
+  if (val === null || val === undefined || val === '') return null;
+  const cacheKey =
+    typeof val === 'string' || typeof val === 'number'
+      ? `${layout}|${val}|${tz ?? ''}`
+      : val instanceof Date && !isNaN(val.getTime())
+        ? `${layout}|${val.getTime()}|${tz ?? ''}`
+        : null;
+  return { layout, val, cacheKey };
+}
+/**
+ * Normalizes a month-day value ('YYYY-MM-DD', 'M-D' or 'M/D') to zero-padded 'MM-DD'.
+ * Returns undefined for non-strings and unrecognized formats.
+ */
+export function normalizeMonthDay(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  const [, , fullMonth, fullDay] = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed) ?? [];
+  if (fullMonth && fullDay) {
+    return `${fullMonth.padStart(2, '0')}-${fullDay.padStart(2, '0')}`;
+  }
+  const [, month, day] = /^(\d{1,2})[-/](\d{1,2})$/.exec(trimmed) ?? [];
+  if (month && day) {
+    return `${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+  return undefined;
+}
 const validTimezoneCache = new Map<string, boolean>();
 export function isValidTimezone(tz: string | null | undefined): boolean {
   if (!tz || typeof tz !== 'string') return false;
@@ -127,21 +177,9 @@ function formatTimeWithLayout(layout: string, hour: number, minute: number): str
  * Returns '' on invalid input or date-only inputs ('YYYY-MM-DD').
  */
 export function formatTime(layoutOrValue: unknown, value?: unknown, tz?: string): string {
-  let layout = '15:04';
-  let val: unknown = layoutOrValue;
-  if (value !== undefined) {
-    if (typeof layoutOrValue === 'string' && layoutOrValue !== '' && layoutOrValue !== 'default') {
-      layout = layoutOrValue;
-    }
-    val = value;
-  }
-  if (val === null || val === undefined || val === '') return '';
-  const cacheKey =
-    typeof val === 'string' || typeof val === 'number'
-      ? `${layout}|${val}|${tz ?? ''}`
-      : val instanceof Date && !isNaN(val.getTime())
-        ? `${layout}|${val.getTime()}|${tz ?? ''}`
-        : null;
+  const args = resolveFormatArgs('15:04', layoutOrValue, value, tz);
+  if (!args) return '';
+  const { layout, val, cacheKey } = args;
   if (cacheKey) {
     const cached = formatTimeCache.get(cacheKey);
     if (cached !== undefined) return cached;
@@ -291,21 +329,9 @@ function formatDateWithLayout(
  * Preserves date-only strings ('YYYY-MM-DD') as calendar dates without timezone shifting.
  */
 export function formatDate(layoutOrValue: unknown, value?: unknown, tz?: string): string {
-  let layout = '2006-01-02';
-  let val: unknown = layoutOrValue;
-  if (value !== undefined) {
-    if (typeof layoutOrValue === 'string' && layoutOrValue !== '' && layoutOrValue !== 'default') {
-      layout = layoutOrValue;
-    }
-    val = value;
-  }
-  if (val === null || val === undefined || val === '') return '';
-  const cacheKey =
-    typeof val === 'string' || typeof val === 'number'
-      ? `${layout}|${val}|${tz ?? ''}`
-      : val instanceof Date && !isNaN(val.getTime())
-        ? `${layout}|${val.getTime()}|${tz ?? ''}`
-        : null;
+  const args = resolveFormatArgs('2006-01-02', layoutOrValue, value, tz);
+  if (!args) return '';
+  const { layout, val, cacheKey } = args;
   if (cacheKey) {
     const cached = formatDateCache.get(cacheKey);
     if (cached !== undefined) return cached;
