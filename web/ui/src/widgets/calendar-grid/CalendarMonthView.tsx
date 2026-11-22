@@ -154,17 +154,7 @@ export function CalendarMonthView({
                   className="cf-month-day-header"
                   role="button"
                   tabIndex={0}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (day.date) onSelectDay?.(day.date);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      if (day.date) onSelectDay?.(day.date);
-                    }
-                  }}
+                  {...daySelectHandlers(day.date, onSelectDay)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -270,17 +260,7 @@ export function CalendarMonthView({
                           className="cf-month-more"
                           role="button"
                           tabIndex={0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (day.date) onSelectDay?.(day.date);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (day.date) onSelectDay?.(day.date);
-                            }
-                          }}
+                          {...daySelectHandlers(day.date, onSelectDay)}
                           style={{
                             fontSize: '0.55rem',
                             color: 'var(--mm-text-dim, #94a3b8)',
@@ -339,4 +319,23 @@ export function CalendarMonthView({
       )}
     </div>
   );
+}
+
+function daySelectHandlers(date: string | undefined, onSelectDay?: (date: string) => void) {
+  const select = () => {
+    if (date) onSelectDay?.(date);
+  };
+  return {
+    onClick: (e: React.MouseEvent) => {
+      e.stopPropagation();
+      select();
+    },
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        select();
+      }
+    },
+  };
 }

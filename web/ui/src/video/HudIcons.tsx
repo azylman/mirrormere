@@ -1,6 +1,8 @@
 /**
  * Standard HUD icons used across VideoHUD transport and audio controls.
  */
+import type { ReactNode } from 'react';
+
 export const HUD_ICONS = {
   play: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>',
   pause: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>',
@@ -27,7 +29,7 @@ export function HudPauseIcon() {
   );
 }
 
-export function HudMuteIcon() {
+function SpeakerIcon({ children }: { children: ReactNode }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -41,28 +43,25 @@ export function HudMuteIcon() {
       aria-hidden="true"
     >
       <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" />
+      {children}
+    </svg>
+  );
+}
+
+export function HudMuteIcon() {
+  return (
+    <SpeakerIcon>
       <line x1="23" y1="9" x2="17" y2="15" />
       <line x1="17" y1="9" x2="23" y2="15" />
-    </svg>
+    </SpeakerIcon>
   );
 }
 
 export function HudUnmuteIcon() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width="22"
-      height="22"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" />
+    <SpeakerIcon>
       <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
-    </svg>
+    </SpeakerIcon>
   );
 }
 
