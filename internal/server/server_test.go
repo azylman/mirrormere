@@ -21,27 +21,26 @@ func doServerReq(srv *server.Server, method, path string) *httptest.ResponseReco
 
 func TestConfig_ApplyDefaults(t *testing.T) {
 	t.Parallel()
+	defaults := server.Config{Host: "0.0.0.0", Port: 8080, ReadTimeout: 5 * time.Second, ReadHeaderTimeout: 3 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+	ephemeral := defaults
+	ephemeral.Port = 0
+	custom := server.Config{Host: "127.0.0.1", Port: 9090, ReadTimeout: time.Second, ReadHeaderTimeout: 2 * time.Second, WriteTimeout: 3 * time.Second, IdleTimeout: 4 * time.Second}
 	tests := []struct {
-		name     string
-		in       server.Config
-		wantHost string
-		wantPort int
-		wantRead time.Duration
+		name string
+		in   server.Config
+		want server.Config
 	}{
-		{"defaults", server.Config{}, server.DefaultHost, server.DefaultPort, server.DefaultReadTimeout},
-		{"negative_port", server.Config{Port: -1}, server.DefaultHost, 0, server.DefaultReadTimeout},
-		{"custom", server.Config{Host: "127.0.0.1", Port: 9090, ReadTimeout: time.Second, ReadHeaderTimeout: 2 * time.Second, WriteTimeout: 3 * time.Second, IdleTimeout: 4 * time.Second}, "127.0.0.1", 9090, time.Second},
+		{"defaults", server.Config{}, defaults},
+		{"negative_port", server.Config{Port: -1}, ephemeral},
+		{"custom", custom, custom},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := tc.in
 			cfg.ApplyDefaults()
-			if cfg.Host != tc.wantHost || cfg.Port != tc.wantPort || cfg.ReadTimeout != tc.wantRead {
-				t.Fatalf("ApplyDefaults() = %+v, want host=%s port=%d read=%v", cfg, tc.wantHost, tc.wantPort, tc.wantRead)
-			}
-			if tc.name == "custom" && (cfg.ReadHeaderTimeout != 2*time.Second || cfg.WriteTimeout != 3*time.Second || cfg.IdleTimeout != 4*time.Second) {
-				t.Fatal("custom timeouts not preserved")
+			if cfg != tc.want {
+				t.Fatalf("ApplyDefaults() = %+v, want %+v", cfg, tc.want)
 			}
 		})
 	}

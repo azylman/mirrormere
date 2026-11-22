@@ -133,42 +133,13 @@ func runWriteArchiveCase(t *testing.T, tc writeArchiveTestCase) {
 
 func TestWriteArchive(t *testing.T) {
 	tests := []writeArchiveTestCase{
-		{
-			name:      "success with files",
-			wantFiles: 2,
-			wantErr:   false,
-		},
-		{
-			name:         "metaFn error ignored",
-			metaWriteErr: true,
-			wantFiles:    1,
-			wantErr:      false,
-		},
-		{
-			name:        "countersFn returns error",
-			countersErr: true,
-			wantErr:     true,
-		},
-		{
-			name:       "writer failure on tar write",
-			failWriter: true,
-			wantErr:    true,
-		},
-		{
-			name:        "mkdirTemp failure",
-			failTempDir: true,
-			wantErr:     true,
-		},
-		{
-			name:        "readDir failure",
-			failReadDir: true,
-			wantErr:     true,
-		},
-		{
-			name:       "removeAll failure",
-			failRemove: true,
-			wantErr:    true,
-		},
+		{name: "success with files", wantFiles: 2},
+		{name: "metaFn error ignored", metaWriteErr: true, wantFiles: 1},
+		{name: "countersFn returns error", countersErr: true, wantErr: true},
+		{name: "writer failure on tar write", failWriter: true, wantErr: true},
+		{name: "mkdirTemp failure", failTempDir: true, wantErr: true},
+		{name: "readDir failure", failReadDir: true, wantErr: true},
+		{name: "removeAll failure", failRemove: true, wantErr: true},
 	}
 
 	for _, tc := range tests {
@@ -178,31 +149,38 @@ func TestWriteArchive(t *testing.T) {
 	}
 }
 
+// writeCovCounters returns a countersFn that writes covcounters.test, or fails with err when set.
+func writeCovCounters(err error) func(string) error {
+	return func(dir string) error {
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dir, "covcounters.test"), []byte("covdata"), 0o600)
+	}
+}
+
 func TestHandler(t *testing.T) {
+	const tarType = "application/x-tar"
+	tarOK, tarErr := handler(nil, writeCovCounters(nil)), handler(nil, writeCovCounters(errors.New("simulated flush error")))
 	tests := []struct {
 		name        string
+		h           http.HandlerFunc
 		method      string
-		writeErr    error
 		wantCode    int
 		wantAllow   string
 		wantType    string
 		wantBodySub string
 	}{
-		{name: "method not allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed, wantAllow: "GET, POST"},
-		{name: "post tar", method: http.MethodPost, wantCode: http.StatusOK, wantType: "application/x-tar", wantBodySub: "covcounters.test"},
-		{name: "get tar", method: http.MethodGet, wantCode: http.StatusOK, wantType: "application/x-tar", wantBodySub: "covcounters.test"},
-		{name: "write error", method: http.MethodGet, writeErr: errors.New("simulated flush error"), wantCode: http.StatusInternalServerError, wantBodySub: "simulated flush error"},
+		{name: "method not allowed", h: tarOK, method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed, wantAllow: "GET, POST"},
+		{name: "post tar", h: tarOK, method: http.MethodPost, wantCode: http.StatusOK, wantType: tarType, wantBodySub: "covcounters.test"},
+		{name: "get tar", h: tarOK, method: http.MethodGet, wantCode: http.StatusOK, wantType: tarType, wantBodySub: "covcounters.test"},
+		{name: "write error", h: tarErr, method: http.MethodGet, wantCode: http.StatusInternalServerError, wantBodySub: "simulated flush error"},
+		{name: "public handler rejects put", h: Handler(), method: http.MethodPut, wantCode: http.StatusMethodNotAllowed, wantAllow: "GET, POST"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h := handler(nil, func(dir string) error {
-				if tc.writeErr != nil {
-					return tc.writeErr
-				}
-				return os.WriteFile(filepath.Join(dir, "covcounters.test"), []byte("covdata"), 0o600)
-			})
 			rec := httptest.NewRecorder()
-			h(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", http.NoBody))
+			tc.h(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", http.NoBody))
 			if rec.Code != tc.wantCode {
 				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
 			}
@@ -216,13 +194,5 @@ func TestHandler(t *testing.T) {
 				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.wantBodySub)
 			}
 		})
-	}
-}
-
-func TestHandlerPublic(t *testing.T) {
-	rec := httptest.NewRecorder()
-	Handler()(rec, httptest.NewRequest(http.MethodPut, "/", http.NoBody))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("code = %d", rec.Code)
 	}
 }
