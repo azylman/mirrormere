@@ -17,7 +17,7 @@ COPY --link . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -cover -covermode=atomic -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/cast-watcher ./client/cast-watcher
+    go build -cover -coverpkg=./client/cast-watcher/...,./internal/api/...,./internal/covflush/...,./internal/runutil/... -covermode=atomic -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/cast-watcher ./client/cast-watcher
 
 # Runtime stage: minimal hardened Alpine 3.24 environment
 FROM alpine:3.24
