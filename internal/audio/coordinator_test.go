@@ -81,7 +81,7 @@ func TestCoordinator_VolumeAndMute(t *testing.T) {
 	}
 }
 
-func TestCoordinator_ConcurrentAndSchema(t *testing.T) {
+func TestCoordinator_Concurrent(t *testing.T) {
 	t.Parallel()
 	hub := events.NewHub(events.HubConfig{RingCapacity: 100, RingTTL: time.Minute}, nil, nil)
 	t.Cleanup(hub.Close)
@@ -93,16 +93,23 @@ func TestCoordinator_ConcurrentAndSchema(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for j := range 50 {
-				_, _, _ = coord.SetVolume((id*20 + j) % 101)
-				_, _, _ = coord.SetMute(nil)
-				if v, _ := coord.GetState(); v < 0 || v > 100 {
+				if _, _, err := coord.SetVolume((id*20 + j) % 101); err != nil {
+					t.Errorf("SetVolume failed: %v", err)
+				}
+				if _, _, err := coord.SetMute(nil); err != nil {
+					t.Errorf("SetMute failed: %v", err)
+				}
+				if v, m := coord.GetState(); v < 0 || v > 100 || (m != true && m != false) {
 					t.Errorf("invalid volume: %d", v)
 				}
 			}
 		}(i)
 	}
 	wg.Wait()
+}
 
+func TestCoordinator_Schema(t *testing.T) {
+	t.Parallel()
 	schemaBytes, err := os.ReadFile(filepath.Join("..", "..", "api", "schemas", "audio.state.json"))
 	if err != nil {
 		t.Skipf("skipping schema file test: %v", err)

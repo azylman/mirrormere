@@ -67,7 +67,11 @@ func runRunWithReadyCase(t *testing.T, tc runWithReadyCase) {
 	var stderr bytes.Buffer
 	var listener net.Listener
 	if tc.useListener {
-		listener, _ = net.Listen("tcp", "127.0.0.1:0")
+		var err error
+		listener, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	var client HAClient
 	if tc.mockClient {
@@ -89,12 +93,19 @@ func runRunWithReadyCase(t *testing.T, tc runWithReadyCase) {
 func TestRunWithReady(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	_ = os.WriteFile(configPath, []byte("server:\n  host: 127.0.0.1\n  port: 8095\nhomeassistant:\n  url: http://127.0.0.1:8123\n"), 0o600)
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	if err := os.WriteFile(configPath, []byte("server:\n  host: 127.0.0.1\n  port: 8095\nhomeassistant:\n  url: http://127.0.0.1:8123\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	port := testutil.As[*net.TCPAddr](t, ln.Addr()).Port
 	defer ln.Close()
 	collideConfig := filepath.Join(tmpDir, "collide.yaml")
-	_ = os.WriteFile(collideConfig, []byte(fmt.Sprintf("server:\n  host: 127.0.0.1\n  port: %d\nhomeassistant:\n  url: http://127.0.0.1:8123\n", port)), 0o600)
+	if err := os.WriteFile(collideConfig, []byte(fmt.Sprintf("server:\n  host: 127.0.0.1\n  port: %d\nhomeassistant:\n  url: http://127.0.0.1:8123\n", port)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []runWithReadyCase{
 		{name: "help", args: []string{"--help"}},

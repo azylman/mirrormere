@@ -83,7 +83,11 @@ func TestRun_Lifecycle(t *testing.T) {
 	client := NewCastClient(ClientConfig{
 		ChromecastAddr: "127.0.0.1:8009",
 		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			c, _ := net.Pipe()
+			c, s := net.Pipe()
+			go func() {
+				defer s.Close()
+				<-ctx.Done()
+			}()
 			return c, nil
 		},
 	})

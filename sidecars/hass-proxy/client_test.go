@@ -76,7 +76,9 @@ func newTruncatedIntentServer(t *testing.T) string {
 		}
 		defer c.Close()
 		buf := make([]byte, 1024)
-		_, _ = c.Read(buf)
+		if _, err := c.Read(buf); err != nil {
+			return
+		}
 		_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n32\r\npartially written content"))
 	}()
 	return "http://" + ln.Addr().String()

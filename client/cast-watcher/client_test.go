@@ -27,6 +27,39 @@ func (p *pipeDialer) Dial(ctx context.Context, network, addr string) (net.Conn, 
 	return p.clientConn, nil
 }
 
+func sendTestReceiverStatus(t *testing.T, conn net.Conn, payload string) {
+	t.Helper()
+	f, err := EncodeCastMessage(CastMessage{SourceID: DestinationReceiver, DestinationID: SourceSender, Namespace: NamespaceReceiver, PayloadUTF8: payload})
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+	_, _ = conn.Write(f)
+}
+
+func sendTestMediaStatus(t *testing.T, conn net.Conn, sourceID, payload string) {
+	t.Helper()
+	mf, err := EncodeCastMessage(CastMessage{SourceID: sourceID, DestinationID: SourceSender, Namespace: NamespaceMedia, PayloadUTF8: payload})
+	if err != nil {
+		t.Fatalf("encode media status failed: %v", err)
+	}
+	_, _ = conn.Write(mf)
+}
+
+func assertAppConnect(t *testing.T, conn net.Conn) {
+	t.Helper()
+	m1, err := DecodeCastMessage(conn)
+	if err != nil {
+		t.Fatalf("decode app connect failed: %v", err)
+	}
+	m2, err := DecodeCastMessage(conn)
+	if err != nil {
+		t.Fatalf("decode app get_status failed: %v", err)
+	}
+	if m1.Namespace != NamespaceConnection && m2.Namespace != NamespaceConnection {
+		t.Errorf("expected app CONNECT")
+	}
+}
+
 func TestCastClient_HandshakeActiveAndMedia(t *testing.T) {
 	pd := newPipeDialer()
 	eventCh := make(chan string, 16)
@@ -62,19 +95,11 @@ func TestCastClient_HandshakeActiveAndMedia(t *testing.T) {
 	}
 
 	// 2. Active YouTube app
-	f, _ := EncodeCastMessage(CastMessage{SourceID: DestinationReceiver, DestinationID: SourceSender, Namespace: NamespaceReceiver, PayloadUTF8: `{"type":"RECEIVER_STATUS","status":{"applications":[{"appId":"233637DE","displayName":"YouTube","transportId":"yt-1"}]}}`})
-	_, _ = serverConn.Write(f)
-
-	// App CONNECT and GET_STATUS
-	m1, _ := DecodeCastMessage(serverConn)
-	m2, _ := DecodeCastMessage(serverConn)
-	if m1.Namespace != NamespaceConnection && m2.Namespace != NamespaceConnection {
-		t.Errorf("expected app CONNECT")
-	}
+	sendTestReceiverStatus(t, serverConn, `{"type":"RECEIVER_STATUS","status":{"applications":[{"appId":"233637DE","displayName":"YouTube","transportId":"yt-1"}]}}`)
+	assertAppConnect(t, serverConn)
 
 	// 3. MEDIA_STATUS PLAYING
-	mf, _ := EncodeCastMessage(CastMessage{SourceID: "yt-1", DestinationID: SourceSender, Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":99,"playerState":"PLAYING"}]}`})
-	_, _ = serverConn.Write(mf)
+	sendTestMediaStatus(t, serverConn, "yt-1", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":99,"playerState":"PLAYING"}]}`)
 
 	waitEvents := func(expected ...string) {
 		for _, exp := range expected {
@@ -96,21 +121,18 @@ func TestCastClient_HandshakeActiveAndMedia(t *testing.T) {
 	}
 
 	// 4. Media actions
-	go func() { _ = client.SendMediaAction(ctx, "pause") }()
-	actMsg, _ := DecodeCastMessage(serverConn)
+	actMsg := sendMediaActionAndRead(ctx, t, client, serverConn, "pause")
 	if !strings.Contains(actMsg.PayloadUTF8, "PAUSE") {
 		t.Errorf("expected PAUSE, got %s", actMsg.PayloadUTF8)
 	}
 
-	go func() { _ = client.SendMediaAction(ctx, "toggle_playback") }()
-	togMsg, _ := DecodeCastMessage(serverConn)
+	togMsg := sendMediaActionAndRead(ctx, t, client, serverConn, "toggle_playback")
 	if !strings.Contains(togMsg.PayloadUTF8, "PAUSE") {
 		t.Errorf("expected PAUSE on toggle, got %s", togMsg.PayloadUTF8)
 	}
 
 	// 5. Return to Backdrop
-	ib, _ := EncodeCastMessage(CastMessage{SourceID: DestinationReceiver, DestinationID: SourceSender, Namespace: NamespaceReceiver, PayloadUTF8: `{"type":"RECEIVER_STATUS","status":{"applications":[{"appId":"` + BackdropAppID + `","displayName":"Backdrop","transportId":"b-1"}]}}`})
-	_, _ = serverConn.Write(ib)
+	sendTestReceiverStatus(t, serverConn, `{"type":"RECEIVER_STATUS","status":{"applications":[{"appId":"`+BackdropAppID+`","displayName":"Backdrop","transportId":"b-1"}]}}`)
 	waitEvents("/api/video/dismiss")
 
 	snap = client.GetStatus()
@@ -197,7 +219,10 @@ func TestCastClient_MediaActionsAndSeek(t *testing.T) {
 
 	seekErrCh := make(chan error, 1)
 	go func() { seekErrCh <- client.Seek(ctx, 128.5) }()
-	m, _ = DecodeCastMessage(s1)
+	m, err := DecodeCastMessage(s1)
+	if err != nil {
+		t.Fatalf("decode seek frame failed: %v", err)
+	}
 	if err := <-seekErrCh; err != nil {
 		t.Fatalf("seek failed: %v", err)
 	}
@@ -260,11 +285,17 @@ func TestCastClient_Wake(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- client.Wake(ctx) }()
 
-	launchMsg, _ := DecodeCastMessage(s1)
+	launchMsg, err := DecodeCastMessage(s1)
+	if err != nil {
+		t.Fatalf("decode launch failed: %v", err)
+	}
 	if !strings.Contains(launchMsg.PayloadUTF8, "LAUNCH") {
 		t.Errorf("expected LAUNCH, got %s", launchMsg.PayloadUTF8)
 	}
-	stopMsg, _ := DecodeCastMessage(s1)
+	stopMsg, err := DecodeCastMessage(s1)
+	if err != nil {
+		t.Fatalf("decode stop failed: %v", err)
+	}
 	if !strings.Contains(stopMsg.PayloadUTF8, "STOP") {
 		t.Errorf("expected STOP, got %s", stopMsg.PayloadUTF8)
 	}
@@ -282,8 +313,10 @@ func TestCastClient_Wake(t *testing.T) {
 	client2.conn, client2.connected = c2, true
 	ctxCancel, cancel := context.WithCancel(context.Background())
 	go func() {
-		_, _ = DecodeCastMessage(s2)
-		cancel()
+		defer cancel()
+		if _, err := DecodeCastMessage(s2); err != nil {
+			return
+		}
 	}()
 	if err := client2.Wake(ctxCancel); !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got: %v", err)
@@ -303,8 +336,10 @@ func TestCastClient_Wake(t *testing.T) {
 	client4 := NewCastClient(ClientConfig{WakeDelay: 2 * time.Millisecond})
 	client4.conn, client4.connected = c4, true
 	go func() {
-		_, _ = DecodeCastMessage(s4)
-		_ = s4.Close()
+		defer s4.Close()
+		if _, err := DecodeCastMessage(s4); err != nil {
+			return
+		}
 	}()
 	if err := client4.Wake(ctx); err == nil {
 		t.Error("expected error on closed conn for STOP")
@@ -357,7 +392,10 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 	var received []map[string]any
 	coreServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		mu.Lock()
 		received = append(received, body)
 		mu.Unlock()
@@ -458,10 +496,16 @@ func TestCastClient_WatchdogTrigger(t *testing.T) {
 	serverConn := pd.serverConn
 	defer serverConn.Close()
 
-	_, _ = DecodeCastMessage(serverConn)
-	_, _ = DecodeCastMessage(serverConn)
+	if _, err := DecodeCastMessage(serverConn); err != nil {
+		t.Fatalf("decode init connect frame: %v", err)
+	}
+	if _, err := DecodeCastMessage(serverConn); err != nil {
+		t.Fatalf("decode init status frame: %v", err)
+	}
 
-	_ = serverConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if err := serverConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
 	var buf [1]byte
 	for {
 		if _, err := serverConn.Read(buf[:]); err != nil {
@@ -515,7 +559,9 @@ func TestCastClient_Lifecycle(t *testing.T) {
 	cDial := NewCastClient(ClientConfig{ChromecastAddr: "127.0.0.1:65534"})
 	ctxT, cancelT := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancelT()
-	_, _ = cDial.dialer(ctxT, "tcp", "127.0.0.1:65534")
+	if conn, err := cDial.dialer(ctxT, "tcp", "127.0.0.1:65534"); err == nil {
+		conn.Close()
+	}
 
 	cBack := NewCastClient(ClientConfig{ReconnectBase: 5 * time.Millisecond, ReconnectMax: 2 * time.Millisecond, ChromecastAddr: "127.0.0.1:65534"})
 	ctxB, cancelB := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -533,7 +579,10 @@ func TestCastClient_Lifecycle(t *testing.T) {
 	var capturedTrigger map[string]any
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/video/trigger" {
-			_ = json.NewDecoder(r.Body).Decode(&capturedTrigger)
+			if err := json.NewDecoder(r.Body).Decode(&capturedTrigger); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
