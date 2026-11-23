@@ -603,17 +603,20 @@ func assertMealieViewDayMeals(t *testing.T, view *FamilyViewModel) {
 
 func assertMealieViewOwnersAndRedaction(t *testing.T, view *FamilyViewModel) {
 	t.Helper()
-	dropoffEv, _ := findViewEvent(view, "kid_dropoff")
+	dropoffEv, dropoffDate := findViewEvent(view, "kid_dropoff")
+	_ = dropoffDate
 	if dropoffEv == nil || len(dropoffEv.Owners) != 1 || dropoffEv.Owners[0] != "Kid" || dropoffEv.Color != "#EC4899" {
 		t.Errorf("expected 'Kid dropoff' on shared Family calendar to match Kid, got %+v", dropoffEv)
 	}
 
-	bdayEv, _ := findViewEvent(view, "kid_bday")
+	bdayEv, bdayDate := findViewEvent(view, "kid_bday")
+	_ = bdayDate
 	if bdayEv == nil || len(bdayEv.Owners) != 1 || bdayEv.Owners[0] != "Kid" || bdayEv.Color != "#EC4899" {
 		t.Errorf("expected 'Kid's birthday' on shared Family calendar to match Kid, got %+v", bdayEv)
 	}
 
-	privEv, _ := findViewEvent(view, "priv_shared_ev")
+	privEv, privDate := findViewEvent(view, "priv_shared_ev")
+	_ = privDate
 	if privEv == nil || privEv.Title != "Busy" || len(privEv.Owners) != 2 {
 		t.Errorf("expected private shared calendar event to be redacted and retain both owners without narrowing by raw title, got %+v", privEv)
 	}

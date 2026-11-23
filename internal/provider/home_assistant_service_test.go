@@ -137,10 +137,11 @@ func TestHomeAssistant_CallServiceWithResponse(t *testing.T) {
 func TestHomeAssistant_FetchLovelaceConfig_ErrorsAndFallbacks(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	srv, _ := testutil.RouteServer(t, map[string]testutil.Route{
+	srv, captured := testutil.RouteServer(t, map[string]testutil.Route{
 		"/api/lovelace/config":              {Status: http.StatusInternalServerError, Body: "internal crash"},
 		"/api/lovelace/config/invalid_json": {Body: "{invalid"},
 	})
+	_ = captured
 
 	p := NewHomeAssistantProviderWithClient(srv.Client(), srv.URL, "tok")
 	p.client = nil
@@ -165,7 +166,8 @@ func TestHomeAssistant_FetchLovelaceConfig_ErrorsAndFallbacks(t *testing.T) {
 func TestCoordinator_CallWidgetAction_RoutingAndRefresh(t *testing.T) {
 	t.Parallel()
 
-	ts, _ := newHAServiceServer(t)
+	ts, captured := newHAServiceServer(t)
+	_ = captured
 
 	ctx := context.Background()
 	hap := NewHomeAssistantProviderWithClient(ts.Client(), ts.URL, "test-tok")

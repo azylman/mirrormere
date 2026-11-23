@@ -90,8 +90,11 @@ func TestSWRCache_ConcurrentAccessSafety(t *testing.T) {
 				case 1:
 					cache.RecordFailure(id, errors.New("transient"), now)
 				default:
-					_, _ = cache.Get(id)
-					_ = cache.GetStatusMap()
+					val, ok := cache.Get(id)
+					_ = val
+					_ = ok
+					status := cache.GetStatusMap()
+					_ = status
 				}
 			}
 		}(fmt.Sprintf("widget-%d", i%5), i)

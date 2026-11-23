@@ -95,7 +95,9 @@ func assertWidgetRenderResponse(t *testing.T, rec *httptest.ResponseRecorder, tc
 
 func TestHandler_GetWidgetRender(t *testing.T) {
 	t.Parallel()
-	handler, _, _ := setupTestServer(t)
+	handler, tmpDir, pkg := setupTestServer(t)
+	_ = tmpDir
+	_ = pkg
 
 	tests := []widgetRenderTestCase{
 		{name: "success GET 200", method: http.MethodGet, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusOK, wantBody: []string{`<div class="sensor">68F</div>`}, checkCORS: true},
@@ -140,7 +142,9 @@ func TestHandler_GetWidgetRender(t *testing.T) {
 
 func TestHandler_GetWidgetAsset(t *testing.T) {
 	t.Parallel()
-	handler, _, _ := setupTestServer(t)
+	handler, tmpDir, pkg := setupTestServer(t)
+	_ = tmpDir
+	_ = pkg
 
 	tests := []struct {
 		name        string
@@ -192,21 +196,28 @@ func TestHandler_GetWidgetAsset(t *testing.T) {
 	}
 }
 
+func writeTestCSS(t *testing.T, path, content string, mtime time.Time) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile %s: %v", path, err)
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatalf("Chtimes %s: %v", path, err)
+	}
+}
+
 func TestHandler_ServeStyle(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	validCSS := filepath.Join(tmpDir, "valid.css")
 	customCSS := filepath.Join(tmpDir, "custom.css")
 	olderCustomCSS := filepath.Join(tmpDir, "older_custom.css")
-	_ = os.WriteFile(validCSS, []byte("/* test stylesheet */"), 0o644)
-	_ = os.WriteFile(customCSS, []byte("/* custom stylesheet */"), 0o644)
-	_ = os.WriteFile(olderCustomCSS, []byte("/* older custom stylesheet */"), 0o644)
 	baseTime := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 	newerTime := time.Date(2026, 10, 18, 13, 0, 0, 0, time.UTC)
 	olderTime := time.Date(2026, 10, 18, 11, 0, 0, 0, time.UTC)
-	_ = os.Chtimes(validCSS, baseTime, baseTime)
-	_ = os.Chtimes(customCSS, newerTime, newerTime)
-	_ = os.Chtimes(olderCustomCSS, olderTime, olderTime)
+	writeTestCSS(t, validCSS, "/* test stylesheet */", baseTime)
+	writeTestCSS(t, customCSS, "/* custom stylesheet */", newerTime)
+	writeTestCSS(t, olderCustomCSS, "/* older custom stylesheet */", olderTime)
 	missingCSS := filepath.Join(tmpDir, "nonexistent.css")
 
 	tests := []struct {

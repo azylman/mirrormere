@@ -245,7 +245,9 @@ func TestHandler_GetWidgetJSON_MatchesHydration(t *testing.T) {
 	if err := json.Unmarshal(chatRaw, &chatSample); err != nil {
 		t.Fatalf("invalid chat sample: %v", err)
 	}
-	tasksLoaded, _, _ := sampleTasksData(widgetJSONNow)
+	tasksLoaded, tasksEmpty, tasksUnnamed := sampleTasksData(widgetJSONNow)
+	_ = tasksEmpty
+	_ = tasksUnnamed
 	samples := map[string]any{
 		"calendar-feed":    sampleCalendarData(),
 		"calendar-grid":    sampleCalendarData(),

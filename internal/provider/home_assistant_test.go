@@ -326,7 +326,9 @@ func testLovelaceConfig() LovelaceConfig {
 		]
 	}`
 	var cfg LovelaceConfig
-	_ = json.Unmarshal([]byte(lovelaceJSON), &cfg)
+	if err := json.Unmarshal([]byte(lovelaceJSON), &cfg); err != nil {
+		panic(err)
+	}
 	return cfg
 }
 
@@ -592,7 +594,8 @@ func TestHomeAssistant_Fetch(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			srv, _ := newHAServer(t, tc.lovelace, tc.states)
+			srv, captured := newHAServer(t, tc.lovelace, tc.states)
+			_ = captured
 			p := NewHomeAssistantProviderWithClient(srv.Client(), srv.URL, "")
 			cfg := map[string]any{"url": srv.URL}
 			maps.Copy(cfg, tc.config)
