@@ -193,7 +193,8 @@ func TestStore_ConcurrentUse(t *testing.T) {
 			defer wg.Done()
 			for range 100 {
 				s.Add(NodeKey("n"), Message{Text: "x"})
-				_ = s.Messages(nil)
+				msgs := s.Messages(nil)
+				_ = msgs
 			}
 		}(i)
 	}

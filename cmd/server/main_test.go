@@ -39,6 +39,30 @@ type testDaemon struct {
 	cancel                      context.CancelFunc
 }
 
+func writeTestCustomWidget(t *testing.T, tmpDir string, customWidget map[string]string) {
+	t.Helper()
+	if customWidget == nil {
+		return
+	}
+	wDir := filepath.Join(tmpDir, "widgets", customWidget["name"])
+	if m, ok := customWidget["manifest"]; ok {
+		if err := os.MkdirAll(wDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wDir, "manifest.yaml"), []byte(m), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, ok := customWidget["view"]; ok {
+		if err := os.MkdirAll(filepath.Join(wDir, "views"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wDir, "views", "widget.html"), []byte(v), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func startDaemon(t *testing.T, yamlContent, customCSS string, customWidget map[string]string) *testDaemon {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -50,21 +74,17 @@ func startDaemon(t *testing.T, yamlContent, customCSS string, customWidget map[s
 		t.Fatal(err)
 	}
 	if customCSS != "" {
-		_ = os.WriteFile(filepath.Join(tmpDir, "custom.css"), []byte(customCSS), 0o644)
-	}
-	_ = os.MkdirAll(filepath.Join(tmpDir, "web", "static", "ui"), 0o755)
-	_ = os.WriteFile(filepath.Join(tmpDir, "web", "static", "ui", "app.js"), []byte("console.log('init');"), 0o644)
-	if customWidget != nil {
-		wDir := filepath.Join(tmpDir, "widgets", customWidget["name"])
-		if m, ok := customWidget["manifest"]; ok {
-			_ = os.MkdirAll(wDir, 0o755)
-			_ = os.WriteFile(filepath.Join(wDir, "manifest.yaml"), []byte(m), 0o644)
-		}
-		if v, ok := customWidget["view"]; ok {
-			_ = os.MkdirAll(filepath.Join(wDir, "views"), 0o755)
-			_ = os.WriteFile(filepath.Join(wDir, "views", "widget.html"), []byte(v), 0o644)
+		if err := os.WriteFile(filepath.Join(tmpDir, "custom.css"), []byte(customCSS), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "web", "static", "ui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "web", "static", "ui", "app.js"), []byte("console.log('init');"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeTestCustomWidget(t, tmpDir, customWidget)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	readyChan, addrChan, hupChan, reloadedChan := make(chan struct{}, 1), make(chan string, 1), make(chan os.Signal, 1), make(chan struct{}, 1)
@@ -329,6 +349,28 @@ func TestBuildDisplayHandler_VoiceWaveform(t *testing.T) {
 	}
 }
 
+func setupRunCLIArgs(t *testing.T, tmpDir string, chdir bool, yamlData string, defaultArgs []string) []string {
+	t.Helper()
+	if chdir {
+		repoWidgets, err := filepath.Abs(filepath.Join("..", "..", "widgets"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(repoWidgets, filepath.Join(tmpDir, "widgets")); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(tmpDir)
+	}
+	if yamlData != "" {
+		cfgFile := filepath.Join(tmpDir, "config.yaml")
+		if err := os.WriteFile(cfgFile, []byte(yamlData), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return []string{cfgFile}
+	}
+	return defaultArgs
+}
+
 func TestRun_CLIAndErrors(t *testing.T) {
 	tests := []struct {
 		name, envCfg, yamlData, wantErr string
@@ -351,17 +393,7 @@ func TestRun_CLIAndErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
-			if tc.chdir { // widgets resolve via the config dir; web/static is absent
-				repoWidgets, _ := filepath.Abs(filepath.Join("..", "..", "widgets"))
-				_ = os.Symlink(repoWidgets, filepath.Join(tmpDir, "widgets"))
-				t.Chdir(tmpDir)
-			}
-			args := tc.args
-			if tc.yamlData != "" {
-				cfgFile := filepath.Join(tmpDir, "config.yaml")
-				_ = os.WriteFile(cfgFile, []byte(tc.yamlData), 0o644)
-				args = []string{cfgFile}
-			}
+			args := setupRunCLIArgs(t, tmpDir, tc.chdir, tc.yamlData, tc.args)
 			t.Setenv("CONFIG_PATH", tc.envCfg)
 			var stdout, stderr bytes.Buffer
 			var outW, errW io.Writer = &stdout, &stderr
@@ -414,32 +446,47 @@ func runDaemonSmokeEndpoints(t *testing.T, baseURL string) {
 		{"/style.css", "", 200},
 	}
 	for _, ep := range endpoints {
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+ep.path, http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+ep.path, http.NoBody)
+		if err != nil {
+			t.Fatal(err)
+		}
 		r, err := c.Do(req)
 		if err != nil || r.StatusCode != ep.status {
 			t.Fatalf("GET %s = %v, err=%v", ep.path, r.StatusCode, err)
 		}
-		b, _ := io.ReadAll(r.Body)
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
 		_ = r.Body.Close()
 		if ep.match != "" && !strings.Contains(string(b), ep.match) {
 			t.Fatalf("GET %s = %s", ep.path, string(b))
 		}
 	}
 
-	completeReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/lists/test/items/item-1/complete", http.NoBody)
+	completeReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/lists/test/items/item-1/complete", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
 	completeResp, err := c.Do(completeReq)
 	if err != nil || completeResp.StatusCode != http.StatusNotFound {
 		t.Fatalf("POST /api/lists/test/items/item-1/complete = %v, err=%v", completeResp.StatusCode, err)
 	}
 	_ = completeResp.Body.Close()
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/events", http.NoBody)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/events", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
 	r, err := c.Do(req)
 	if err != nil || r.StatusCode != http.StatusOK {
 		t.Fatalf("events: %v", err)
 	}
 	buf := make([]byte, 256)
-	n, _ := r.Body.Read(buf)
+	n, err := r.Body.Read(buf)
+	if err != nil && !errors.Is(err, io.EOF) {
+		t.Fatal(err)
+	}
 	_ = r.Body.Close()
 	if n == 0 {
 		t.Fatal("empty events chunk")
@@ -479,29 +526,37 @@ func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 	}
 }
 
-func applySighupAction(d *testDaemon, action string) {
+func applySighupAction(t *testing.T, d *testDaemon, action string) {
+	t.Helper()
+	var err error
 	switch action {
 	case "valid_yaml":
-		_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.1\"\nport: 0\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
+		err = os.WriteFile(d.configPath, []byte("host: \"127.0.0.1\"\nport: 0\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
 	case "invalid_yaml":
-		_ = os.WriteFile(d.configPath, []byte("timezone: [invalid: -"), 0o644)
+		err = os.WriteFile(d.configPath, []byte("timezone: [invalid: -"), 0o644)
 	case "read_error":
-		_ = os.Remove(d.configPath)
+		err = os.Remove(d.configPath)
 	case "style_reload":
-		_ = os.WriteFile(filepath.Join(d.tmpDir, "custom.css"), []byte("body { background: #9b59b6; }"), 0o644)
+		err = os.WriteFile(filepath.Join(d.tmpDir, "custom.css"), []byte("body { background: #9b59b6; }"), 0o644)
 	case "widget_reload":
-		_ = os.WriteFile(filepath.Join(d.tmpDir, "widgets", "clock", "views", "widget.html"), []byte("<div>Hot Reloaded Clock View</div>"), 0o644)
+		err = os.WriteFile(filepath.Join(d.tmpDir, "widgets", "clock", "views", "widget.html"), []byte("<div>Hot Reloaded Clock View</div>"), 0o644)
 	case "web_reload":
-		_ = os.WriteFile(filepath.Join(d.tmpDir, "web", "static", "ui", "app.js"), []byte("console.log('hot-reloaded');"), 0o644)
+		err = os.WriteFile(filepath.Join(d.tmpDir, "web", "static", "ui", "app.js"), []byte("console.log('hot-reloaded');"), 0o644)
 	case "host_port_change":
-		_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.2\"\nport: 9090\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
+		err = os.WriteFile(d.configPath, []byte("host: \"127.0.0.2\"\nport: 9090\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
 func listenSseEvents(ctx context.Context, t *testing.T, baseURL string) <-chan string {
 	t.Helper()
 	sseEvents := make(chan string, 20)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/events", http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/events", http.NoBody)
+	if err != nil {
+		t.Fatalf("SSE request: %v", err)
+	}
 	resp, err := newTestClient().Do(req)
 	if err != nil {
 		t.Fatalf("SSE connect: %v", err)
@@ -536,16 +591,35 @@ func waitSseEvent(t *testing.T, sseEvents <-chan string, wantEvt string) {
 
 func assertDaemonHTTPResponse(t *testing.T, baseURL, path, wantBody string) {
 	t.Helper()
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+path, http.NoBody)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+path, http.NoBody)
+	if err != nil {
+		t.Fatalf("assert response request: %v", err)
+	}
 	r, err := newTestClient().Do(req)
 	if err != nil || r.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s failed: %v", path, err)
 	}
-	b, _ := io.ReadAll(r.Body)
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
 	_ = r.Body.Close()
 	if !strings.Contains(string(b), wantBody) {
 		t.Fatalf("GET %s = %s, want %s", path, string(b), wantBody)
 	}
+}
+
+func assertDaemonDisplayLKGC(t *testing.T, baseURL string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/display", http.NoBody)
+	if err != nil {
+		t.Fatalf("display request: %v", err)
+	}
+	r, err := newTestClient().Do(req)
+	if err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("display LKGC: %v", err)
+	}
+	_ = r.Body.Close()
 }
 
 func TestRun_SIGHUP(t *testing.T) {
@@ -576,7 +650,7 @@ func TestRun_SIGHUP(t *testing.T) {
 				sseEvents = listenSseEvents(t.Context(), t, d.baseURL)
 			}
 
-			applySighupAction(d, tc.action)
+			applySighupAction(t, d, tc.action)
 
 			d.hupChan <- syscall.SIGHUP
 			select {
@@ -599,12 +673,7 @@ func TestRun_SIGHUP(t *testing.T) {
 				}
 			}
 			if tc.action == "invalid_yaml" || tc.action == "read_error" {
-				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, d.baseURL+"/display", http.NoBody)
-				if r, err := newTestClient().Do(req); err != nil || r.StatusCode != http.StatusOK {
-					t.Fatalf("display LKGC: %v", err)
-				} else {
-					_ = r.Body.Close()
-				}
+				assertDaemonDisplayLKGC(t, d.baseURL)
 			}
 		})
 	}

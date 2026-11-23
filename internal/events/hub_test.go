@@ -21,7 +21,8 @@ func TestHub(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ch1, unsub1 := hub.Subscribe(ctx)
-	ch2, _ := hub.Subscribe(ctx)
+	ch2, unsub2 := hub.Subscribe(ctx)
+	defer unsub2()
 	evt := hub.Publish(EventWidgetUpdate, []byte(`{"status":"ok"}`))
 
 	for _, ch := range []<-chan *Event{ch1, ch2} {
@@ -57,7 +58,8 @@ func TestHub(t *testing.T) {
 	cancelC()
 	hub.Subscribe(ctxC)
 	hub.Publish(EventWidgetUpdate, []byte("{}"))
-	ch, _ := hub.Subscribe(context.Background())
+	ch, unsub3 := hub.Subscribe(context.Background())
+	defer unsub3()
 	hub.Close()
 	hub.Close()
 	hub.Subscribe(context.Background())

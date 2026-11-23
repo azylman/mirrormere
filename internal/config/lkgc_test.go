@@ -448,7 +448,10 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 			if i%2 == 0 {
 				y = strings.Replace(validBaseYAML, "America/New_York", zones[i%len(zones)], 1)
 			}
-			_, _, _ = m.Reload([]byte(y))
+			snap, diff, err := m.Reload([]byte(y))
+			_ = snap
+			_ = diff
+			_ = err
 		}
 		close(stopChan)
 	})
@@ -580,7 +583,9 @@ func TestLoadLayoutOverride(t *testing.T) {
 				path = ""
 			}
 			if tc.corruptFile {
-				_ = os.WriteFile(path, []byte("invalid: [yaml"), 0o644)
+				if err := os.WriteFile(path, []byte("invalid: [yaml"), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tc.seedOV != nil {
 				if err := config.SaveLayoutOverrideAtomic(path, tc.seedOV); err != nil {
@@ -750,16 +755,20 @@ func runLayoutOverrideTestStep(t *testing.T, tc layoutOverrideTestCase) {
 	}
 
 	if tc.seedCorrupt {
-		_ = os.WriteFile(path, []byte("invalid: [yaml"), 0o644)
+		if err := os.WriteFile(path, []byte("invalid: [yaml"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if tc.seedOverlap {
-		_ = config.SaveLayoutOverrideAtomic(path, &config.LayoutOverrideFile{
+		if err := config.SaveLayoutOverrideAtomic(path, &config.LayoutOverrideFile{
 			Version: 1,
 			Widgets: []config.WidgetOverride{
 				{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}},
 				{ID: "weather-1", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{2, 1}},
 			},
-		})
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	m, err := config.NewManager([]byte(yamlText), loader, nil, nil, opts...)

@@ -45,8 +45,8 @@ func TestChatLogWiring(t *testing.T) {
 	if d, ok := fn("a", "kitchen"); !ok || len(testutil.As[[]any](t, testutil.As[map[string]any](t, d)["messages"])) != 1 {
 		t.Fatalf("kitchen data mismatch: %v, %v", d, ok)
 	}
-	if d, _ := fn("a", "office"); len(testutil.As[[]any](t, testutil.As[map[string]any](t, d)["messages"])) != 0 {
-		t.Fatalf("office data leaked kitchen: %v", d)
+	if d, ok := fn("a", "office"); !ok || len(testutil.As[[]any](t, testutil.As[map[string]any](t, d)["messages"])) != 0 {
+		t.Fatalf("office data leaked kitchen: %v (ok=%v)", d, ok)
 	}
 	if _, ok := fn("s", "kitchen"); ok {
 		t.Fatal("expected ok=false for spacer widget")

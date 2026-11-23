@@ -27,15 +27,29 @@ func setupReloaderTest(t *testing.T, initialCSS bool) *reloaderTestEnv {
 	t.Helper()
 	tmp := t.TempDir()
 	css, wDir, bDir, cDir := filepath.Join(tmp, "c.css"), filepath.Join(tmp, "web"), filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
-	_ = os.MkdirAll(filepath.Join(wDir, "static", "ui"), 0o755)
-	_ = os.MkdirAll(filepath.Join(wDir, "templates"), 0o755)
-	_ = os.WriteFile(filepath.Join(wDir, "static", "ui", "app.js"), []byte("console.log('v1');"), 0o644)
-	_ = os.WriteFile(filepath.Join(wDir, "templates", "display_react.html"), []byte("<html>v1</html>"), 0o644)
-	_ = os.MkdirAll(bDir, 0o755)
-	_ = os.MkdirAll(cDir, 0o755)
+	if err := os.MkdirAll(filepath.Join(wDir, "static", "ui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(wDir, "templates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wDir, "static", "ui", "app.js"), []byte("console.log('v1');"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wDir, "templates", "display_react.html"), []byte("<html>v1</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(bDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	writeWidgetPkg(t, bDir, "test-widget", "default", "<div>Initial View</div>", "", "")
 	if initialCSS {
-		_ = os.WriteFile(css, []byte("body { background: #000; }"), 0o644)
+		if err := os.WriteFile(css, []byte("body { background: #000; }"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	loader := widget.NewLoader(bDir, cDir)
 	cfgMgr, err := config.NewManager([]byte("timezone: UTC\ndisplay:\n  widgets:\n    - id: test-instance\n      type: test-widget\n      dimensions: [6, 2]\n"), loader, nil, nil)
@@ -61,17 +75,29 @@ func writeWidgetPkg(t *testing.T, dir, name, manifest, view, assetName, assetBod
 		manifest = "name: " + name + "\nversion: \"1.0.0\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n"
 	}
 	if manifest != "" {
-		_ = os.MkdirAll(p, 0o755)
-		_ = os.WriteFile(filepath.Join(p, "manifest.yaml"), []byte(manifest), 0o644)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if view != "" {
-		_ = os.MkdirAll(filepath.Join(p, "views"), 0o755)
-		_ = os.WriteFile(filepath.Join(p, "views", "widget.html"), []byte(view), 0o644)
+		if err := os.MkdirAll(filepath.Join(p, "views"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, "views", "widget.html"), []byte(view), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if assetName != "" {
 		ap := filepath.Join(p, "assets", assetName)
-		_ = os.MkdirAll(filepath.Dir(ap), 0o755)
-		_ = os.WriteFile(ap, []byte(assetBody), 0o644)
+		if err := os.MkdirAll(filepath.Dir(ap), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(ap, []byte(assetBody), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return p
 }
@@ -131,7 +157,9 @@ func TestAssetReloader_ReloadCSS(t *testing.T) {
 			if tc.deleteCSS {
 				_ = os.Remove(env.customCSSPath)
 			} else if tc.modifyCSS != "" {
-				_ = os.WriteFile(env.customCSSPath, []byte(tc.modifyCSS), 0o644)
+				if err := os.WriteFile(env.customCSSPath, []byte(tc.modifyCSS), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if got := env.reloader.ReloadCSS(); got != tc.wantReload {
 				t.Fatalf("ReloadCSS() = %v, want %v", got, tc.wantReload)
@@ -148,6 +176,17 @@ func TestAssetReloader_ReloadCSS(t *testing.T) {
 			}
 			expectNoEvent(t, env.eventCh)
 		})
+	}
+}
+
+func writeTestWebAsset(t *testing.T, webDir, relFile, content string) {
+	t.Helper()
+	p := filepath.Join(webDir, filepath.FromSlash(relFile))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -175,9 +214,7 @@ func TestAssetReloader_ReloadWeb(t *testing.T) {
 				return
 			}
 			if tc.relFile != "" {
-				p := filepath.Join(env.webDir, filepath.FromSlash(tc.relFile))
-				_ = os.MkdirAll(filepath.Dir(p), 0o755)
-				_ = os.WriteFile(p, []byte(tc.content), 0o644)
+				writeTestWebAsset(t, env.webDir, tc.relFile, tc.content)
 			}
 			if got := env.reloader.ReloadWeb(); got != tc.wantReload {
 				t.Fatalf("ReloadWeb() = %v, want %v", got, tc.wantReload)
@@ -200,7 +237,9 @@ func TestAssetReloader_ReloadWeb(t *testing.T) {
 func prepareReloaderSetup(t *testing.T, env *reloaderTestEnv, setup, act string) {
 	t.Helper()
 	if setup == "builtin" {
-		_, _ = env.renderEngine.RenderWidgetWithOverrides(context.Background(), "test-instance", "", nil)
+		if _, err := env.renderEngine.RenderWidgetWithOverrides(context.Background(), "test-instance", "", nil); err != nil {
+			t.Fatal(err)
+		}
 		return
 	}
 	if setup == "" {
@@ -224,23 +263,28 @@ func applyReloaderAct(t *testing.T, env *reloaderTestEnv, act string) {
 	t.Helper()
 	pBuiltin := filepath.Join(env.builtinDir, "test-widget")
 	pCustom := filepath.Join(env.customDir, "c-pkg")
+	var err error
 	switch act {
 	case "modify_view":
-		_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>New View</div>"), 0o644)
+		err = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>New View</div>"), 0o644)
 	case "modify_manifest":
-		_ = os.WriteFile(filepath.Join(pBuiltin, "manifest.yaml"), []byte("name: test-widget\nversion: \"1.0.1\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n"), 0o644)
+		err = os.WriteFile(filepath.Join(pBuiltin, "manifest.yaml"), []byte("name: test-widget\nversion: \"1.0.1\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n"), 0o644)
 	case "modify_asset":
-		_ = os.WriteFile(filepath.Join(env.customDir, "a-pkg", "assets", "icons", "i.svg"), []byte("<svg>2</svg>"), 0o644)
+		err = os.WriteFile(filepath.Join(env.customDir, "a-pkg", "assets", "icons", "i.svg"), []byte("<svg>2</svg>"), 0o644)
 	case "remove_view":
-		_ = os.Remove(filepath.Join(pCustom, "views", "widget.html"))
+		err = os.Remove(filepath.Join(pCustom, "views", "widget.html"))
 	case "promote":
 		writeWidgetPkg(t, env.customDir, "bad-pkg", "", "<div>promoted</div>", "", "")
 	case "delete_pkg":
 		_ = os.RemoveAll(pCustom)
 		_ = os.RemoveAll(filepath.Join(env.customDir, "bad-pkg"))
 	case "combined":
-		_ = os.WriteFile(env.customCSSPath, []byte("body { color: red; }"), 0o644)
-		_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>Combined View</div>"), 0o644)
+		if err = os.WriteFile(env.customCSSPath, []byte("body { color: red; }"), 0o644); err == nil {
+			err = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>Combined View</div>"), 0o644)
+		}
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -279,7 +323,11 @@ func verifyReloadWidgetsCase(t *testing.T, env *reloaderTestEnv, tc reloadWidget
 	}
 	expectNoEvent(t, env.eventCh)
 	if tc.act == "modify_view" {
-		if h, _ := env.renderEngine.RenderWidgetWithOverrides(context.Background(), "test-instance", "", nil); string(h) != "<div>New View</div>" {
+		h, err := env.renderEngine.RenderWidgetWithOverrides(context.Background(), "test-instance", "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(h) != "<div>New View</div>" {
 			t.Fatalf("rendered = %s", string(h))
 		}
 	}

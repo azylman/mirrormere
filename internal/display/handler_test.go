@@ -39,9 +39,15 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 	primPath := filepath.Join(tempDir, "display_react.html")
 	localPath := filepath.Join(tempDir, "local.html")
 	malformedPath := filepath.Join(tempDir, "malformed.html")
-	_ = os.WriteFile(primPath, []byte("<h1>primary</h1>"), 0o644)
-	_ = os.WriteFile(localPath, []byte("<h1>local</h1>"), 0o644)
-	_ = os.WriteFile(malformedPath, []byte("<div>{{ bad"), 0o644)
+	if err := os.WriteFile(primPath, []byte("<h1>primary</h1>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte("<h1>local</h1>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(malformedPath, []byte("<div>{{ bad"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	primary := []display.HandlerOption{display.WithTemplatePath(primPath), display.WithLocalTemplatePath("")}
 	missing := []display.HandlerOption{display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath("/no/such/local")}
 
@@ -181,9 +187,13 @@ func TestGetStatic(t *testing.T) {
 		"test.custom": []byte("custom data"),
 	}
 	for relPath, data := range files {
-		_ = os.WriteFile(filepath.Join(tempDir, relPath), data, 0o644)
+		if err := os.WriteFile(filepath.Join(tempDir, relPath), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	_ = os.WriteFile(filepath.Join(localDir, "theme.css"), []byte("body { background: #000; }"), 0o644)
+	if err := os.WriteFile(filepath.Join(localDir, "theme.css"), []byte("body { background: #000; }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	h := display.NewHandler(display.WithStaticDir(tempDir), display.WithLocalStaticDir(localDir))
 	hFallback := display.NewHandler(display.WithStaticDir(""), display.WithLocalStaticDir(localDir))

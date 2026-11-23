@@ -239,7 +239,9 @@ func BenchmarkSolve_Untileable_Issue180(b *testing.B) {
 	widgets := slices.Concat(repeatW("w-5x1", 5, 1, 6), repeatW("w-2x1", 2, 1, 9))
 	b.ResetTimer()
 	for range b.N {
-		_, _ = layout.Solve(widgets)
+		if _, err := layout.Solve(widgets); err == nil {
+			b.Fatal("expected untileable error")
+		}
 	}
 }
 
