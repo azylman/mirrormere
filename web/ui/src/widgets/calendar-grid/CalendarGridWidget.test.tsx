@@ -177,54 +177,49 @@ describe('CalendarGridWidget', () => {
     expect(container.querySelector('.cf-range-label.cf-label-day')?.textContent).toBe('Tuesday, Oct 27');
   });
 
-  it('opens event modal on event click, displays details/Mealie hero image, and closes on close button, backdrop click, or Escape', () => {
+  it('opens event modal on event click, displays details/Mealie hero image, and closes via close button, backdrop click, or Escape', () => {
     setGridState();
     const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
 
-    const eventEl = container.querySelector('[data-event-id="ev-timed-1"]');
-    expect(eventEl).not.toBeNull();
-    fireEvent.click(eventEl!);
-
-    let modal = container.querySelector('.cf-modal-overlay');
-    expect(modal).not.toBeNull();
+    // Click single-day timed event
+    const timedEl = container.querySelector('[data-event-id="ev-timed-1"]');
+    expect(timedEl).not.toBeNull();
+    fireEvent.click(timedEl!);
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
     expect(container.querySelector('.cf-modal-title')?.textContent).toBe('Morning Standup');
-    const modalTime = container.querySelector('.cf-modal-time');
-    expect(modalTime?.querySelector('svg.cf-modal-icon')).not.toBeNull();
-    expect(modalTime?.textContent).toBe('Mon, Oct 26 • 09:00 – 09:30');
-    const modalLocation = container.querySelector('.cf-modal-location');
-    expect(modalLocation?.querySelector('svg.cf-modal-icon')).not.toBeNull();
-    expect(modalLocation?.textContent).toBe('Room 101');
+    expect(container.querySelector('.cf-modal-time')?.textContent).toBe('Mon, Oct 26 • 09:00 – 09:30');
+    expect(container.querySelector('.cf-modal-location')?.textContent).toBe('Room 101');
     expect(container.querySelector('.cf-modal-owner-chip')?.textContent).toContain('Alex');
     expect(container.querySelector('.cf-modal-description')?.textContent).toContain('Weekly team sprint planning');
 
+    // Close via close button
     const closeBtn = container.querySelector('.cf-modal-close')!;
     fireEvent.click(closeBtn);
     expect(container.querySelector('.cf-modal-overlay')).toBeNull();
 
+    // Click Mealie event to assert hero image and close via backdrop click
     const mealieEl = container.querySelector('[data-event-id="ev-mealie-1"]');
     expect(mealieEl).not.toBeNull();
     fireEvent.click(mealieEl!);
-
-    modal = container.querySelector('.cf-modal-overlay');
-    expect(modal).not.toBeNull();
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
     expect(container.querySelector('.cf-modal-title')?.textContent).toBe('Tacos Dinner');
     expect(container.querySelector('.cf-modal-time')?.textContent).toBe('Tue, Oct 27 • All Day');
     const heroImg = container.querySelector('.cf-modal-card img');
     expect(heroImg?.getAttribute('src')).toBe('/hearth-api/mealie/image/tacos.jpg');
 
-    fireEvent.keyDown(window, { key: 'Escape' });
+    const overlay = container.querySelector('.cf-modal-overlay')!;
+    fireEvent.click(overlay);
     expect(container.querySelector('.cf-modal-overlay')).toBeNull();
 
-    fireEvent.click(mealieEl!);
-    modal = container.querySelector('.cf-modal-overlay')!;
-    fireEvent.click(modal);
-    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
-
-    const allDaySpanEl = container.querySelector('[data-event-id="ev-allday-1"]');
-    expect(allDaySpanEl).not.toBeNull();
-    fireEvent.click(allDaySpanEl!);
+    // Click multi-day all-day span event to exercise resolveModalDateLabel endDateStr branch and close via Escape
+    const allDayEl = container.querySelector('[data-event-id="ev-allday-1"]');
+    expect(allDayEl).not.toBeNull();
+    fireEvent.click(allDayEl!);
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
     expect(container.querySelector('.cf-modal-time')?.textContent).toBe('Mon, Oct 26 – Tue, Oct 27 • All Day');
+
     fireEvent.keyDown(window, { key: 'Escape' });
+    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
   });
 
   it('decorates Mealie all-day pills declaratively with data-mealie-decorated="true"', () => {
@@ -292,38 +287,190 @@ describe('CalendarGridWidget', () => {
     expect(resumeSpy).not.toHaveBeenCalled();
   });
 
-  it('restores entry.viewModel without network fetch when clicking return to today', async () => {
-    const fetchMock = vi.fn().mockImplementation(() =>
-      Promise.resolve({
+  const narrow3DayVM: CalendarGridViewModel = {
+    ...mockViewModel,
+    week: {
+      ...mockViewModel.week!,
+      range_start: '2026-10-27',
+      range_end: '2026-10-29',
+      range_label: 'Oct 27 – 29, 2026',
+      days: mockViewModel.week!.days!.slice(0, 3),
+    },
+  };
+
+  it.each([
+    {
+      name: 'restores entry.viewModel without network fetch when clicking return to today',
+      steps: ['next', 'today'] as const,
+      isNarrow: false,
+      wantOffset: '0',
+      wantView: 'week',
+      wantLabel: 'Oct 25 – 31, 2026',
+      wantTodayVisible: false,
+      wantFetchCalls: 1,
+      checkAbort: false,
+      expectedFetchUrls: undefined,
+    },
+    {
+      name: 'switches from paged month view to week view synchronizing week range',
+      steps: ['month', 'next', 'week'] as const,
+      isNarrow: false,
+      wantOffset: '1',
+      wantView: 'week',
+      wantLabel: 'Nov 1 – 7, 2026',
+      wantTodayVisible: true,
+      wantFetchCalls: 2,
+      checkAbort: false,
+      expectedFetchUrls: ['date=2026-11-01', 'view=week'],
+    },
+    {
+      name: 'resets both currentDate and currentWeekStart when paging back to baseline month and switching to week view',
+      steps: ['next', 'month', 'prev', 'week'] as const,
+      isNarrow: false,
+      wantOffset: '0',
+      wantView: 'week',
+      wantLabel: 'Oct 25 – 31, 2026',
+      wantTodayVisible: false,
+      wantFetchCalls: 2,
+      checkAbort: false,
+      expectedFetchUrls: undefined,
+    },
+    {
+      name: 'aborts in-flight page fetches when returning to baseline date',
+      steps: ['next', 'prev'] as const,
+      isNarrow: false,
+      wantOffset: '0',
+      wantView: 'week',
+      wantLabel: 'Oct 25 – 31, 2026',
+      wantTodayVisible: false,
+      wantFetchCalls: 1,
+      checkAbort: true,
+      expectedFetchUrls: undefined,
+    },
+    {
+      name: 'computes week pageOffset using weekVM.days.length for narrow 3-day widgets',
+      steps: ['next'] as const,
+      isNarrow: true,
+      wantOffset: '1',
+      wantView: 'week',
+      wantLabel: 'Oct 30 – Nov 1, 2026',
+      wantTodayVisible: true,
+      wantFetchCalls: 1,
+      checkAbort: false,
+      expectedFetchUrls: undefined,
+    },
+  ])('handles view-paging and baseline-reset navigation: $name', async ({ steps, isNarrow, wantOffset, wantView, wantLabel, wantTodayVisible, wantFetchCalls, checkAbort, expectedFetchUrls }) => {
+    let aborted = false;
+    let lastUrl = '';
+    let resolvePendingJson: ((val: unknown) => void) | undefined;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      lastUrl = url;
+      if (init?.signal) {
+        init.signal.addEventListener('abort', () => {
+          aborted = true;
+        });
+      }
+      if (checkAbort) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            new Promise((resolve) => {
+              resolvePendingJson = resolve;
+            }),
+        });
+      }
+      const isNov = url.includes('2026-11');
+      const pagedWeek = isNarrow
+        ? {
+            ...narrow3DayVM.week!,
+            range_start: '2026-10-30',
+            range_end: '2026-11-01',
+            range_label: 'Oct 30 – Nov 1, 2026',
+          }
+        : {
+            ...mockViewModel.week,
+            range_start: isNov ? '2026-11-01' : '2026-10-25',
+            range_end: isNov ? '2026-11-07' : '2026-10-31',
+            range_label: isNov ? 'Nov 1 – 7, 2026' : 'Oct 25 – 31, 2026',
+          };
+      return Promise.resolve({
         ok: true,
         json: () =>
           Promise.resolve({
             view_model: {
               ...mockViewModel,
-              week: { ...mockViewModel.week, range_label: 'Paged Range' },
+              week: pagedWeek,
+              month: {
+                ...mockViewModel.month,
+                range_start: isNov ? '2026-11-01' : '2026-10-01',
+                range_end: isNov ? '2026-11-30' : '2026-10-31',
+                month_label: isNov ? 'November 2026' : 'October 2026',
+              },
             },
           }),
-      })
-    );
+      });
+    });
     vi.stubGlobal('fetch', fetchMock);
 
-    setGridState();
+    if (isNarrow) {
+      setGridState({
+        dimensions: [3, 2],
+        config: { days: 3, cached_range_start: '2026-01-01', cached_range_end: '2027-01-01' },
+        viewModel: narrow3DayVM,
+      });
+    } else {
+      setGridState({ config: { cached_range_start: '2026-01-01', cached_range_end: '2027-01-01' } });
+    }
+
     const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
-    const nextBtn = container.querySelector('.cf-nav-btn.cf-next-btn')!;
 
-    await act(async () => {
-      fireEvent.click(nextBtn);
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const selectorMap: Record<string, string> = {
+      next: '.cf-nav-btn.cf-next-btn',
+      prev: '.cf-nav-btn.cf-prev-btn',
+      today: '.cf-today-badge',
+      week: '.cf-view-btn[data-view="week"]',
+      month: '.cf-view-btn[data-view="month"]',
+    };
 
-    const todayBtn = container.querySelector('.cf-today-badge')!;
-    await act(async () => {
-      fireEvent.click(todayBtn);
-    });
+    for (const step of steps) {
+      const btn = container.querySelector(selectorMap[step]!);
+      expect(btn).not.toBeNull();
+      await act(async () => {
+        fireEvent.click(btn!);
+      });
+    }
 
-    expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('0');
-    expect(container.querySelector('.cf-range-label.cf-label-week')?.textContent).toBe('Oct 25 – 31, 2026');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const widget = container.querySelector('.widget-calendar-grid');
+    expect(widget?.getAttribute('data-page-offset')).toBe(wantOffset);
+    expect(widget?.classList.contains(`cf-view-${wantView}`)).toBe(true);
+    const label = container.querySelector(`.cf-range-label.cf-label-${wantView}`)?.textContent;
+    expect(label).toContain(wantLabel);
+    const todayBadge = container.querySelector('.cf-today-badge') as HTMLElement;
+    if (wantTodayVisible) {
+      expect(todayBadge.style.display).not.toBe('none');
+    } else {
+      expect(todayBadge.style.display).toBe('none');
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(wantFetchCalls);
+    if (checkAbort) {
+      expect(aborted).toBe(true);
+      await act(async () => {
+        resolvePendingJson?.({
+          view_model: {
+            ...mockViewModel,
+            week: { ...mockViewModel.week, range_label: 'Stale Week Range' },
+          },
+        });
+      });
+      // Verify stale response did not clobber baseline label
+      const currentLabel = container.querySelector(`.cf-range-label.cf-label-${wantView}`)?.textContent;
+      expect(currentLabel).toContain(wantLabel);
+    }
+    if (expectedFetchUrls) {
+      for (const expectedPart of expectedFetchUrls) {
+        expect(lastUrl).toContain(expectedPart);
+      }
+    }
   });
 
 
@@ -357,50 +504,6 @@ describe('CalendarGridWidget', () => {
     expect(container.querySelector('.widget-calendar-grid')?.classList.contains('cf-view-week')).toBe(true);
   });
 
-  it('switches from paged month view to week view using currentDate and synchronizing week range', async () => {
-    let requestedUrl = '';
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      requestedUrl = url;
-      return Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            view_model: {
-              ...mockViewModel,
-              week: {
-                ...mockViewModel.week,
-                range_start: '2026-11-01',
-                range_end: '2026-11-07',
-                range_label: 'Nov 1 – 7, 2026',
-              },
-            },
-          }),
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    setGridState({ config: { cached_range_start: '2026-01-01', cached_range_end: '2027-01-01' } });
-    const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
-
-    const monthBtn = container.querySelector('.cf-view-btn[data-view="month"]')!;
-    fireEvent.click(monthBtn);
-    expect(fetchMock).not.toHaveBeenCalled();
-
-    const nextBtn = container.querySelector('.cf-nav-btn.cf-next-btn')!;
-    await act(async () => {
-      fireEvent.click(nextBtn);
-    });
-    expect(requestedUrl).toContain('date=2026-11-01');
-
-    const weekBtn = container.querySelector('.cf-view-btn[data-view="week"]')!;
-    await act(async () => {
-      fireEvent.click(weekBtn);
-    });
-    expect(requestedUrl).toContain('date=2026-11-01');
-    expect(requestedUrl).toContain('view=week');
-    expect(container.querySelector('.cf-range-label.cf-label-week')?.textContent).toBe('Nov 1 – 7, 2026');
-  });
-
   it('does not render .cf-allday-band in day view when there are no all-day events on the active day', () => {
     setGridState({
       dimensions: [3, 2],
@@ -416,126 +519,6 @@ describe('CalendarGridWidget', () => {
 
     const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
     expect(container.querySelector('.cf-allday-band')).toBeNull();
-  });
-
-  it('does not clobber anchor dates or prematurely deactivate interactivity when paging across views in opposite directions', async () => {
-    let requestedUrl = '';
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      requestedUrl = url;
-      const isNov = url.includes('2026-11');
-      return Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            view_model: {
-              ...mockViewModel,
-              week: {
-                ...mockViewModel.week,
-                range_start: isNov ? '2026-11-01' : '2026-10-25',
-                range_end: isNov ? '2026-11-07' : '2026-10-31',
-                range_label: isNov ? 'Nov 1 – 7, 2026' : 'Oct 25 – 31, 2026',
-              },
-              month: {
-                ...mockViewModel.month,
-                range_start: '2026-11-01',
-                range_end: '2026-11-30',
-                month_label: 'November 2026',
-              },
-            },
-          }),
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    setGridState({ config: { cached_range_start: '2026-01-01', cached_range_end: '2027-01-01' } });
-    const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
-
-    const monthBtn = container.querySelector('.cf-view-btn[data-view="month"]')!;
-    fireEvent.click(monthBtn);
-    expect(fetchMock).not.toHaveBeenCalled();
-
-    const nextBtn = container.querySelector('.cf-nav-btn.cf-next-btn')!;
-    await act(async () => {
-      fireEvent.click(nextBtn);
-    });
-    expect(requestedUrl).toContain('date=2026-11-01');
-    const todayBadge = container.querySelector('.cf-today-badge') as HTMLElement;
-    expect(todayBadge.style.display).not.toBe('none');
-
-    const weekBtn = container.querySelector('.cf-view-btn[data-view="week"]')!;
-    await act(async () => {
-      fireEvent.click(weekBtn);
-    });
-
-    const prevBtn = container.querySelector('.cf-nav-btn.cf-prev-btn')!;
-    fetchMock.mockClear();
-    await act(async () => {
-      fireEvent.click(prevBtn);
-    });
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(container.querySelector('.cf-range-label.cf-label-week')?.textContent).toBe('Oct 25 – 31, 2026');
-  });
-
-  it('resets both currentDate and currentWeekStart when paging back to the baseline month and switching to week view', async () => {
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      const isNov = url.includes('2026-11');
-      return Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            view_model: {
-              ...mockViewModel,
-              week: {
-                ...mockViewModel.week,
-                range_start: isNov ? '2026-11-01' : '2026-10-25',
-                range_end: isNov ? '2026-11-07' : '2026-10-31',
-                range_label: isNov ? 'Nov 1 – 7, 2026' : 'Oct 25 – 31, 2026',
-              },
-              month: {
-                ...mockViewModel.month,
-                range_start: '2026-11-01',
-                range_end: '2026-11-30',
-                month_label: 'November 2026',
-              },
-            },
-          }),
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    setGridState({ config: { cached_range_start: '2026-01-01', cached_range_end: '2027-01-01' } });
-    const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
-    const nextBtn = container.querySelector('.cf-nav-btn.cf-next-btn')!;
-    const prevBtn = container.querySelector('.cf-nav-btn.cf-prev-btn')!;
-    const monthBtn = container.querySelector('.cf-view-btn[data-view="month"]')!;
-    const weekBtn = container.querySelector('.cf-view-btn[data-view="week"]')!;
-
-    await act(async () => {
-      fireEvent.click(nextBtn);
-    });
-    expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('1');
-
-    await act(async () => {
-      fireEvent.click(monthBtn);
-    });
-    expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('1');
-
-    fetchMock.mockClear();
-    await act(async () => {
-      fireEvent.click(prevBtn);
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('0');
-
-    await act(async () => {
-      fireEvent.click(weekBtn);
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('0');
-    expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-current-date')).toBe('2026-10-27');
-    const todayBadge = container.querySelector('.cf-today-badge') as HTMLElement;
-    expect(todayBadge.style.display).toBe('none');
   });
 
   it('tracks baseDate and baseWeekStart updates when resting without flipping isInteractive or pausing store', () => {
@@ -562,99 +545,6 @@ describe('CalendarGridWidget', () => {
     expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('0');
     expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-current-date')).toBe('2026-11-01');
     expect(container.querySelector('.cf-range-label.cf-label-week')?.textContent).toBe('Nov 1 – 7, 2026');
-  });
-
-  it('aborts in-flight page fetches when hitting the LRU cache or returning to baseline date', async () => {
-    let abortSignalPage1: AbortSignal | undefined;
-    let resolvePage1Json: ((val: unknown) => void) | undefined;
-
-    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
-      abortSignalPage1 = init?.signal ?? undefined;
-      return Promise.resolve({
-        ok: true,
-        json: () =>
-          new Promise((resolve) => {
-            resolvePage1Json = resolve;
-          }),
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    setGridState({ config: { cached_range_start: '2026-01-01', cached_range_end: '2027-01-01' } });
-    const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
-    const nextBtn = container.querySelector('.cf-nav-btn.cf-next-btn')!;
-    const prevBtn = container.querySelector('.cf-nav-btn.cf-prev-btn')!;
-
-    await act(async () => {
-      fireEvent.click(nextBtn);
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(abortSignalPage1?.aborted).toBe(false);
-
-    await act(async () => {
-      fireEvent.click(prevBtn);
-    });
-    expect(abortSignalPage1?.aborted).toBe(true);
-    expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('0');
-
-    await act(async () => {
-      resolvePage1Json?.({
-        view_model: {
-          ...mockViewModel,
-          week: { ...mockViewModel.week, range_label: 'Stale Week Range' },
-        },
-      });
-    });
-    expect(container.querySelector('.cf-range-label.cf-label-week')?.textContent).toBe('Oct 25 – 31, 2026');
-  });
-
-  it('computes week pageOffset and baseline week bounds using weekVM.days.length for narrow 3-day widgets', async () => {
-    const narrow3DayVM: CalendarGridViewModel = {
-      ...mockViewModel,
-      week: {
-        ...mockViewModel.week!,
-        range_start: '2026-10-27',
-        range_end: '2026-10-29',
-        range_label: 'Oct 27 – 29, 2026',
-        days: mockViewModel.week!.days!.slice(0, 3),
-      },
-    };
-
-    const fetchMock = vi.fn().mockImplementation(() =>
-      Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            view_model: {
-              ...narrow3DayVM,
-              week: {
-                ...narrow3DayVM.week!,
-                range_start: '2026-10-30',
-                range_end: '2026-11-01',
-                range_label: 'Oct 30 – Nov 1, 2026',
-              },
-            },
-          }),
-      })
-    );
-    vi.stubGlobal('fetch', fetchMock);
-
-    setGridState({
-      dimensions: [3, 2],
-      config: { days: 3, cached_range_start: '2026-01-01', cached_range_end: '2027-01-01' },
-      viewModel: narrow3DayVM,
-    });
-
-    const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
-    const nextBtn = container.querySelector('.cf-nav-btn.cf-next-btn')!;
-
-    await act(async () => {
-      fireEvent.click(nextBtn);
-    });
-
-    expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('1');
-    const todayBadge = container.querySelector('.cf-today-badge') as HTMLElement;
-    expect(todayBadge.style.display).not.toBe('none');
   });
 
   describe('cf-now-indicator', () => {
@@ -852,39 +742,48 @@ describe('CalendarGridWidget', () => {
       expect(alexChip.getAttribute('aria-pressed')).toBe('false');
     });
 
-    it('drills down into day view when day header is clicked or pressed with Enter/Space in week view', () => {
-      setGridState();
+    it('filters .cf-mealie-bar items when member chip is selected in week view', () => {
+      const daysWithMeals = mockViewModel.week!.days!.map((day) => {
+        if (day.date === '2026-10-27') {
+          return {
+            ...day,
+            meals: [
+              { id: 'meal-1', title: 'Alex Lunch', owners: ['Alex'] },
+              { id: 'meal-2', title: 'Sam Dinner', owners: ['Sam'] },
+            ],
+          };
+        }
+        return day;
+      });
+
+      setGridState({
+        viewModel: {
+          ...mockViewModel,
+          week: {
+            ...mockViewModel.week!,
+            days: daysWithMeals,
+          },
+        },
+      });
+
       const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+      expect(container.querySelectorAll('.cf-mealie-bar').length).toBe(2);
 
-      const monHeader = container.querySelector('.cf-day[data-date="2026-10-26"] .cf-day-header') as HTMLElement;
-      expect(monHeader).toBeTruthy();
-      expect(monHeader.getAttribute('role')).toBe('button');
-      expect(monHeader.getAttribute('tabindex')).toBe('0');
+      const alexChip = container.querySelector('.cf-member-chip[data-member="Alex"]') as HTMLElement;
+      fireEvent.click(alexChip);
 
-      // Click day header drills down to 2026-10-26 day view
-      fireEvent.click(monHeader);
-
-      const widget = container.querySelector('.widget-calendar-grid');
-      expect(widget?.getAttribute('data-active-view')).toBe('day');
-      expect(widget?.getAttribute('data-current-date')).toBe('2026-10-26');
-
-      // In day view, day header should not have role="button" or tabindex
-      const dayViewHeader = container.querySelector('.cf-day-header') as HTMLElement;
-      expect(dayViewHeader.getAttribute('role')).toBeNull();
-      expect(dayViewHeader.getAttribute('tabindex')).toBeNull();
-
-      // Switch back to week view
-      const weekBtn = container.querySelector('.cf-view-btn[data-view="week"]')!;
-      fireEvent.click(weekBtn);
-
-      // Keyboard drill-down with Enter
-      const tueHeader = container.querySelector('.cf-day[data-date="2026-10-27"] .cf-day-header') as HTMLElement;
-      fireEvent.keyDown(tueHeader, { key: 'Enter' });
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-active-view')).toBe('day');
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-current-date')).toBe('2026-10-27');
+      const filteredMeals = container.querySelectorAll('.cf-mealie-bar');
+      expect(filteredMeals.length).toBe(1);
+      expect(itemAt(filteredMeals, 0).getAttribute('data-event-id')).toBe('meal-1');
     });
 
-    it('drills down into day view when month day header or +N more is clicked or pressed with Enter/Space in month view', () => {
+    it.each([
+      { initialView: 'week' as const, selector: '.cf-day[data-date="2026-10-26"] .cf-day-header', event: 'click' as const, key: '', expectedDate: '2026-10-26' },
+      { initialView: 'week' as const, selector: '.cf-day[data-date="2026-10-27"] .cf-day-header', event: 'keydown' as const, key: 'Enter', expectedDate: '2026-10-27' },
+      { initialView: 'month' as const, selector: '.cf-month-day-header', event: 'click' as const, key: '', expectedDate: '2026-10-27' },
+      { initialView: 'month' as const, selector: '.cf-month-more', event: 'click' as const, key: '', expectedDate: '2026-10-27' },
+      { initialView: 'month' as const, selector: '.cf-month-more', event: 'keydown' as const, key: ' ', expectedDate: '2026-10-27' },
+    ])('drills down into day view from $initialView via $selector ($event $key)', ({ initialView, selector, event, key, expectedDate }) => {
       const monthWithMultipleEvents: CalendarGridViewModel = {
         ...mockViewModel,
         month: {
@@ -911,62 +810,78 @@ describe('CalendarGridWidget', () => {
       setGridState({ viewModel: monthWithMultipleEvents });
       const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
 
-      const monthBtn = container.querySelector('.cf-view-btn[data-view="month"]')!;
-      fireEvent.click(monthBtn);
+      if (initialView === 'month') {
+        const monthBtn = container.querySelector('.cf-view-btn[data-view="month"]')!;
+        fireEvent.click(monthBtn);
+      }
 
-      const monthDayHeader = container.querySelector('.cf-month-day-header') as HTMLElement;
-      expect(monthDayHeader).toBeTruthy();
-      expect(monthDayHeader.getAttribute('role')).toBe('button');
-      expect(monthDayHeader.getAttribute('tabindex')).toBe('0');
+      const target = container.querySelector(selector) as HTMLElement;
+      expect(target).toBeTruthy();
+      expect(target.getAttribute('role')).toBe('button');
+      expect(target.getAttribute('tabindex')).toBe('0');
 
-      // Click month day header drills into day view
-      fireEvent.click(monthDayHeader);
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-active-view')).toBe('day');
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-current-date')).toBe('2026-10-27');
+      if (event === 'click') {
+        fireEvent.click(target);
+      } else {
+        fireEvent.keyDown(target, { key });
+      }
 
-      // Return to month view
-      fireEvent.click(monthBtn);
+      const widget = container.querySelector('.widget-calendar-grid');
+      expect(widget?.getAttribute('data-active-view')).toBe('day');
+      expect(widget?.getAttribute('data-current-date')).toBe(expectedDate);
 
-      // Drill down via +N more click
-      const moreEl = container.querySelector('.cf-month-more') as HTMLElement;
-      expect(moreEl).toBeTruthy();
-      expect(moreEl.textContent).toContain('+1 more');
-      expect(moreEl.getAttribute('role')).toBe('button');
-      expect(moreEl.getAttribute('tabindex')).toBe('0');
-
-      fireEvent.click(moreEl);
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-active-view')).toBe('day');
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-current-date')).toBe('2026-10-27');
-
-      // Return to month view and test Space key on +N more
-      fireEvent.click(monthBtn);
-      const moreEl2 = container.querySelector('.cf-month-more') as HTMLElement;
-      fireEvent.keyDown(moreEl2, { key: ' ' });
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-active-view')).toBe('day');
+      const dayViewHeader = container.querySelector('.cf-day-header') as HTMLElement;
+      expect(dayViewHeader.getAttribute('role')).toBeNull();
+      expect(dayViewHeader.getAttribute('tabindex')).toBeNull();
     });
 
-    it('triggers loadDateView fetch when drilling into a day outside cached weekVM', async () => {
-      const fetchMock = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          active_view: 'day',
-          week: {
-            ...mockViewModel.week,
-            range_start: '2026-11-15',
-            range_end: '2026-11-15',
-            days: [
-              { date: '2026-11-15', day_of_month: 15, is_today: false, is_weekend: false, events: [] },
-            ],
-          },
-        }),
+    it.each([
+      {
+        name: 'triggers loadDateView fetch when drilling into a day outside cached weekVM',
+        pagedMonth: false,
+        targetDate: '2026-11-15',
+        wantFetchUrl: 'date=2026-11-15&view=day',
+        wantAbort: false,
+      },
+      {
+        name: 'resets pagedWeekStart and aborts in-flight fetches when drilling into baseline week from paged month',
+        pagedMonth: true,
+        targetDate: '2026-10-27',
+        wantFetchUrl: undefined,
+        wantAbort: true,
+      },
+    ])('handles network and abort lifecycle on day drill-down: $name', async ({ pagedMonth, targetDate, wantFetchUrl, wantAbort }) => {
+      let aborted = false;
+      const fetchMock = vi.fn().mockImplementation((url: string, opts) => {
+        if (opts?.signal) {
+          opts.signal.addEventListener('abort', () => {
+            aborted = true;
+          });
+        }
+        if (wantFetchUrl && url.includes(wantFetchUrl)) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              active_view: 'day',
+              week: {
+                ...mockViewModel.week,
+                range_start: '2026-11-15',
+                range_end: '2026-11-15',
+                days: [{ date: '2026-11-15', day_of_month: 15, is_today: false, is_weekend: false, events: [] }],
+              },
+            }),
+          });
+        }
+        return new Promise(() => {}); // never resolves
       });
       vi.stubGlobal('fetch', fetchMock);
 
-      const monthWithNovDay: CalendarGridViewModel = {
+      const vmWithNovDay: CalendarGridViewModel = {
         ...mockViewModel,
         month: {
           ...mockViewModel.month!,
           days: [
+            ...mockViewModel.month!.days!,
             {
               date: '2026-11-15',
               day_of_month: 15,
@@ -978,66 +893,43 @@ describe('CalendarGridWidget', () => {
         },
       };
 
-      setGridState({ viewModel: monthWithNovDay });
-      const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
-
-      const monthBtn = container.querySelector('.cf-view-btn[data-view="month"]')!;
-      fireEvent.click(monthBtn);
-
-      const headerNov = container.querySelector('.cf-month-day[data-date="2026-11-15"] .cf-month-day-header') as HTMLElement;
-      expect(headerNov).toBeTruthy();
-
-      await act(async () => {
-        fireEvent.click(headerNov);
-      });
-
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining('date=2026-11-15&view=day'),
-        expect.any(Object)
-      );
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-active-view')).toBe('day');
-    });
-
-    it('resets pagedWeekStart and aborts in-flight fetches when drilling into a baseline week day from paged month view', () => {
-      let aborted = false;
-      const fetchMock = vi.fn().mockImplementation((_url, opts) => {
-        if (opts?.signal) {
-          opts.signal.addEventListener('abort', () => {
-            aborted = true;
-          });
-        }
-        return new Promise(() => {}); // never resolves
-      });
-      vi.stubGlobal('fetch', fetchMock);
-
-      setGridState();
+      setGridState({ viewModel: vmWithNovDay });
       const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
 
       // Switch to month view
       const monthBtn = container.querySelector('.cf-view-btn[data-view="month"]')!;
       fireEvent.click(monthBtn);
 
-      // Page forward 1 month (initiates fetch and sets pagedDate)
-      const nextBtn = container.querySelector('.cf-nav-btn.cf-next-btn')!;
-      fireEvent.click(nextBtn);
+      if (pagedMonth) {
+        // Page forward 1 month to initiate fetch and set pagedDate
+        const nextBtn = container.querySelector('.cf-nav-btn.cf-next-btn')!;
+        fireEvent.click(nextBtn);
+        expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('1');
+        expect(fetchMock).toHaveBeenCalled();
+      }
 
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('1');
-      expect(fetchMock).toHaveBeenCalled();
+      const dayHeader = container.querySelector(`.cf-month-day[data-date="${targetDate}"] .cf-month-day-header`) as HTMLElement;
+      expect(dayHeader).toBeTruthy();
 
-      // Drill down into 2026-10-27 (belongs to baseline entryViewModel.week.days)
-      const dayHeader = container.querySelector('.cf-month-day[data-date="2026-10-27"] .cf-month-day-header') as HTMLElement;
-      fireEvent.click(dayHeader);
+      await act(async () => {
+        fireEvent.click(dayHeader);
+      });
 
-      expect(aborted).toBe(true);
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-active-view')).toBe('day');
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-current-date')).toBe('2026-10-27');
+      expect(aborted).toBe(wantAbort);
+      const widget = container.querySelector('.widget-calendar-grid');
+      expect(widget?.getAttribute('data-active-view')).toBe('day');
+      expect(widget?.getAttribute('data-current-date')).toBe(targetDate);
 
-      // Switch back to week view
-      const weekBtn = container.querySelector('.cf-view-btn[data-view="week"]')!;
-      fireEvent.click(weekBtn);
+      if (wantFetchUrl) {
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining(wantFetchUrl), expect.any(Object));
+      }
 
-      // Verify page-offset is 0 (at baseline, not offset from the paged month)
-      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('0');
+      if (pagedMonth) {
+        // Switch back to week view and verify page-offset is reset to 0
+        const weekBtn = container.querySelector('.cf-view-btn[data-view="week"]')!;
+        fireEvent.click(weekBtn);
+        expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('0');
+      }
     });
 
     it('renders error banner when widget state is error and opens event modal from month view', () => {

@@ -1,7 +1,6 @@
 import { act, fireEvent, render, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
-import { CalendarGridWidget, type CalendarGridViewModel } from './CalendarGridWidget';
 import { CalendarEventModal } from './CalendarEventModal';
 import { CalendarHeader } from './CalendarHeader';
 import { CalendarMonthView } from './CalendarMonthView';
@@ -636,6 +635,9 @@ describe('CalendarMonthView & CalendarWeekView', () => {
 
       fireEvent.keyDown(dayHeader, { key: 'Enter' });
       expect(onSelectDay).toHaveBeenCalledTimes(2);
+
+      fireEvent.keyDown(dayHeader, { key: ' ' });
+      expect(onSelectDay).toHaveBeenCalledTimes(3);
       fireEvent.click(lateEv);
       expect(onOpenModal).toHaveBeenCalledWith(expect.objectContaining({ id: 'late-1' }), '2026-10-27');
       fireEvent.keyDown(lateEv, { key: 'Enter' });
@@ -675,27 +677,6 @@ describe('CalendarMonthView & CalendarWeekView', () => {
       markers = container.querySelectorAll('.cf-hour-marker');
       expect(markers.length).toBe(3);
       expect(itemAt(markers, 0).textContent).toBe('08:00');
-    });
-
-    it('triggers onSelectDay on day header click and keyboard navigation in week view', () => {
-      const onSelectDay = vi.fn();
-      const daysToRender: FamilyDay[] = [
-        { date: '2026-10-27', day_of_month: 27, is_today: true, is_weekend: false, events: [] },
-      ];
-
-      const { container } = render(
-        <CalendarWeekView activeView="week" daysToRender={daysToRender} visibleAllDayEvents={[]} members={members} currentDateISO="2026-10-27" onOpenModal={vi.fn()} onSelectDay={onSelectDay}/>
-      );
-
-      const header = container.querySelector('.cf-day-header')!;
-      fireEvent.click(header);
-      expect(onSelectDay).toHaveBeenCalledWith('2026-10-27');
-
-      fireEvent.keyDown(header, { key: 'Enter' });
-      expect(onSelectDay).toHaveBeenCalledTimes(2);
-
-      fireEvent.keyDown(header, { key: ' ' });
-      expect(onSelectDay).toHaveBeenCalledTimes(3);
     });
 
     it('renders column all_day events when visibleAllDayEvents is empty', () => {
@@ -781,22 +762,6 @@ describe('CalendarMonthView & CalendarWeekView', () => {
       expect(onOpenModal).toHaveBeenCalledTimes(2);
       fireEvent.keyDown(firstPill, { key: ' ' });
       expect(onOpenModal).toHaveBeenCalledTimes(3);
-
-      useDisplayStore.setState({
-        widgets: {
-          'cal-meal-filter': {
-            meta: { type: 'calendar-grid', origin: [0, 0], dimensions: [6, 2], config: {}, assets_base: '' },
-            state: 'healthy', data: {}, timestamp: '2026-10-27T10:00:00Z',
-            viewModel: { active_view: 'week', week: { range_start: '2026-10-27', range_end: '2026-10-27', range_label: 'Oct 27, 2026', today: '2026-10-27', members, days: daysToRender } } satisfies CalendarGridViewModel,
-          },
-        },
-      });
-      const { container: gridContainer } = render(<CalendarGridWidget id="cal-meal-filter" type="calendar-grid" />);
-      expect(gridContainer.querySelectorAll('.cf-mealie-bar').length).toBe(2);
-      fireEvent.click(gridContainer.querySelector('.cf-member-chip[data-member="Alpha"]')!);
-      const filteredMeals = gridContainer.querySelectorAll('.cf-mealie-bar');
-      expect(filteredMeals.length).toBe(1);
-      expect(itemAt(filteredMeals, 0).getAttribute('data-event-id')).toBe('meal-1');
     });
 
     it('attaches ResizeObserver to day canvas elements and disconnects on unmount', () => {
@@ -925,10 +890,17 @@ describe('useCalendarRangeData & useInactivityReset', () => {
       expect(result.current.syncMessage).toBeNull();
     });
 
-    it('enforces cached range boundary and displays "Not synced yet"', () => {
-      let activeView: ViewMode = 'week';
-      const setActiveView: React.Dispatch<React.SetStateAction<ViewMode>> = (action) => {
-        activeView = typeof action === 'function' ? action(activeView) : action;
+    it.each([
+      { view: 'day' as ViewMode, action: 'pageNext' as const, cachedStart: '2026-10-25', cachedEnd: '2026-10-27' },
+      { view: 'day' as ViewMode, action: 'pagePrev' as const, cachedStart: '2026-10-27', cachedEnd: '2026-10-31' },
+      { view: 'week' as ViewMode, action: 'pageNext' as const, cachedStart: '2026-10-25', cachedEnd: '2026-10-31' },
+      { view: 'week' as ViewMode, action: 'pagePrev' as const, cachedStart: '2026-10-25', cachedEnd: '2026-10-31' },
+      { view: 'month' as ViewMode, action: 'pageNext' as const, cachedStart: '2026-10-01', cachedEnd: '2026-10-31' },
+      { view: 'month' as ViewMode, action: 'pagePrev' as const, cachedStart: '2026-10-01', cachedEnd: '2026-10-31' },
+    ])('enforces cached range boundary and displays "Not synced yet" in $view view on $action', ({ view, action, cachedStart, cachedEnd }) => {
+      let activeView: ViewMode = view;
+      const setActiveView: React.Dispatch<React.SetStateAction<ViewMode>> = (fnOrVal) => {
+        activeView = typeof fnOrVal === 'function' ? fnOrVal(activeView) : fnOrVal;
       };
 
       const { result } = renderHook(() =>
@@ -939,31 +911,61 @@ describe('useCalendarRangeData & useInactivityReset', () => {
           weekStep: 7,
           activeView,
           setActiveView,
-          cachedRangeStartConfig: '2026-10-25',
-          cachedRangeEndConfig: '2026-10-31',
+          cachedRangeStartConfig: cachedStart,
+          cachedRangeEndConfig: cachedEnd,
         })
       );
 
       act(() => {
-        result.current.pageNext();
+        result.current[action]();
       });
       expect(result.current.syncMessage).toBe('Not synced yet');
     });
 
-    it('selectDayView switches to day view and selects date within current week without remote fetch', async () => {
-      const fetchMock = vi.fn();
-      vi.stubGlobal('fetch', fetchMock);
+    const selectDayEntryVM = {
+      week: {
+        range_start: '2026-10-25',
+        range_end: '2026-10-31',
+        days: [
+          { date: '2026-10-25', day_of_month: 25, is_today: false, is_weekend: true, events: [] },
+          { date: '2026-10-26', day_of_month: 26, is_today: false, is_weekend: false, events: [] },
+          { date: '2026-10-27', day_of_month: 27, is_today: true, is_weekend: false, events: [] },
+          { date: '2026-10-28', day_of_month: 28, is_today: false, is_weekend: false, events: [] },
+        ],
+      },
+    };
+
+    const selectDayNextWeekVM = {
+      week: {
+        range_start: '2026-11-01',
+        range_end: '2026-11-07',
+        days: [
+          { date: '2026-11-02', day_of_month: 2, is_today: false, is_weekend: false, events: [] },
+        ],
+      },
+    };
+
+    it.each([
+      { name: 'currentWeek cache hit (base week)', initialVM: undefined, targetDate: '2026-10-27', fetchStatus: 'none', wantActiveView: 'day' as ViewMode, wantPagedDate: '2026-10-27', wantPagedWeekStart: null, wantFetch: false, wantSyncMessage: null },
+      { name: 'currentWeek cache hit (non-base week)', initialVM: selectDayNextWeekVM, targetDate: '2026-11-02', fetchStatus: 'none', wantActiveView: 'day' as ViewMode, wantPagedDate: '2026-11-02', wantPagedWeekStart: '2026-11-01', wantFetch: false, wantSyncMessage: null },
+      { name: 'entryWeek fallback hit', initialVM: selectDayNextWeekVM, targetDate: '2026-10-25', fetchStatus: 'none', wantActiveView: 'day' as ViewMode, wantPagedDate: '2026-10-25', wantPagedWeekStart: null, wantFetch: false, wantSyncMessage: null },
+      { name: 'uncached remote fetch', initialVM: undefined, targetDate: '2026-11-15', fetchStatus: 'ok', wantActiveView: 'day' as ViewMode, wantPagedDate: '2026-11-15', wantPagedWeekStart: null, wantFetch: true, wantSyncMessage: null },
+      { name: 'fetch-error rollback', initialVM: undefined, targetDate: '2026-11-20', fetchStatus: 'error', wantActiveView: 'week' as ViewMode, wantPagedDate: null, wantPagedWeekStart: null, wantFetch: true, wantSyncMessage: 'Sync failed' },
+    ])('handles selectDayView for $name', async ({ initialVM, targetDate, fetchStatus, wantActiveView, wantPagedDate, wantPagedWeekStart, wantFetch, wantSyncMessage }) => {
+      const fetchSpy = vi.fn();
+      if (fetchStatus === 'ok') {
+        fetchSpy.mockResolvedValue({
+          ok: true,
+          json: async () => ({ day: { days: [{ date: targetDate }] } }),
+        });
+      } else if (fetchStatus === 'error') {
+        fetchSpy.mockRejectedValue(new Error('Network error'));
+      }
+      vi.stubGlobal('fetch', fetchSpy);
 
       let activeView: ViewMode = 'week';
       const setActiveView: React.Dispatch<React.SetStateAction<ViewMode>> = (action) => {
         activeView = typeof action === 'function' ? action(activeView) : action;
-      };
-
-      const entryViewModel = {
-        week: {
-          range_start: '2026-10-25',
-          days: [{ date: '2026-10-27', day_of_month: 27 }],
-        },
       };
 
       const { result } = renderHook(() =>
@@ -974,66 +976,37 @@ describe('useCalendarRangeData & useInactivityReset', () => {
           weekStep: 7,
           activeView,
           setActiveView,
-          entryViewModel,
+          entryViewModel: selectDayEntryVM,
         })
       );
 
-      act(() => {
-        result.current.selectDayView('2026-10-27');
-      });
+      if (initialVM) {
+        act(() => {
+          result.current.setCurrentViewModel(initialVM);
+        });
+      }
 
-      expect(activeView).toBe('day');
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it('selectDayView falls back to entryViewModel week if not in currentViewModel, and fetches if neither', async () => {
-      const fetchMock = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          day: { days: [{ date: '2026-11-15' }] },
-        }),
-      });
-      vi.stubGlobal('fetch', fetchMock);
-
-      const baseDate = new Date(2026, 9, 27);
-      const baseWeekStart = new Date(2026, 9, 25);
-      let activeView: ViewMode = 'week';
-      const setActiveView: React.Dispatch<React.SetStateAction<ViewMode>> = (action) => {
-        activeView = typeof action === 'function' ? action(activeView) : action;
-      };
-
-      const entryViewModel = {
-        week: {
-          days: [{ date: '2026-10-28', events: [] }],
-          range_start: '2026-10-25',
-          range_end: '2026-10-31',
-        },
-      };
-
-      const { result } = renderHook(() =>
-        useCalendarRangeData({
-          id: 'test-cal',
-          baseDate,
-          baseWeekStart,
-          weekStep: 7,
-          activeView,
-          setActiveView,
-          entryViewModel,
-        })
-      );
-
-      // In entryViewModel days -> aborts and restores entryViewModel without fetch
-      act(() => {
-        result.current.selectDayView('2026-10-28');
-      });
-      expect(activeView).toBe('day');
-      expect(fetchMock).not.toHaveBeenCalled();
-
-      // Outside both -> fetches target day
       await act(async () => {
-        result.current.selectDayView('2026-11-15');
+        result.current.selectDayView(targetDate);
       });
-      expect(fetchMock).toHaveBeenCalled();
+
+      expect(activeView).toBe(wantActiveView);
+      if (wantPagedDate) {
+        expect(toISODate(result.current.pagedDate!)).toBe(wantPagedDate);
+      } else {
+        expect(result.current.pagedDate).toBeNull();
+      }
+      if (wantPagedWeekStart) {
+        expect(toISODate(result.current.pagedWeekStart!)).toBe(wantPagedWeekStart);
+      } else {
+        expect(result.current.pagedWeekStart).toBeNull();
+      }
+      if (wantFetch) {
+        expect(fetchSpy).toHaveBeenCalled();
+      } else {
+        expect(fetchSpy).not.toHaveBeenCalled();
+      }
+      expect(result.current.syncMessage).toBe(wantSyncMessage);
     });
 
     it('handles resetToBaseline without entryViewModel by calling loadDateView', async () => {
@@ -1134,131 +1107,7 @@ describe('useCalendarRangeData & useInactivityReset', () => {
       expect(result.current.pagedWeekStart).toBeNull();
     });
 
-    it('enforces month and day boundaries with Not synced yet and handles rollback on selectDayView fetch failure', async () => {
-      let activeView: ViewMode = 'month';
-      const setActiveView: React.Dispatch<React.SetStateAction<ViewMode>> = (action) => {
-        activeView = typeof action === 'function' ? action(activeView) : action;
-      };
 
-      const { result } = renderHook(() =>
-        useCalendarRangeData({
-          id: 'test-cal',
-          baseDate: new Date('2026-10-27'),
-          baseWeekStart: new Date('2026-10-25'),
-          weekStep: 7,
-          activeView,
-          setActiveView,
-          cachedRangeStartConfig: '2026-10-01',
-          cachedRangeEndConfig: '2026-10-31',
-        })
-      );
-
-      // In month view, paging next goes to November which is > cached.end (2026-10-31)
-      act(() => {
-        result.current.pageNext();
-      });
-      expect(result.current.syncMessage).toBe('Not synced yet');
-
-      // Paging prev goes to September which is < cached.start (2026-10-01)
-      act(() => {
-        result.current.pagePrev();
-      });
-      expect(result.current.syncMessage).toBe('Not synced yet');
-
-      // Now switch to day view
-      act(() => {
-        result.current.handleViewSwitch('day');
-      });
-      expect(activeView).toBe('day');
-
-      // Failing fetch on selectDayView rolls back
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
-      await act(async () => {
-        result.current.selectDayView('2026-11-20');
-      });
-      expect(result.current.syncMessage).toBe('Sync failed');
-    });
-
-    it('handles selectDayView within currentWeek and entryWeek without remote fetch', async () => {
-      let activeView: ViewMode = 'week';
-      const setActiveView: React.Dispatch<React.SetStateAction<ViewMode>> = (action) => {
-        activeView = typeof action === 'function' ? action(activeView) : action;
-      };
-
-      const baseDate = new Date(2026, 9, 27);
-      const baseWeekStart = new Date(2026, 9, 25);
-
-      const entryVM: Record<string, unknown> = {
-        days: [],
-        range_start: '2026-10-25',
-        range_end: '2026-10-31',
-        week: {
-          range_start: '2026-10-25',
-          range_end: '2026-10-31',
-          days: [
-            { date: '2026-10-25', is_today: false, is_weekend: true, events: [] },
-            { date: '2026-10-26', is_today: false, is_weekend: false, events: [] },
-          ],
-        },
-      };
-
-      const fetchSpy = vi.fn();
-      vi.stubGlobal('fetch', fetchSpy);
-
-      const { result, rerender } = renderHook(
-        (props: { activeView: ViewMode }) =>
-          useCalendarRangeData({
-            id: 'test-cal',
-            baseDate,
-            baseWeekStart,
-            weekStep: 7,
-            activeView: props.activeView,
-            setActiveView,
-            entryViewModel: entryVM,
-          }),
-        { initialProps: { activeView: 'week' } }
-      );
-
-      // Select date within entry week: no fetch needed
-      act(() => {
-        result.current.selectDayView('2026-10-26');
-      });
-      rerender({ activeView });
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(result.current.pagedWeekStart).toBeNull();
-      expect(toISODate(result.current.pagedDate!)).toBe('2026-10-26');
-      expect(activeView).toBe('day');
-
-      // Now set currentViewModel to a different week with non-base range_start
-      act(() => {
-        result.current.setCurrentViewModel({
-          week: {
-            range_start: '2026-11-01',
-            range_end: '2026-11-07',
-            days: [
-              { date: '2026-11-02', is_today: false, is_weekend: false, is_entry_week: false, events: [] },
-            ],
-          },
-        });
-      });
-
-      // Select day in currentWeekVM (2026-11-02): syncs pagedWeekStart to 2026-11-01 without fetch
-      act(() => {
-        result.current.selectDayView('2026-11-02');
-      });
-      rerender({ activeView });
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(toISODate(result.current.pagedWeekStart!)).toBe('2026-11-01');
-
-      // Now select date from entryWeekVM (2026-10-25): restores entryViewModel and sets pagedWeekStart to null
-      act(() => {
-        result.current.selectDayView('2026-10-25');
-      });
-      rerender({ activeView });
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(result.current.pagedWeekStart).toBeNull();
-      expect(result.current.currentViewModel).toBe(entryVM);
-    });
 
     it('steps forward and then backward back to baseline in day, week, and month views', async () => {
       let activeView: ViewMode = 'day';
@@ -1500,17 +1349,27 @@ describe('useCalendarRangeData & useInactivityReset', () => {
     });
 
     describe('CalendarEventModal flair banners', () => {
-      it('renders illustrated flair banner for matching themes, respecting eventFlair and Mealie hero', () => {
-        const bdayEv: FamilyEvent = { id: 'bday-1', title: "Alpha's Birthday Party" };
-        const { container, rerender } = render(
-          <CalendarEventModal event={bdayEv} dateLabel="Oct 27" onClose={vi.fn()} eventFlair={true} />
+      it.each([
+        { flair: 'birthday', title: "Alpha's Birthday Party" },
+        { flair: 'party', title: 'Family Celebration' },
+        { flair: 'dentist', title: 'Dentist Checkup' },
+        { flair: 'movie', title: 'Cinema Movie Night' },
+        { flair: 'flight', title: 'Flight to SFO' },
+        { flair: 'sports', title: 'Soccer Game' },
+        { flair: 'holiday', title: 'Thanksgiving Day' },
+      ])('renders illustrated flair banner for $flair theme', ({ flair, title }) => {
+        const ev: FamilyEvent = { id: `flair-${flair}`, title };
+        const { container } = render(
+          <CalendarEventModal event={ev} dateLabel="Oct 27" onClose={vi.fn()} eventFlair={true} />
         );
         expect(
-          container.querySelector('.cf-modal-flair-banner.cf-modal-flair-birthday')
+          container.querySelector(`.cf-modal-flair-banner.cf-modal-flair-${flair}`)
         ).not.toBeNull();
+      });
 
-        // Disabling via eventFlair={false} suppresses banner
-        rerender(
+      it('respects eventFlair={false} and Mealie hero suppression', () => {
+        const bdayEv: FamilyEvent = { id: 'bday-1', title: "Alpha's Birthday Party" };
+        const { container, rerender } = render(
           <CalendarEventModal event={bdayEv} dateLabel="Oct 27" onClose={vi.fn()} eventFlair={false} />
         );
         expect(container.querySelector('.cf-modal-flair-banner')).toBeNull();
