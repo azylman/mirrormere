@@ -598,15 +598,12 @@ describe('PhotoCarouselWidget component', () => {
 
       expect(document.body.dataset.animating).toBeUndefined();
 
-      act(() => { vi.advanceTimersByTime(10000);
- });
+      act(() => { vi.advanceTimersByTime(10000); });
 
       expect(resolveDecode).not.toBeNull();
       expect(document.body.dataset.animating).toBeUndefined();
 
-      act(() => {
-        resolveDecode!();
- });
+      act(() => { resolveDecode!(); });
 
       await vi.waitFor(() => { expect(document.body.dataset.animating).toBe('1'); });
       act(() => { vi.advanceTimersByTime(850); });
@@ -740,22 +737,23 @@ describe('PhotoCarouselWidget component', () => {
     window.Image = MockImage;
 
     try {
-      setWidgetPhotos([
-        { url: 'https://example.com/p1.jpg' },
-        { url: 'https://example.com/p2.jpg' },
-        { url: 'https://example.com/p3.jpg' },
-      ], 10);
+      setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }, { url: 'https://example.com/p3.jpg' }], 10);
 
       const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
       const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
       expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
 
-      act(() => { vi.advanceTimersByTime(10000); });
+      // Fast forward interval to request p2
+      await act(async () => { vi.advanceTimersByTime(10000); });
+
       const p2Img = instances.find((img) => img._src.includes('p2.jpg'));
       expect(p2Img).toBeDefined();
+
+      // Trigger onerror for p2
       act(() => { p2Img!.onerror?.(); });
 
+      // p2 transition is aborted, still on p1
       await vi.waitFor(() => {
         expect(document.body.dataset.animating).not.toBe('1');
         const nextFg = container.querySelector('.photo-layer.photo-next') as HTMLImageElement;
@@ -764,9 +762,13 @@ describe('PhotoCarouselWidget component', () => {
         expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
       });
 
-      act(() => { vi.advanceTimersByTime(10000); });
+      // Next interval requests p3
+      await act(async () => { vi.advanceTimersByTime(10000); });
+
       const p3Img = instances.find((img) => img._src.includes('p3.jpg'));
       expect(p3Img).toBeDefined();
+
+      // Trigger onload for p3
       act(() => { p3Img!.onload?.(); });
 
       await vi.waitFor(() => {
@@ -775,6 +777,7 @@ describe('PhotoCarouselWidget component', () => {
         expect(document.body.dataset.animating).toBe('1');
       });
 
+      // Complete crossfade
       act(() => { vi.advanceTimersByTime(850); });
       expect(currentFg.getAttribute('src')).toBe('https://example.com/p3.jpg=w1024-h768');
       expect(document.body.dataset.animating).toBe('0');

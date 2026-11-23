@@ -287,82 +287,90 @@ describe('YtMusicWidget', () => {
     delete win.onEmberAccountsUpdated;
   });
 
-  it('selects speaker and toggles speaker between This Device and remote speaker', async () => {
-    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
-    await waitFor(() => { expect(container.querySelectorAll('.spk-pill').length).toBe(3); });
-    // 1. Click specific speaker pill (Kitchen)
-    const kitchenSpk = itemAt(container.querySelectorAll('.spk-pill'), 2);
-    fireEvent.click(kitchenSpk);
-    await waitFor(() => {
-      const controlCall = fetchMock.mock.calls.find((c) => {
-        if (!String(c[0]).includes('/music/control')) return false;
-        const b = JSON.parse(String(c[1]?.body ?? '{}'));
-        return b.action === 'select_speaker' && b.speaker === 'media_player.kitchen_speaker';
-      });
-      expect(controlCall).toBeDefined();
-    });
-    // 2. Click toggle button (current is remote -> toggle to this_device)
-    const spkToggle = container.querySelector('#speaker-toggle-btn')!;
-    fireEvent.click(spkToggle);
-    await waitFor(() => {
-      const controlCall = fetchMock.mock.calls.find((c) => {
-        if (!String(c[0]).includes('/music/control')) return false;
-        const b = JSON.parse(String(c[1]?.body ?? '{}'));
-        return b.action === 'select_speaker' && b.speaker === 'this_device';
-      });
-      expect(controlCall).toBeDefined();
-    });
-  });
+  interface SpeakerToggleCase {
+    name: string;
+    activeSpeaker: string;
+    speakers?: { entity_id: string; name: string }[];
+    selector?: string;
+    pillIndex?: number;
+    wantToggleText?: string;
+    wantSpeaker?: string;
+  }
 
-  it('toggles speaker from This Device to first available remote speaker', async () => {
+  const speakerToggleCases: SpeakerToggleCase[] = [
+    {
+      name: 'selects specific speaker pill',
+      activeSpeaker: 'media_player.living_room_speaker',
+      pillIndex: 2,
+      wantSpeaker: 'media_player.kitchen_speaker',
+    },
+    {
+      name: 'toggles speaker from remote to This Device',
+      activeSpeaker: 'media_player.living_room_speaker',
+      selector: '#speaker-toggle-btn',
+      wantSpeaker: 'this_device',
+    },
+    {
+      name: 'toggles speaker from This Device to first available remote speaker',
+      activeSpeaker: 'this_device',
+      selector: '#speaker-toggle-btn',
+      wantToggleText: 'Cast to Speakers',
+      wantSpeaker: 'media_player.living_room_speaker',
+    },
+    {
+      name: 'handles toggle speaker when only local speaker exists',
+      activeSpeaker: 'this_device',
+      speakers: [{ entity_id: 'this_device', name: 'This Device' }],
+      selector: '#speaker-toggle-btn',
+    },
+  ];
+
+  it.each(speakerToggleCases)('$name', async (tc) => {
     fetchMock.mockImplementation(async (url: string | URL | Request) => {
       const urlStr = String(url);
       if (urlStr.includes('/music/state')) {
         return new Response(
           JSON.stringify({
             ...mockIdleState,
-            active_speaker: 'this_device',
+            active_speaker: tc.activeSpeaker,
+            ...(tc.speakers ? { speakers: tc.speakers } : {}),
           }),
-          { status: 200 }
+          { status: 200 },
         );
       }
       return new Response(JSON.stringify({ state: mockIdleState }), { status: 200 });
     });
     const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
     await waitFor(() => {
-      const spkToggle = container.querySelector('#speaker-toggle-btn');
-      expect(spkToggle?.textContent).toContain('Cast to Speakers');
+      expect(container.querySelector('#speaker-toggle-btn')).not.toBeNull();
     });
-    const spkToggle = container.querySelector('#speaker-toggle-btn')!;
-    fireEvent.click(spkToggle);
-    await waitFor(() => {
-      const controlCall = fetchMock.mock.calls.find((c) => {
+    const target = tc.pillIndex !== undefined
+      ? itemAt(container.querySelectorAll('.spk-pill'), tc.pillIndex)
+      : container.querySelector(tc.selector!)!;
+    if (tc.wantToggleText) {
+      expect(target.textContent).toContain(tc.wantToggleText);
+    }
+    fireEvent.click(target);
+    if (tc.wantSpeaker) {
+      await waitFor(() => {
+        const controlCall = fetchMock.mock.calls.find((c) => {
+          if (!String(c[0]).includes('/music/control')) return false;
+          const b = JSON.parse(String(c[1]?.body ?? '{}'));
+          return b.action === 'select_speaker' && b.speaker === tc.wantSpeaker;
+        });
+        expect(controlCall).toBeDefined();
+      });
+    } else {
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const selectCalls = fetchMock.mock.calls.filter((c) => {
         if (!String(c[0]).includes('/music/control')) return false;
         const b = JSON.parse(String(c[1]?.body ?? '{}'));
-        return b.action === 'select_speaker' && b.speaker === 'media_player.living_room_speaker';
+        return b.action === 'select_speaker';
       });
-      expect(controlCall).toBeDefined();
-    });
-  });
-
-  it('handles toggle speaker when only local speaker exists', async () => {
-    fetchMock.mockImplementation(async (url: string | URL | Request) => {
-      const urlStr = String(url);
-      if (urlStr.includes('/music/state')) {
-        return new Response(
-          JSON.stringify({
-            ...mockIdleState,
-            active_speaker: 'this_device',
-            speakers: [{ entity_id: 'this_device', name: 'This Device' }],
-          }),
-          { status: 200 }
-        );
-      }
-      return new Response(JSON.stringify({ state: mockIdleState }), { status: 200 });
-    });
-    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
-    await waitFor(() => { expect(container.querySelector('#speaker-toggle-btn')).not.toBeNull(); });
-    fireEvent.click(container.querySelector('#speaker-toggle-btn')!);
+      expect(selectCalls).toHaveLength(0);
+    }
   });
 
   it('handles transport buttons, volume slider, and stop action', async () => {
@@ -447,27 +455,27 @@ describe('YtMusicWidget', () => {
       name: 'first queue item when no track loaded',
       stateOverrides: { now_playing: {} },
       expectedUrl: '/music/control',
-      verify: (b: Record<string, unknown>) => b.action === 'play_index' && b.index === 0,
+      expectedBody: { action: 'play_index', index: 0 },
     },
     {
       name: 'first playlist when queue is empty',
       stateOverrides: { now_playing: {}, queue: [] },
       expectedUrl: '/music/play',
-      verify: (b: Record<string, unknown>) => b.playlist_id === 'PL_favorites',
+      expectedBody: { playlist_id: 'PL_favorites' },
     },
     {
       name: 'first suggestion when queue and playlists are empty',
       stateOverrides: { now_playing: {}, queue: [], playlists: [] },
       expectedUrl: '/music/play',
-      verify: (b: Record<string, unknown>) => b.playlist_id === 'PL_supermix',
+      expectedBody: { playlist_id: 'PL_supermix' },
     },
     {
       name: 'default suggestion when suggestions, queue, and playlists are empty',
       stateOverrides: { now_playing: {}, queue: [], playlists: [], suggestions: [] },
       expectedUrl: '/music/play',
-      verify: (b: Record<string, unknown>) => b.playlist_id === itemAt(DEFAULT_SUGGESTIONS, 0).playlist_id,
+      expectedBody: { playlist_id: itemAt(DEFAULT_SUGGESTIONS, 0).playlist_id },
     },
-  ])('handles idle play fallback to $name', async ({ stateOverrides, expectedUrl, verify }) => {
+  ])('handles idle play fallback to $name', async ({ stateOverrides, expectedUrl, expectedBody }) => {
     fetchMock.mockImplementation(async (url: string | URL | Request) => {
       const urlStr = String(url);
       if (urlStr.includes('/music/state')) {
@@ -485,7 +493,7 @@ describe('YtMusicWidget', () => {
       const call = fetchMock.mock.calls.find((c) => {
         if (!String(c[0]).includes(expectedUrl)) return false;
         const b = JSON.parse(String(c[1]?.body ?? '{}'));
-        return verify(b);
+        return Object.entries(expectedBody).every(([k, v]) => b[k] === v);
       });
       expect(call).toBeDefined();
     });
@@ -943,12 +951,17 @@ describe('YtMusicWidget', () => {
     const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(function (this: HTMLMediaElement) {
       this.currentTime = 0;
     });
-    const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => {});
-    const localPlayingState: MusicState = { ...mockPlayingState, active_speaker: 'this_device' };
+    const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+
+    const baseState: MusicState = {
+      ...mockPlayingState,
+      active_speaker: 'this_device',
+    };
+
     fetchMock.mockImplementation(async (url: string | URL | Request) => {
       const u = String(url);
-      if (u.includes('/music/state')) return new Response(JSON.stringify(localPlayingState), { status: 200 });
-      return new Response(JSON.stringify({ state: localPlayingState }), { status: 200 });
+      if (u.includes('/music/state')) return new Response(JSON.stringify(baseState), { status: 200 });
+      return new Response(JSON.stringify({ state: baseState }), { status: 200 });
     });
 
     const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
@@ -995,12 +1008,17 @@ describe('YtMusicWidget', () => {
   });
 
   it('posts stop when bounded premature ended retries exhaust on a single-track queue', async () => {
-    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(function (this: HTMLMediaElement) {
+      this.currentTime = 0;
+    });
+    const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+
     const singleTrackState: MusicState = {
       ...mockPlayingState,
       active_speaker: 'this_device',
-      queue: [itemAt(mockPlayingState.queue, 0)],
+      queue: [itemAt(mockPlayingState.queue ?? [], 0)],
     };
+
     fetchMock.mockImplementation(async (url: string | URL | Request) => {
       const u = String(url);
       if (u.includes('/music/state')) return new Response(JSON.stringify(singleTrackState), { status: 200 });
@@ -1014,13 +1032,34 @@ describe('YtMusicWidget', () => {
       return el;
     });
 
+    playSpy.mockClear();
+    loadSpy.mockClear();
     Object.defineProperty(audio, 'duration', { value: 180, configurable: true });
     Object.defineProperty(audio, 'currentTime', { value: 45, writable: true, configurable: true });
 
+    // Retry 1: reloads stream, preserves resume time, calls play without posting stop
     fireEvent.ended(audio);
-    fireEvent.ended(audio);
-    fireEvent.ended(audio);
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(audio.currentTime).toBe(45);
+    expect(
+      fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes('/music/control') && (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action === 'stop',
+      ),
+    ).toBeUndefined();
 
+    // Retry 2: bounded retry reloads stream again without posting stop
+    fireEvent.ended(audio);
+    expect(loadSpy).toHaveBeenCalledTimes(2);
+    expect(playSpy).toHaveBeenCalledTimes(2);
+    expect(
+      fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes('/music/control') && (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action === 'stop',
+      ),
+    ).toBeUndefined();
+
+    // Retry 3: exceeds MAX_PREMATURE_END_RETRIES -> posts stop on single-track queue
+    fireEvent.ended(audio);
     await waitFor(() => {
       const stopCall = fetchMock.mock.calls.find(
         (c) => String(c[0]).includes('/music/control') && (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action === 'stop',
@@ -1030,11 +1069,15 @@ describe('YtMusicWidget', () => {
   });
 
   it('recovers with next/stop when play() rejects during premature ended retry', async () => {
-    const localPlayingState: MusicState = { ...mockPlayingState, active_speaker: 'this_device' };
+    const baseState: MusicState = {
+      ...mockPlayingState,
+      active_speaker: 'this_device',
+    };
+
     fetchMock.mockImplementation(async (url: string | URL | Request) => {
       const u = String(url);
-      if (u.includes('/music/state')) return new Response(JSON.stringify(localPlayingState), { status: 200 });
-      return new Response(JSON.stringify({ state: localPlayingState }), { status: 200 });
+      if (u.includes('/music/state')) return new Response(JSON.stringify(baseState), { status: 200 });
+      return new Response(JSON.stringify({ state: baseState }), { status: 200 });
     });
 
     const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
@@ -1051,32 +1094,35 @@ describe('YtMusicWidget', () => {
     Object.defineProperty(audio, 'currentTime', { value: 45, writable: true, configurable: true });
 
     fireEvent.ended(audio);
-
     await waitFor(() => {
-      const nextCall = fetchMock.mock.calls.find(
+      const call = fetchMock.mock.calls.find(
         (c) => String(c[0]).includes('/music/control') && (JSON.parse(String(c[1]?.body ?? '{}')) as Record<string, unknown>).action === 'next',
       );
-      expect(nextCall).toBeDefined();
+      expect(call).toBeDefined();
     });
   });
 
   it('ignores stale premature ended recovery play() rejection after playback pauses', async () => {
-    const localPlayingState: MusicState = { ...mockPlayingState, active_speaker: 'this_device' };
+    const baseState: MusicState = {
+      ...mockPlayingState,
+      active_speaker: 'this_device',
+    };
+
     fetchMock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
-      if (u.includes('/music/state')) return new Response(JSON.stringify(localPlayingState), { status: 200 });
-      if (u.includes('/music/control')) {
-        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      if (u.includes('/music/state')) return new Response(JSON.stringify(baseState), { status: 200 });
+      if (u.includes('/music/control') && init?.body) {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
         if (body.action === 'play_pause') {
           return new Response(
             JSON.stringify({
-              state: { ...localPlayingState, now_playing: { ...localPlayingState.now_playing, state: 'paused' } },
+              state: { ...baseState, now_playing: { ...baseState.now_playing, state: 'paused' } },
             }),
             { status: 200 },
           );
         }
       }
-      return new Response(JSON.stringify({ state: localPlayingState }), { status: 200 });
+      return new Response(JSON.stringify({ state: baseState }), { status: 200 });
     });
 
     const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
@@ -1095,7 +1141,6 @@ describe('YtMusicWidget', () => {
     Object.defineProperty(audio, 'currentTime', { value: 45, writable: true, configurable: true });
 
     fireEvent.ended(audio);
-
     fireEvent.click(container.querySelector('#btn-play')!);
     await waitFor(() => {
       const pauseCall = fetchMock.mock.calls.find(

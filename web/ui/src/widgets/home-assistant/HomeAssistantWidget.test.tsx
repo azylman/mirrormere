@@ -158,65 +158,372 @@ describe('HomeAssistantWidget', () => {
     expect(container.querySelector('[data-entity-id="camera.driveway"]')).not.toBeNull();
   });
 
-  it('renders all 12 supported domains with touch-friendly controls and dispatches actions', async () => {
-    const fetchCalls: { url: string; options: RequestInit }[] = [];
-    const fetchMock = vi.fn().mockImplementation((url: string, options: RequestInit) => {
-      fetchCalls.push({ url, options });
-      return Promise.resolve(new Response(JSON.stringify({ status: 'ok', widget_id: 'ha-all-domains' })));
+  interface DomainActionCase {
+    domain: string;
+    action: string;
+    entityId: string;
+    entity: { state: string; attributes: Record<string, unknown> };
+    selector: string;
+    subIndex?: number;
+    checkActiveSubIndex?: number;
+    wantService?: string;
+    wantData?: Record<string, unknown>;
+    expectedBtnText?: string;
+  }
+
+  const domainActionCases: DomainActionCase[] = [
+    {
+      domain: 'light',
+      action: 'toggle off to on',
+      entityId: 'light.living_room',
+      entity: { state: 'off', attributes: { friendly_name: 'Living Room Light' } },
+      selector: '[data-action="toggle"]',
+      wantService: 'toggle',
+    },
+    {
+      domain: 'light',
+      action: 'quick brightness 25%',
+      entityId: 'light.active_lamp',
+      entity: { state: 'on', attributes: { friendly_name: 'Lamp', brightness: 128 } },
+      selector: '.ha-btn-sub',
+      subIndex: 0,
+      checkActiveSubIndex: 1,
+      wantService: 'turn_on',
+      wantData: { brightness: 64 },
+    },
+    {
+      domain: 'switch',
+      action: 'toggle',
+      entityId: 'switch.porch_light',
+      entity: { state: 'off', attributes: { friendly_name: 'Porch Switch' } },
+      selector: '[data-action="toggle"]',
+      wantService: 'toggle',
+    },
+    {
+      domain: 'fan',
+      action: 'toggle',
+      entityId: 'fan.bedroom_fan',
+      entity: { state: 'off', attributes: { friendly_name: 'Bedroom Fan' } },
+      selector: '[data-action="toggle"]',
+      wantService: 'toggle',
+    },
+    {
+      domain: 'fan',
+      action: 'quick speed Low (33%)',
+      entityId: 'fan.active_fan',
+      entity: { state: 'on', attributes: { friendly_name: 'Fan', percentage: 66 } },
+      selector: '.ha-btn-sub',
+      subIndex: 0,
+      checkActiveSubIndex: 1,
+      wantService: 'set_percentage',
+      wantData: { percentage: 33 },
+    },
+    {
+      domain: 'fan',
+      action: 'quick speed High (100%)',
+      entityId: 'fan.active_fan',
+      entity: { state: 'on', attributes: { friendly_name: 'Fan', percentage: 66 } },
+      selector: '.ha-btn-sub',
+      subIndex: 2,
+      wantService: 'set_percentage',
+      wantData: { percentage: 100 },
+    },
+    {
+      domain: 'cover',
+      action: 'open',
+      entityId: 'cover.blinds',
+      entity: { state: 'closed', attributes: { friendly_name: 'Blinds' } },
+      selector: '[data-action="open"]',
+      wantService: 'open_cover',
+    },
+    {
+      domain: 'cover',
+      action: 'stop',
+      entityId: 'cover.curtain',
+      entity: { state: 'open', attributes: { friendly_name: 'Curtain' } },
+      selector: '[data-action="stop"]',
+      wantService: 'stop_cover',
+    },
+    {
+      domain: 'cover',
+      action: 'close',
+      entityId: 'cover.curtain',
+      entity: { state: 'open', attributes: { friendly_name: 'Curtain' } },
+      selector: '[data-action="close"]',
+      wantService: 'close_cover',
+    },
+    {
+      domain: 'lock',
+      action: 'unlock (when locked)',
+      entityId: 'lock.front_door',
+      entity: { state: 'locked', attributes: { friendly_name: 'Smart Lock' } },
+      selector: '[data-action="toggle-lock"]',
+      wantService: 'unlock',
+      expectedBtnText: 'Unlock',
+    },
+    {
+      domain: 'lock',
+      action: 'lock (when unlocked)',
+      entityId: 'lock.unlocked_lock',
+      entity: { state: 'unlocked', attributes: { friendly_name: 'Lock' } },
+      selector: '[data-action="toggle-lock"]',
+      wantService: 'lock',
+      expectedBtnText: 'Lock',
+    },
+    {
+      domain: 'climate',
+      action: 'temp-up (+)',
+      entityId: 'climate.main_ac',
+      entity: { state: 'cool', attributes: { friendly_name: 'Main AC', current_temperature: 75, temperature: 72 } },
+      selector: '[data-action="temp-up"]',
+      wantService: 'set_temperature',
+      wantData: { temperature: 73 },
+    },
+    {
+      domain: 'climate',
+      action: 'temp-down (-)',
+      entityId: 'climate.bedroom_heat',
+      entity: { state: 'heat', attributes: { friendly_name: 'Bedroom Heat', temperature: 70 } },
+      selector: '[data-action="temp-down"]',
+      wantService: 'set_temperature',
+      wantData: { temperature: 69 },
+    },
+    {
+      domain: 'media_player',
+      action: 'play-pause',
+      entityId: 'media_player.soundbar',
+      entity: { state: 'paused', attributes: { friendly_name: 'Soundbar' } },
+      selector: '[data-action="play-pause"]',
+      wantService: 'media_play_pause',
+    },
+    {
+      domain: 'media_player',
+      action: 'prev track',
+      entityId: 'media_player.kitchen_speaker',
+      entity: { state: 'playing', attributes: { friendly_name: 'Kitchen Speaker' } },
+      selector: '[data-action="prev"]',
+      wantService: 'media_previous_track',
+    },
+    {
+      domain: 'media_player',
+      action: 'next track',
+      entityId: 'media_player.kitchen_speaker',
+      entity: { state: 'playing', attributes: { friendly_name: 'Kitchen Speaker' } },
+      selector: '[data-action="next"]',
+      wantService: 'media_next_track',
+    },
+    {
+      domain: 'media_player',
+      action: 'volume down',
+      entityId: 'media_player.kitchen_speaker',
+      entity: { state: 'playing', attributes: { friendly_name: 'Kitchen Speaker' } },
+      selector: '[data-action="vol-down"]',
+      wantService: 'volume_down',
+    },
+    {
+      domain: 'media_player',
+      action: 'volume up',
+      entityId: 'media_player.kitchen_speaker',
+      entity: { state: 'playing', attributes: { friendly_name: 'Kitchen Speaker' } },
+      selector: '[data-action="vol-up"]',
+      wantService: 'volume_up',
+    },
+    {
+      domain: 'scene',
+      action: 'activate',
+      entityId: 'scene.movie_night',
+      entity: { state: 'scening', attributes: { friendly_name: 'Movie Night' } },
+      selector: '[data-action="activate"]',
+      wantService: 'turn_on',
+    },
+    {
+      domain: 'script',
+      action: 'run',
+      entityId: 'script.clean_all',
+      entity: { state: 'off', attributes: { friendly_name: 'Vacuum Routine' } },
+      selector: '[data-action="run"]',
+      wantService: 'turn_on',
+    },
+    {
+      domain: 'camera',
+      action: 'refresh',
+      entityId: 'camera.porch_cam',
+      entity: { state: 'idle', attributes: { friendly_name: 'Porch Camera', entity_picture: '/api/camera_proxy/camera.porch_cam' } },
+      selector: '[data-action="refresh"]',
+      expectedBtnText: 'Refresh',
+    },
+  ];
+
+  it.each(domainActionCases)('dispatches domain entity action: $domain ($action)', async (tc) => {
+    let callBody: unknown;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((_url: string, options: RequestInit) => {
+      callBody = JSON.parse(options.body as string);
+      return Promise.resolve(new Response(JSON.stringify({ status: 'ok', widget_id: 'ha-action-test' })));
+    }));
+
+    setHaWidget('ha-action-test', {
+      cards: [
+        { type: 'entities', entities: [tc.entityId] },
+        ...(tc.domain === 'camera' ? [{ type: 'picture-entity', entity: tc.entityId }] : []),
+      ],
+      entities: {
+        [tc.entityId]: {
+          entity_id: tc.entityId,
+          state: tc.entity.state,
+          attributes: tc.entity.attributes,
+        },
+      },
     });
-    vi.stubGlobal('fetch', fetchMock);
 
-    setHaWidget('ha-all-domains', {
-            title: 'All Domains Test',
-            cards: [
-              {
-                type: 'entities',
-                title: 'All Domains',
-                entities: [
-                  'light.living_room',
-                  'switch.porch_light',
-                  'fan.bedroom_fan',
-                  'cover.blinds',
-                  'lock.front_door',
-                  'climate.main_ac',
-                  'media_player.soundbar',
-                  'camera.porch_cam',
-                  'scene.movie_night',
-                  'script.clean_all',
-                  'sensor.kitchen_temperature',
-                  'binary_sensor.front_motion',
-                ],
-              },
-            ],
-            entities: {
-              'light.living_room': { entity_id: 'light.living_room', state: 'off', attributes: { friendly_name: 'Living Room Light' } },
-              'switch.porch_light': { entity_id: 'switch.porch_light', state: 'off', attributes: { friendly_name: 'Porch Switch' } },
-              'fan.bedroom_fan': { entity_id: 'fan.bedroom_fan', state: 'off', attributes: { friendly_name: 'Bedroom Fan' } },
-              'cover.blinds': { entity_id: 'cover.blinds', state: 'closed', attributes: { friendly_name: 'Blinds' } },
-              'lock.front_door': { entity_id: 'lock.front_door', state: 'locked', attributes: { friendly_name: 'Smart Lock' } },
-              'climate.main_ac': { entity_id: 'climate.main_ac', state: 'cool', attributes: { friendly_name: 'Main AC', current_temperature: 75, temperature: 72 } },
-              'media_player.soundbar': { entity_id: 'media_player.soundbar', state: 'paused', attributes: { friendly_name: 'Soundbar', media_title: 'Bohemian Rhapsody', media_artist: 'Queen' } },
-              'camera.porch_cam': { entity_id: 'camera.porch_cam', state: 'idle', attributes: { friendly_name: 'Porch Camera', entity_picture: '/api/camera_proxy/camera.porch_cam' } },
-              'scene.movie_night': { entity_id: 'scene.movie_night', state: 'scening', attributes: { friendly_name: 'Movie Night' } },
-              'script.clean_all': { entity_id: 'script.clean_all', state: 'off', attributes: { friendly_name: 'Vacuum Routine' } },
-              'sensor.kitchen_temperature': { entity_id: 'sensor.kitchen_temperature', state: '72.4', attributes: { friendly_name: 'Kitchen Temp', unit_of_measurement: '°F' } },
-              'binary_sensor.front_motion': { entity_id: 'binary_sensor.front_motion', state: 'on', attributes: { friendly_name: 'Front Motion Sensor', device_class: 'motion' } },
-            },
-          });
+    const { container } = render(<HomeAssistantWidget id="ha-action-test" type="home-assistant" />);
+    const row = container.querySelector(`[data-entity-id="${tc.entityId}"]`);
+    expect(row).not.toBeNull();
 
-    const { container, rerender } = render(<HomeAssistantWidget id="ha-all-domains" type="home-assistant" />);
-    rerender(<HomeAssistantWidget id="ha-all-domains" type="home-assistant" />);
+    if (tc.checkActiveSubIndex !== undefined) {
+      const subs = row?.querySelectorAll('.ha-btn-sub');
+      expect(subs?.[tc.checkActiveSubIndex]?.classList.contains('active')).toBe(true);
+    }
 
-    // 1. Light: tap toggle
-    const lightRow = container.querySelector('[data-entity-id="light.living_room"]');
-    expect(lightRow).not.toBeNull();
-    const lightBtn = lightRow?.querySelector('[data-action="toggle"]') as HTMLButtonElement;
-    expect(lightBtn).not.toBeNull();
+    let btn: HTMLButtonElement;
+    if (tc.subIndex !== undefined) {
+      btn = row?.querySelectorAll('.ha-btn-sub')[tc.subIndex] as HTMLButtonElement;
+    } else {
+      btn = row?.querySelector(tc.selector) as HTMLButtonElement;
+    }
+    expect(btn).not.toBeNull();
+
+    if (tc.expectedBtnText !== undefined) {
+      expect(btn.textContent).toBe(tc.expectedBtnText);
+    }
+
+    if (tc.domain === 'camera') {
+      const picImg = container.querySelector('.ha-card-picture img') as HTMLImageElement;
+      expect(picImg.src).not.toContain('?ts=');
+    }
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    if (tc.wantService) {
+      expect(callBody).toEqual({
+        domain: tc.domain,
+        service: tc.wantService,
+        entity_id: tc.entityId,
+        service_data: { entity_id: tc.entityId, ...(tc.wantData ?? {}) },
+      });
+    } else {
+      expect(callBody).toBeUndefined();
+      if (tc.domain === 'camera') {
+        const picImg = container.querySelector('.ha-card-picture img') as HTMLImageElement;
+        expect(picImg.src).toContain('/api/camera_proxy/camera.porch_cam?ts=');
+      }
+    }
+  });
+
+  interface StateRenderingCase {
+    name: string;
+    entityId: string;
+    rawId?: string;
+    state: string;
+    attrs: Record<string, unknown>;
+    selector: string;
+    wantText: string;
+  }
+
+  const stateRenderingCases: StateRenderingCase[] = [
+    { name: 'sensor value', entityId: 'sensor.kitchen_temperature', state: '72.4', attrs: { unit_of_measurement: '°F' }, selector: '.ha-sensor-val', wantText: '72.4' },
+    { name: 'sensor unit', entityId: 'sensor.kitchen_temperature', rawId: 'sensor.kitchen_temperature', state: '72.4', attrs: { unit_of_measurement: '°F' }, selector: '.ha-sensor-unit', wantText: '°F' },
+    { name: 'binary sensor motion', entityId: 'binary_sensor.front_motion', state: 'on', attrs: { device_class: 'motion' }, selector: '.ha-binary-pill', wantText: 'Motion' },
+    { name: 'binary sensor door', entityId: 'binary_sensor.door_contact', state: 'off', attrs: { device_class: 'door' }, selector: '', wantText: 'Closed' },
+    { name: 'binary sensor window', entityId: 'binary_sensor.window_contact', state: 'on', attrs: { device_class: 'window' }, selector: '', wantText: 'Open' },
+    { name: 'binary sensor occupancy', entityId: 'binary_sensor.office_occupancy', state: 'off', attrs: { device_class: 'occupancy' }, selector: '', wantText: 'Clear' },
+    { name: 'binary sensor presence', entityId: 'binary_sensor.user_presence', state: 'on', attrs: { device_class: 'presence' }, selector: '', wantText: 'Home' },
+    { name: 'binary sensor smoke', entityId: 'binary_sensor.smoke', state: 'off', attrs: { device_class: 'smoke' }, selector: '', wantText: 'Off' },
+    { name: 'vacuum generic state', entityId: 'vacuum.roborock', state: 'docked', attrs: {}, selector: '.ha-generic-state', wantText: 'docked' },
+    { name: 'climate inline temp fallback', entityId: 'climate.no_target', state: 'auto', attrs: {}, selector: '.ha-temp-inline', wantText: '70°' },
+  ];
+
+  it.each(stateRenderingCases)('renders read-only entity state: $name ($entityId)', (tc) => {
+    const rawId = tc.rawId ?? tc.entityId;
+    setHaWidget('ha-state-test', {
+      cards: [{ type: 'entities', entities: [rawId] }],
+      entities: {
+        [rawId]: {
+          entity_id: rawId,
+          state: tc.state,
+          attributes: tc.attrs,
+        },
+      },
+    });
+
+    const { container } = render(<HomeAssistantWidget id="ha-state-test" type="home-assistant" />);
+    const row = container.querySelector(`[data-entity-id="${rawId}"]`);
+    expect(row).not.toBeNull();
+    const target = tc.selector ? row?.querySelector(tc.selector) : row;
+    expect(target?.textContent).toContain(tc.wantText);
+  });
+
+  it('renders multiple domains in a single entities card and interacts with controls', async () => {
+    const fetchCalls: { url: string; options: RequestInit }[] = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string, options: RequestInit) => {
+      fetchCalls.push({ url, options });
+      return Promise.resolve(new Response(JSON.stringify({ status: 'ok', widget_id: 'ha-multi' })));
+    }));
+
+    setHaWidget('ha-multi', {
+      cards: [
+        {
+          type: 'entities',
+          title: 'All Domains',
+          entities: [
+            'light.living_room',
+            'switch.porch_light',
+            'fan.bedroom_fan',
+            'cover.blinds',
+            'lock.front_door',
+            'climate.main_ac',
+            'media_player.soundbar',
+            'camera.porch_cam',
+            'scene.movie_night',
+            'script.clean_all',
+            'sensor.kitchen_temperature',
+            'binary_sensor.front_motion',
+          ],
+        },
+        {
+          type: 'picture-entity',
+          entity: 'camera.porch_cam',
+        },
+      ],
+      entities: {
+        'light.living_room': { entity_id: 'light.living_room', state: 'off', attributes: { friendly_name: 'Living Room Light' } },
+        'switch.porch_light': { entity_id: 'switch.porch_light', state: 'off', attributes: { friendly_name: 'Porch Switch' } },
+        'fan.bedroom_fan': { entity_id: 'fan.bedroom_fan', state: 'off', attributes: { friendly_name: 'Bedroom Fan' } },
+        'cover.blinds': { entity_id: 'cover.blinds', state: 'closed', attributes: { friendly_name: 'Blinds' } },
+        'lock.front_door': { entity_id: 'lock.front_door', state: 'locked', attributes: { friendly_name: 'Smart Lock' } },
+        'climate.main_ac': { entity_id: 'climate.main_ac', state: 'cool', attributes: { friendly_name: 'Main AC', current_temperature: 75, temperature: 72 } },
+        'media_player.soundbar': { entity_id: 'media_player.soundbar', state: 'paused', attributes: { friendly_name: 'Soundbar' } },
+        'camera.porch_cam': { entity_id: 'camera.porch_cam', state: 'idle', attributes: { friendly_name: 'Porch Camera', entity_picture: '/api/camera_proxy/camera.porch_cam' } },
+        'scene.movie_night': { entity_id: 'scene.movie_night', state: 'scening', attributes: { friendly_name: 'Movie Night' } },
+        'script.clean_all': { entity_id: 'script.clean_all', state: 'off', attributes: { friendly_name: 'Vacuum Routine' } },
+        'sensor.kitchen_temperature': { entity_id: 'sensor.kitchen_temperature', state: '72.4', attributes: { friendly_name: 'Kitchen Temp', unit_of_measurement: '°F' } },
+        'binary_sensor.front_motion': { entity_id: 'binary_sensor.front_motion', state: 'on', attributes: { friendly_name: 'Front Motion Sensor', device_class: 'motion' } },
+      },
+    });
+
+    const { container } = render(<HomeAssistantWidget id="ha-multi" type="home-assistant" />);
+    expect(container.querySelectorAll('.ha-entity-row')).toHaveLength(12);
+    expect(container.querySelector('[data-entity-id="sensor.kitchen_temperature"] .ha-sensor-val')?.textContent).toBe('72.4');
+    expect(container.querySelector('[data-entity-id="sensor.kitchen_temperature"] .ha-sensor-unit')?.textContent).toBe('°F');
+    expect(container.querySelector('[data-entity-id="binary_sensor.front_motion"] .ha-binary-pill')?.textContent).toContain('Motion');
+
+    // Toggle light in the multi-entity card
+    const lightBtn = container.querySelector('[data-entity-id="light.living_room"] [data-action="toggle"]') as HTMLButtonElement;
     await act(async () => {
       fireEvent.click(lightBtn);
     });
-    expect(fetchCalls.length).toBe(1);
-    expect(itemAt(fetchCalls, 0).url).toBe('/api/widgets/ha-all-domains/action');
+    expect(fetchCalls).toHaveLength(1);
     expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
       domain: 'light',
       service: 'toggle',
@@ -224,134 +531,35 @@ describe('HomeAssistantWidget', () => {
       service_data: { entity_id: 'light.living_room' },
     });
 
-    // 2. Switch: tap toggle
-    const switchRow = container.querySelector('[data-entity-id="switch.porch_light"]');
-    const switchBtn = switchRow?.querySelector('[data-action="toggle"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(switchBtn);
-    });
-    expect(fetchCalls.length).toBe(2);
-    expect(JSON.parse(itemAt(fetchCalls, 1).options.body as string)).toEqual({
-      domain: 'switch',
-      service: 'toggle',
-      entity_id: 'switch.porch_light',
-      service_data: { entity_id: 'switch.porch_light' },
-    });
-
-    // 3. Fan: tap toggle
-    const fanRow = container.querySelector('[data-entity-id="fan.bedroom_fan"]');
-    const fanBtn = fanRow?.querySelector('[data-action="toggle"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(fanBtn);
-    });
-    expect(fetchCalls.length).toBe(3);
-    expect(JSON.parse(itemAt(fetchCalls, 2).options.body as string)).toEqual({
-      domain: 'fan',
-      service: 'toggle',
-      entity_id: 'fan.bedroom_fan',
-      service_data: { entity_id: 'fan.bedroom_fan' },
-    });
-
-    // 4. Cover: tap open and close
-    const coverRow = container.querySelector('[data-entity-id="cover.blinds"]');
-    const coverOpenBtn = coverRow?.querySelector('[data-action="open"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(coverOpenBtn);
-    });
-    expect(fetchCalls.length).toBe(4);
-    expect(JSON.parse(itemAt(fetchCalls, 3).options.body as string)).toEqual({
-      domain: 'cover',
-      service: 'open_cover',
-      entity_id: 'cover.blinds',
-      service_data: { entity_id: 'cover.blinds' },
-    });
-
-    // 5. Lock: tap toggle-lock (starts locked -> unlocks)
-    const lockRow = container.querySelector('[data-entity-id="lock.front_door"]');
-    const lockBtn = lockRow?.querySelector('[data-action="toggle-lock"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(lockBtn);
-    });
-    expect(fetchCalls.length).toBe(5);
-    expect(JSON.parse(itemAt(fetchCalls, 4).options.body as string)).toEqual({
-      domain: 'lock',
-      service: 'unlock',
-      entity_id: 'lock.front_door',
-      service_data: { entity_id: 'lock.front_door' },
-    });
-
-    // 6. Climate: tap temp-up (+)
-    const climateRow = container.querySelector('[data-entity-id="climate.main_ac"]');
-    const tempUpBtn = climateRow?.querySelector('[data-action="temp-up"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(tempUpBtn);
-    });
-    expect(fetchCalls.length).toBe(6);
-    expect(JSON.parse(itemAt(fetchCalls, 5).options.body as string)).toEqual({
-      domain: 'climate',
-      service: 'set_temperature',
-      entity_id: 'climate.main_ac',
-      service_data: { entity_id: 'climate.main_ac', temperature: 73 },
-    });
-
-    // 7. Media player: tap play-pause
-    const mediaRow = container.querySelector('[data-entity-id="media_player.soundbar"]');
-    const playPauseBtn = mediaRow?.querySelector('[data-action="play-pause"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(playPauseBtn);
-    });
-    expect(fetchCalls.length).toBe(7);
-    expect(JSON.parse(itemAt(fetchCalls, 6).options.body as string)).toEqual({
-      domain: 'media_player',
-      service: 'media_play_pause',
-      entity_id: 'media_player.soundbar',
-      service_data: { entity_id: 'media_player.soundbar' },
-    });
-
-    // 8. Scene: tap activate
-    const sceneRow = container.querySelector('[data-entity-id="scene.movie_night"]');
-    const sceneBtn = sceneRow?.querySelector('[data-action="activate"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(sceneBtn);
-    });
-    expect(fetchCalls.length).toBe(8);
-    expect(JSON.parse(itemAt(fetchCalls, 7).options.body as string)).toEqual({
-      domain: 'scene',
-      service: 'turn_on',
-      entity_id: 'scene.movie_night',
-      service_data: { entity_id: 'scene.movie_night' },
-    });
-
-    // 9. Script: tap run
-    const scriptRow = container.querySelector('[data-entity-id="script.clean_all"]');
-    const scriptBtn = scriptRow?.querySelector('[data-action="run"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(scriptBtn);
-    });
-    expect(fetchCalls.length).toBe(9);
-    expect(JSON.parse(itemAt(fetchCalls, 8).options.body as string)).toEqual({
-      domain: 'script',
-      service: 'turn_on',
-      entity_id: 'script.clean_all',
-      service_data: { entity_id: 'script.clean_all' },
-    });
-
-    // 10. Sensor: verifies state and unit display
-    const sensorRow = container.querySelector('[data-entity-id="sensor.kitchen_temperature"]');
-    expect(sensorRow?.querySelector('.ha-sensor-val')?.textContent).toBe('72.4');
-    expect(sensorRow?.querySelector('.ha-sensor-unit')?.textContent).toBe('°F');
-
-    // 11. Binary sensor: verifies motion pill and status
-    const binaryRow = container.querySelector('[data-entity-id="binary_sensor.front_motion"]');
-    expect(binaryRow?.querySelector('.ha-binary-pill')?.textContent).toContain('Motion');
-
-    // 12. Camera: refresh button
-    const cameraRow = container.querySelector('[data-entity-id="camera.porch_cam"]');
-    const cameraRefreshBtn = cameraRow?.querySelector('[data-action="refresh"]') as HTMLButtonElement;
-    expect(cameraRefreshBtn).not.toBeNull();
+    // Refresh camera in the multi-entity card and assert picture entity image timestamp update
+    const picImgBefore = container.querySelector('.ha-card-picture img') as HTMLImageElement;
+    expect(picImgBefore.src).not.toContain('?ts=');
+    const cameraRefreshBtn = container.querySelector('[data-entity-id="camera.porch_cam"] [data-action="refresh"]') as HTMLButtonElement;
     await act(async () => {
       fireEvent.click(cameraRefreshBtn);
     });
+    const picImgAfter = container.querySelector('.ha-card-picture img') as HTMLImageElement;
+    expect(picImgAfter.src).toContain('/api/camera_proxy/camera.porch_cam?ts=');
+  });
+
+  it('updates entity state optimistically on action dispatch', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Promise(() => {})));
+    setHaWidget('ha-optimistic-toggles', {
+      cards: [{ type: 'entities', entities: ['media_player.paused_speaker', 'light.active_lamp'] }],
+      entities: {
+        'media_player.paused_speaker': { entity_id: 'media_player.paused_speaker', state: 'paused', attributes: {} },
+        'light.active_lamp': { entity_id: 'light.active_lamp', state: 'on', attributes: {} },
+      },
+    });
+    const { container } = render(<HomeAssistantWidget id="ha-optimistic-toggles" type="home-assistant" />);
+    await act(async () => {
+      fireEvent.click(container.querySelector('[data-entity-id="media_player.paused_speaker"] [data-action="play-pause"]') as HTMLButtonElement);
+    });
+    expect(container.querySelector('[data-entity-id="media_player.paused_speaker"]')?.getAttribute('data-state')).toBe('playing');
+    await act(async () => {
+      fireEvent.click(container.querySelector('[data-entity-id="light.active_lamp"] [data-action="toggle"]') as HTMLButtonElement);
+    });
+    expect(container.querySelector('[data-entity-id="light.active_lamp"]')?.getAttribute('data-state')).toBe('off');
   });
 
   it('handles action failure by displaying error alert and reverting optimistic update', async () => {
@@ -702,122 +910,79 @@ describe('HomeAssistantWidget', () => {
     expect(unknownLabels).toEqual(['Just Name', 'plain-type', 'Card', 'Foo Title', 'Bar Name']);
   });
 
-  it('dispatches ButtonCard tap actions with per-domain default services', async () => {
+  const buttonCardActionCases = [
+    {
+      name: 'scene default',
+      card: { type: 'button', entity: 'scene.night_mode' },
+      entity: { entity_id: 'scene.night_mode', state: 'scening', attributes: {} },
+      wantBody: { domain: 'scene', service: 'turn_on', entity_id: 'scene.night_mode', service_data: { entity_id: 'scene.night_mode' } },
+    },
+    {
+      name: 'script default',
+      card: { type: 'button', entity: 'script.run_vac' },
+      entity: { entity_id: 'script.run_vac', state: 'off', attributes: {} },
+      wantBody: { domain: 'script', service: 'turn_on', entity_id: 'script.run_vac', service_data: { entity_id: 'script.run_vac' } },
+    },
+    {
+      name: 'light default',
+      card: { type: 'button', entity: 'light.lamp' },
+      entity: { entity_id: 'light.lamp', state: 'off', attributes: {} },
+      wantBody: { domain: 'light', service: 'toggle', entity_id: 'light.lamp', service_data: { entity_id: 'light.lamp' } },
+    },
+    {
+      name: 'lock locked -> unlock',
+      card: { type: 'button', entity: 'lock.door_locked' },
+      entity: { entity_id: 'lock.door_locked', state: 'locked', attributes: {} },
+      wantBody: { domain: 'lock', service: 'unlock', entity_id: 'lock.door_locked', service_data: { entity_id: 'lock.door_locked' } },
+    },
+    {
+      name: 'lock unlocked -> lock',
+      card: { type: 'button', entity: 'lock.door_unlocked' },
+      entity: { entity_id: 'lock.door_unlocked', state: 'unlocked', attributes: {} },
+      wantBody: { domain: 'lock', service: 'lock', entity_id: 'lock.door_unlocked', service_data: { entity_id: 'lock.door_unlocked' } },
+    },
+    {
+      name: 'input_boolean default',
+      card: { type: 'button', entity: 'input_boolean.guest_mode' },
+      entity: { entity_id: 'input_boolean.guest_mode', state: 'off', attributes: {} },
+      wantBody: { domain: 'input_boolean', service: 'toggle', entity_id: 'input_boolean.guest_mode', service_data: { entity_id: 'input_boolean.guest_mode' } },
+    },
+    {
+      name: 'custom call_service with data',
+      card: { type: 'button', entity: 'light.custom_call', tap_action: { action: 'call_service', service: 'toggle', data: { transition: 2 } } },
+      entity: { entity_id: 'light.custom_call', state: 'on', attributes: {} },
+      wantBody: { domain: 'light', service: 'toggle', entity_id: 'light.custom_call', service_data: { entity_id: 'light.custom_call', transition: 2 } },
+    },
+  ];
+
+  it.each(buttonCardActionCases)('dispatches ButtonCard tap action: $name', async (tc) => {
+    let callBody: unknown;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((_url: string, options: RequestInit) => {
+      callBody = JSON.parse(options.body as string);
+      return Promise.resolve(new Response(JSON.stringify({ status: 'ok' })));
+    }));
+
+    setHaWidget('ha-btn-action-test', {
+      cards: [tc.card],
+      entities: { [tc.entity.entity_id]: tc.entity },
+    });
+
+    const { container } = render(<HomeAssistantWidget id="ha-btn-action-test" type="home-assistant" />);
+    const btn = container.querySelector('.ha-card-button') as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(callBody).toEqual(tc.wantBody);
+  });
+
+  it('handles ButtonCard service prefixes, media services, and action failures', async () => {
     const fetchCalls: { url: string; options: RequestInit }[] = [];
     const fetchMock = vi.fn().mockImplementation((url: string, options: RequestInit) => {
       fetchCalls.push({ url, options });
       return Promise.resolve(new Response(JSON.stringify({ status: 'ok' })));
     });
     vi.stubGlobal('fetch', fetchMock);
-
-    setHaWidget('ha-button-tests', {
-            cards: [
-              { type: 'button', entity: 'scene.night_mode' },
-              { type: 'button', entity: 'script.run_vac' },
-              { type: 'button', entity: 'light.lamp' },
-              { type: 'button', entity: 'lock.door_locked' },
-              { type: 'button', entity: 'lock.door_unlocked' },
-              { type: 'button', entity: 'input_boolean.guest_mode' },
-              {
-                type: 'button',
-                entity: 'light.custom_call',
-                tap_action: {
-                  action: 'call_service',
-                  service: 'toggle',
-                  data: { transition: 2 },
-                },
-              },
-            ],
-            entities: {
-              'scene.night_mode': { entity_id: 'scene.night_mode', state: 'scening', attributes: {} },
-              'script.run_vac': { entity_id: 'script.run_vac', state: 'off', attributes: {} },
-              'light.lamp': { entity_id: 'light.lamp', state: 'off', attributes: {} },
-              'lock.door_locked': { entity_id: 'lock.door_locked', state: 'locked', attributes: {} },
-              'lock.door_unlocked': { entity_id: 'lock.door_unlocked', state: 'unlocked', attributes: {} },
-              'input_boolean.guest_mode': { entity_id: 'input_boolean.guest_mode', state: 'off', attributes: {} },
-              'light.custom_call': { entity_id: 'light.custom_call', state: 'on', attributes: {} },
-            },
-          });
-
-    const { container } = render(<HomeAssistantWidget id="ha-button-tests" type="home-assistant" />);
-    const buttons = container.querySelectorAll('.ha-card-button');
-
-    // 1. Scene default
-    await act(async () => {
-      fireEvent.click(itemAt(buttons, 0));
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
-      domain: 'scene',
-      service: 'turn_on',
-      entity_id: 'scene.night_mode',
-      service_data: { entity_id: 'scene.night_mode' },
-    });
-
-    // 2. Script default
-    await act(async () => {
-      fireEvent.click(itemAt(buttons, 1));
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 1).options.body as string)).toEqual({
-      domain: 'script',
-      service: 'turn_on',
-      entity_id: 'script.run_vac',
-      service_data: { entity_id: 'script.run_vac' },
-    });
-
-    // 3. Light default
-    await act(async () => {
-      fireEvent.click(itemAt(buttons, 2));
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 2).options.body as string)).toEqual({
-      domain: 'light',
-      service: 'toggle',
-      entity_id: 'light.lamp',
-      service_data: { entity_id: 'light.lamp' },
-    });
-
-    // 4. Lock locked -> unlock
-    await act(async () => {
-      fireEvent.click(itemAt(buttons, 3));
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 3).options.body as string)).toEqual({
-      domain: 'lock',
-      service: 'unlock',
-      entity_id: 'lock.door_locked',
-      service_data: { entity_id: 'lock.door_locked' },
-    });
-
-    // 5. Lock unlocked -> lock
-    await act(async () => {
-      fireEvent.click(itemAt(buttons, 4));
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 4).options.body as string)).toEqual({
-      domain: 'lock',
-      service: 'lock',
-      entity_id: 'lock.door_unlocked',
-      service_data: { entity_id: 'lock.door_unlocked' },
-    });
-
-    // 6. Generic input_boolean -> toggle
-    await act(async () => {
-      fireEvent.click(itemAt(buttons, 5));
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 5).options.body as string)).toEqual({
-      domain: 'input_boolean',
-      service: 'toggle',
-      entity_id: 'input_boolean.guest_mode',
-      service_data: { entity_id: 'input_boolean.guest_mode' },
-    });
-
-    // 7. Custom call_service with data
-    await act(async () => {
-      fireEvent.click(itemAt(buttons, 6));
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 6).options.body as string)).toEqual({
-      domain: 'light',
-      service: 'toggle',
-      entity_id: 'light.custom_call',
-      service_data: { entity_id: 'light.custom_call', transition: 2 },
-    });
     // Service prefixes, media services, toggle/more-info actions and entity-less buttons.
     setHaWidget('ha-button-variants', {
       cards: [
@@ -1038,182 +1203,6 @@ describe('HomeAssistantWidget', () => {
     expect(fetchCalls.slice(1).map((c) => JSON.parse(c.options.body as string).entity_id)).toEqual(['light.yard_light']);
     expect((itemAt(branchCards, 0).querySelector('img') as HTMLImageElement).src).toContain('/yard.jpg?ts=');
     expect(itemAt(branchCards, 2).querySelector('.ha-picture-fallback')).not.toBeNull();
-  });
-
-  it('dispatches DomainTouchControls actions for every domain row and labels binary sensors', async () => {
-    const fetchCalls: { url: string; options: RequestInit }[] = [];
-    const fetchMock = vi.fn().mockImplementation((url: string, options: RequestInit) => {
-      fetchCalls.push({ url, options });
-      return Promise.resolve(new Response(JSON.stringify({ status: 'ok' })));
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    setHaWidget('ha-subcontrols', {
-            cards: [
-              {
-                type: 'entities',
-                entities: [
-                  'light.active_lamp',
-                  'fan.active_fan',
-                  'cover.curtain',
-                  'lock.unlocked_lock',
-                  'climate.bedroom_heat',
-                  'media_player.kitchen_speaker',
-                  'binary_sensor.door_contact',
-                  'binary_sensor.window_contact',
-                  'binary_sensor.office_occupancy',
-                  'binary_sensor.user_presence',
-                  'vacuum.roborock',
-                  'binary_sensor.smoke',
-                  'climate.no_target',
-                  'media_player.paused_speaker',
-                ],
-              },
-            ],
-            entities: {
-              'light.active_lamp': { entity_id: 'light.active_lamp', state: 'on', attributes: { friendly_name: 'Lamp', brightness: 128 } },
-              'fan.active_fan': { entity_id: 'fan.active_fan', state: 'on', attributes: { friendly_name: 'Fan', percentage: 66 } },
-              'cover.curtain': { entity_id: 'cover.curtain', state: 'open', attributes: { friendly_name: 'Curtain' } },
-              'lock.unlocked_lock': { entity_id: 'lock.unlocked_lock', state: 'unlocked', attributes: { friendly_name: 'Lock' } },
-              'climate.bedroom_heat': { entity_id: 'climate.bedroom_heat', state: 'heat', attributes: { friendly_name: 'Bedroom Heat', temperature: 70 } },
-              'media_player.kitchen_speaker': { entity_id: 'media_player.kitchen_speaker', state: 'playing', attributes: { friendly_name: 'Kitchen Speaker' } },
-              'binary_sensor.door_contact': { entity_id: 'binary_sensor.door_contact', state: 'off', attributes: { friendly_name: 'Door', device_class: 'door' } },
-              'binary_sensor.window_contact': { entity_id: 'binary_sensor.window_contact', state: 'on', attributes: { friendly_name: 'Window', device_class: 'window' } },
-              'binary_sensor.office_occupancy': { entity_id: 'binary_sensor.office_occupancy', state: 'off', attributes: { friendly_name: 'Office Occupancy', device_class: 'occupancy' } },
-              'binary_sensor.user_presence': { entity_id: 'binary_sensor.user_presence', state: 'on', attributes: { friendly_name: 'Presence', device_class: 'presence' } },
-              'vacuum.roborock': { entity_id: 'vacuum.roborock', state: 'docked', attributes: { friendly_name: 'Vacuum' } },
-              'binary_sensor.smoke': { entity_id: 'binary_sensor.smoke', state: 'off', attributes: { device_class: 'smoke' } },
-              'climate.no_target': { entity_id: 'climate.no_target', state: 'auto', attributes: {} },
-              'media_player.paused_speaker': { entity_id: 'media_player.paused_speaker', state: 'paused', attributes: {} },
-            },
-          });
-
-    const { container } = render(<HomeAssistantWidget id="ha-subcontrols" type="home-assistant" />);
-
-    // 1. Light quick brightness buttons (50% button is active since brightness=128)
-    const lampRow = container.querySelector('[data-entity-id="light.active_lamp"]');
-    const brightnessBtns = lampRow?.querySelectorAll('.ha-btn-sub') as NodeListOf<HTMLButtonElement>;
-    expect(itemAt(brightnessBtns, 1).classList.contains('active')).toBe(true);
-    await act(async () => {
-      fireEvent.click(itemAt(brightnessBtns, 0)); // 25%
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 0).options.body as string)).toEqual({
-      domain: 'light',
-      service: 'turn_on',
-      entity_id: 'light.active_lamp',
-      service_data: { entity_id: 'light.active_lamp', brightness: 64 },
-    });
-
-    // 2. Fan quick speed buttons (Med button is active)
-    const fanRow = container.querySelector('[data-entity-id="fan.active_fan"]');
-    const speedBtns = fanRow?.querySelectorAll('.ha-btn-sub') as NodeListOf<HTMLButtonElement>;
-    expect(itemAt(speedBtns, 1).classList.contains('active')).toBe(true);
-    await act(async () => {
-      fireEvent.click(itemAt(speedBtns, 0)); // Low (33)
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 1).options.body as string)).toEqual({
-      domain: 'fan',
-      service: 'set_percentage',
-      entity_id: 'fan.active_fan',
-      service_data: { entity_id: 'fan.active_fan', percentage: 33 },
-    });
-    await act(async () => {
-      fireEvent.click(itemAt(speedBtns, 2)); // High (100)
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 2).options.body as string)).toEqual({
-      domain: 'fan',
-      service: 'set_percentage',
-      entity_id: 'fan.active_fan',
-      service_data: { entity_id: 'fan.active_fan', percentage: 100 },
-    });
-
-    // 3. Cover stop and close
-    const coverRow = container.querySelector('[data-entity-id="cover.curtain"]');
-    const stopBtn = coverRow?.querySelector('[data-action="stop"]') as HTMLButtonElement;
-    const closeBtn = coverRow?.querySelector('[data-action="close"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(stopBtn);
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 3).options.body as string)).toEqual({
-      domain: 'cover',
-      service: 'stop_cover',
-      entity_id: 'cover.curtain',
-      service_data: { entity_id: 'cover.curtain' },
-    });
-    await act(async () => {
-      fireEvent.click(closeBtn);
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 4).options.body as string)).toEqual({
-      domain: 'cover',
-      service: 'close_cover',
-      entity_id: 'cover.curtain',
-      service_data: { entity_id: 'cover.curtain' },
-    });
-
-    // 4. Lock currently unlocked -> clicking locks
-    const lockRow = container.querySelector('[data-entity-id="lock.unlocked_lock"]');
-    const lockBtn = lockRow?.querySelector('[data-action="toggle-lock"]') as HTMLButtonElement;
-    expect(lockBtn.textContent).toBe('Lock');
-    await act(async () => {
-      fireEvent.click(lockBtn);
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 5).options.body as string)).toEqual({
-      domain: 'lock',
-      service: 'lock',
-      entity_id: 'lock.unlocked_lock',
-      service_data: { entity_id: 'lock.unlocked_lock' },
-    });
-
-    // 5. Climate temp down (-)
-    const climateRow = container.querySelector('[data-entity-id="climate.bedroom_heat"]');
-    const tempDownBtn = climateRow?.querySelector('[data-action="temp-down"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(tempDownBtn);
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 6).options.body as string)).toEqual({
-      domain: 'climate',
-      service: 'set_temperature',
-      entity_id: 'climate.bedroom_heat',
-      service_data: { entity_id: 'climate.bedroom_heat', temperature: 69 },
-    });
-
-    // 6. Media player prev, next, vol-down, vol-up
-    const mediaRow = container.querySelector('[data-entity-id="media_player.kitchen_speaker"]');
-    const prevBtn = mediaRow?.querySelector('[data-action="prev"]') as HTMLButtonElement;
-    const nextBtn = mediaRow?.querySelector('[data-action="next"]') as HTMLButtonElement;
-    const volDownBtn = mediaRow?.querySelector('[data-action="vol-down"]') as HTMLButtonElement;
-    const volUpBtn = mediaRow?.querySelector('[data-action="vol-up"]') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(prevBtn);
-      fireEvent.click(nextBtn);
-      fireEvent.click(volDownBtn);
-      fireEvent.click(volUpBtn);
-    });
-    expect(JSON.parse(itemAt(fetchCalls, 7).options.body as string).service).toBe('media_previous_track');
-    expect(JSON.parse(itemAt(fetchCalls, 8).options.body as string).service).toBe('media_next_track');
-    expect(JSON.parse(itemAt(fetchCalls, 9).options.body as string).service).toBe('volume_down');
-    expect(JSON.parse(itemAt(fetchCalls, 10).options.body as string).service).toBe('volume_up');
-
-    // 7. Binary sensor device classes
-    expect(container.querySelector('[data-entity-id="binary_sensor.door_contact"]')?.textContent).toContain('Closed');
-    expect(container.querySelector('[data-entity-id="binary_sensor.window_contact"]')?.textContent).toContain('Open');
-    expect(container.querySelector('[data-entity-id="binary_sensor.office_occupancy"]')?.textContent).toContain('Clear');
-    expect(container.querySelector('[data-entity-id="binary_sensor.user_presence"]')?.textContent).toContain('Home');
-
-    // 8. Vacuum generic state
-    expect(container.querySelector('[data-entity-id="vacuum.roborock"] .ha-generic-state')?.textContent).toBe('docked');
-    expect(container.querySelector('[data-entity-id="binary_sensor.smoke"]')?.textContent).toContain('Off');
-    expect(container.querySelector('[data-entity-id="climate.no_target"] .ha-temp-inline')?.textContent).toBe('70°');
-
-    // 9. Optimistic state: paused player plays, lit lamp toggles off.
-    await act(async () => {
-      fireEvent.click(container.querySelector('[data-entity-id="media_player.paused_speaker"] [data-action="play-pause"]') as HTMLButtonElement);
-    });
-    expect(container.querySelector('[data-entity-id="media_player.paused_speaker"]')?.getAttribute('data-state')).toBe('playing');
-    await act(async () => {
-      fireEvent.click(lampRow?.querySelector('[data-action="toggle"]') as HTMLButtonElement);
-    });
-    expect(container.querySelector('[data-entity-id="light.active_lamp"]')?.getAttribute('data-state')).toBe('off');
   });
 
   it('guards non-entity items in CardRenderer and handles getEntityName with empty id', () => {
