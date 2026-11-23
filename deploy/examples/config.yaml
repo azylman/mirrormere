@@ -131,6 +131,7 @@ display:
       dimensions: [3, 2]
       pinned: false
 
+    # Screen 3 Tiles (12 cells total: 1x2 + 2x1 + 2x1 + 3x2 = 12)
     # Camera Feeds Tiles (example LiveView configuration)
     - id: cam-front-door
       type: live-view
@@ -174,6 +175,16 @@ display:
         background_refresh_interval_seconds: 0
         timeout_seconds: 90
         stagger_index: 1
+
+    - id: yard-pad
+      type: spacer
+      dimensions: [2, 1]
+      pinned: false
+
+    - id: camera-pad
+      type: spacer
+      dimensions: [3, 2]
+      pinned: false
 
 # In-memory chat-log store (all optional; nothing is written to disk and a
 # restart starts empty). Defaults shown.
