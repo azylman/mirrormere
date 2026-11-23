@@ -378,7 +378,7 @@ run_coverage_gate() {
 run_node_tests() {
     if has_cmd node; then
         echo "   [node test] Running web client, perf, and sidecar test suites..."
-        TZ=UTC node --test scripts/build-metadata.test.cjs scripts/perf/*.test.js sidecars/eink-renderer/test/*.test.js
+        TZ=UTC node --test scripts/perf/*.test.js sidecars/eink-renderer/test/*.test.js
     fi
 }
 
@@ -643,9 +643,6 @@ if [ "$MODE" = "staged" ]; then
 
     if has_cmd node; then
         staged_node_tests=""
-        if echo "$STAGED_FILES" | grep -q -E '^scripts/build-metadata(\.test)?\.cjs$'; then
-            staged_node_tests="${staged_node_tests:+$staged_node_tests }scripts/build-metadata.test.cjs"
-        fi
         if echo "$STAGED_FILES" | grep -q -E '^scripts/perf/'; then
             staged_node_tests="${staged_node_tests:+$staged_node_tests }scripts/perf/check-budget.test.js scripts/perf/swipe-point.test.js scripts/perf/perf.test.js"
         fi

@@ -29,9 +29,7 @@
   font-family: inherit;
 }
 
-body.theme-day .widget-yt-music,
 [data-theme="day"] .widget-yt-music,
-body.theme-day .widget-card[data-widget-type="yt-music"],
 [data-theme="day"] .widget-card[data-widget-type="yt-music"] {
   --ytm-text-main: #1e293b;
   --ytm-text-sub: #64748b;
@@ -71,7 +69,6 @@ body.theme-day .widget-card[data-widget-type="yt-music"],
   white-space: nowrap;
 }
 
-body.theme-day .widget-yt-music .ytm-account-select,
 [data-theme="day"] .widget-yt-music .ytm-account-select {
   border-color: rgba(15, 23, 42, 0.15);
   background: rgba(15, 23, 42, 0.05);
@@ -261,7 +258,6 @@ body.theme-day .widget-yt-music .ytm-account-select,
   outline: none;
 }
 
-body.theme-day .widget-yt-music .search-input,
 [data-theme="day"] .widget-yt-music .search-input {
   background: rgba(255, 255, 255, 0.85);
   color: #0f172a;
@@ -445,7 +441,6 @@ body.theme-day .widget-yt-music .search-input,
   transform: scale(0.97);
 }
 
-body.theme-day .widget-yt-music .btn-browse-library,
 [data-theme="day"] .widget-yt-music .btn-browse-library {
   background: rgba(15, 23, 42, 0.08);
 }

@@ -19,7 +19,7 @@ import (
 func makeTestSnapshot(totalScreens, intervalSec, pauseDurationSec int) *config.Snapshot {
 	screens := make([]layout.Screen, totalScreens)
 	for i := range totalScreens {
-		screens[i] = layout.Screen{Index: i, Widgets: []layout.PlacedWidget{{WidgetID: "widget-screen", Dimensions: domain.NewDimension(3, 2)}}}
+		screens[i] = layout.Screen{Index: i, Widgets: []layout.PlacedWidget{{WidgetID: "widget-screen", Dimensions: domain.Dimension{Cols: 3, Rows: 2}}}}
 	}
 	return &config.Snapshot{
 		Config: &config.Config{Display: config.DisplayConfig{Rotation: config.RotationConfig{IntervalSeconds: &intervalSec, PauseDurationSeconds: &pauseDurationSec}}},

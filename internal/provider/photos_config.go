@@ -7,15 +7,7 @@ import (
 	"strings"
 )
 
-func resolveRawSingleAlbumURL(idx int, a AlbumSource, isLegacySingle bool, opts InitOptions) string {
-	if isLegacySingle {
-		if sec := opts.GetSecret("album_url"); sec != "" {
-			return strings.TrimSpace(sec)
-		}
-		if sec := opts.GetSecret("share_url"); sec != "" {
-			return strings.TrimSpace(sec)
-		}
-	}
+func resolveRawSingleAlbumURL(idx int, a AlbumSource, opts InitOptions) string {
 	if sec := opts.GetSecret(fmt.Sprintf("albums[%d].url", idx)); sec != "" {
 		return strings.TrimSpace(sec)
 	}
@@ -31,14 +23,10 @@ func resolveRawSingleAlbumURL(idx int, a AlbumSource, isLegacySingle bool, opts 
 	return a.URL
 }
 
-func resolveSingleAlbumURL(idx int, a AlbumSource, isLegacySingle bool, opts InitOptions) (string, error) {
-	resolvedURL := resolveRawSingleAlbumURL(idx, a, isLegacySingle, opts)
+func resolveSingleAlbumURL(idx int, a AlbumSource, opts InitOptions) (string, error) {
+	resolvedURL := resolveRawSingleAlbumURL(idx, a, opts)
 	if resolvedURL == "" && a.URLEnv != "" {
-		envName := "url_env"
-		if isLegacySingle {
-			envName = "album_url_env"
-		}
-		return "", fmt.Errorf("photo-carousel: environment variable %q specified in %q is not set or empty", a.URLEnv, envName)
+		return "", fmt.Errorf("photo-carousel: environment variable %q specified in \"url_env\" is not set or empty", a.URLEnv)
 	}
 
 	if resolvedURL == "" {
@@ -60,7 +48,7 @@ func resolveAlbumSources(parsed PhotosConfig, opts InitOptions) ([]AlbumSource, 
 
 	resolved := make([]AlbumSource, len(parsed.Albums))
 	for idx, a := range parsed.Albums {
-		resolvedURL, err := resolveSingleAlbumURL(idx, a, parsed.isLegacy, opts)
+		resolvedURL, err := resolveSingleAlbumURL(idx, a, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -81,21 +69,25 @@ func parsePhotosConfig(cfg map[string]any, _ InitOptions) (PhotosConfig, error) 
 		res.CacheDir = strings.TrimSpace(cd)
 	}
 
-	if rawAlbums, ok := cfg["albums"]; ok && rawAlbums != nil {
-		albums, err := parseAlbumsList(rawAlbums)
-		if err != nil {
-			return PhotosConfig{}, err
+	rawAlbums, ok := cfg["albums"]
+	if !ok || rawAlbums == nil {
+		if cfg["source"] != nil || cfg["album_url"] != nil || cfg["share_url"] != nil || cfg["album_url_env"] != nil || cfg["share_url_env"] != nil {
+			return PhotosConfig{}, fmt.Errorf("photo-carousel: legacy single-album configuration ('source', 'album_url', 'share_url') is no longer supported; please migrate to 'albums: [{name, source, url/url_env}]'")
 		}
-		res.Albums = albums
-		if len(albums) > 0 {
-			res.Source = albums[0].Source
-			res.AlbumURL = albums[0].URL
-			res.AlbumURLEnv = albums[0].URLEnv
-		}
-		return res, nil
+		return PhotosConfig{}, fmt.Errorf("photo-carousel: 'albums' is required")
 	}
 
-	return parseLegacyPhotosConfig(cfg, res.CacheDir)
+	albums, err := parseAlbumsList(rawAlbums)
+	if err != nil {
+		return PhotosConfig{}, err
+	}
+	res.Albums = albums
+	if len(albums) > 0 {
+		res.Source = albums[0].Source
+		res.AlbumURL = albums[0].URL
+		res.AlbumURLEnv = albums[0].URLEnv
+	}
+	return res, nil
 }
 
 func mapString(m map[string]any, key string) string {
@@ -150,56 +142,4 @@ func parseAlbumsList(raw any) ([]AlbumSource, error) {
 		})
 	}
 	return albums, nil
-}
-
-func parseLegacyPhotosConfig(cfg map[string]any, cacheDir string) (PhotosConfig, error) {
-	var source string
-	if sourceVal, ok := cfg["source"].(string); ok {
-		source = strings.TrimSpace(sourceVal)
-	}
-	if source == "" {
-		if cfg["share_url"] == nil && cfg["share_url_env"] == nil {
-			return PhotosConfig{}, fmt.Errorf("photo-carousel: 'source' is required and must be either %q or %q", PhotoSourceShareURL, PhotoSourceEmberBridge)
-		}
-		source = PhotoSourceShareURL
-	} else if source != PhotoSourceShareURL && source != PhotoSourceEmberBridge {
-		return PhotosConfig{}, fmt.Errorf("photo-carousel: 'source' is required and must be either %q or %q", PhotoSourceShareURL, PhotoSourceEmberBridge)
-	}
-
-	var albumURL, albumURLEnv string
-	if v, ok := cfg["album_url"].(string); ok && strings.TrimSpace(v) != "" {
-		albumURL = strings.TrimSpace(v)
-	} else if v, ok := cfg["share_url"].(string); ok {
-		albumURL = strings.TrimSpace(v)
-	}
-
-	if v, ok := cfg["album_url_env"].(string); ok && strings.TrimSpace(v) != "" {
-		albumURLEnv = strings.TrimSpace(v)
-	} else if v, ok := cfg["share_url_env"].(string); ok {
-		albumURLEnv = strings.TrimSpace(v)
-	}
-
-	if albumURL != "" && albumURLEnv != "" {
-		return PhotosConfig{}, fmt.Errorf("photo-carousel: 'album_url' and 'album_url_env' are mutually exclusive")
-	}
-	if albumURL == "" && albumURLEnv == "" {
-		return PhotosConfig{}, fmt.Errorf("photo-carousel requires either 'album_url' or 'album_url_env'")
-	}
-
-	res := PhotosConfig{
-		Source:      source,
-		AlbumURL:    albumURL,
-		AlbumURLEnv: albumURLEnv,
-		CacheDir:    cacheDir,
-		isLegacy:    true,
-		Albums: []AlbumSource{
-			{
-				Name:   defaultAlbumName,
-				Source: source,
-				URL:    albumURL,
-				URLEnv: albumURLEnv,
-			},
-		},
-	}
-	return res, nil
 }

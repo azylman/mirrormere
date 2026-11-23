@@ -12,10 +12,8 @@ import (
 	"io"
 	"log/slog"
 	"mime"
-	"mime/multipart"
 	"net"
 	"net/http"
-	"net/textproto"
 	"strconv"
 	"strings"
 	"sync"
@@ -88,9 +86,9 @@ type AskRequest struct {
 	SpeakerScore float64
 }
 
-// BrainClient abstracts agent deliberation and live tool status streaming.
+// BrainClient abstracts agent deliberation and live sentence-level audio streaming.
 type BrainClient interface {
-	Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error)
+	AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error)
 }
 
 // BrainAudioChunk is one sentence's worth of text delivered by an
@@ -100,18 +98,8 @@ type BrainAudioChunk struct {
 	Text string
 }
 
-// AudioStreamingBrainClient is an optional capability a BrainClient may
-// additionally implement: alongside status and the final reply, it delivers
-// sentence-level audio as soon as each sentence is synthesized upstream, so
-// the hub can start playback well before the full reply is known. Hub
-// checks for this via a type assertion, so a plain BrainClient (JSON /ask,
-// an older brain, or a test fake that only implements Ask) keeps compiling
-// and behaves exactly as before — no double speech, one audio_chunk at the
-// end. See .
-type AudioStreamingBrainClient interface {
-	BrainClient
-	AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error)
-}
+// AudioStreamingBrainClient is an alias for BrainClient.
+type AudioStreamingBrainClient = BrainClient
 
 // TTSAudioChunk represents a slice of audio streamed from a TTS backend.
 type TTSAudioChunk struct {
@@ -555,13 +543,7 @@ func (h *Hub) deliberateTurn(
 	onStatus func(status string),
 	emitNonStreamingReply func(reply string) error,
 ) (string, error) {
-	if streamingBrain, ok := turnBrain.(AudioStreamingBrainClient); ok {
-		return h.deliberateStreaming(ctx, streamingBrain, turnBrain, askReq, transcript, nodeID, engine, brainTimeout, heartbeatInterval, safeSink, onStatus, emitNonStreamingReply)
-	}
-	if err := h.deliberateUnary(ctx, turnBrain, askReq, nodeID, brainTimeout, heartbeatInterval, safeSink, onStatus, emitNonStreamingReply); err != nil {
-		return outcomeError, err
-	}
-	return outcomeSuccess, nil
+	return h.deliberateStreaming(ctx, turnBrain, turnBrain, askReq, transcript, nodeID, engine, brainTimeout, heartbeatInterval, safeSink, onStatus, emitNonStreamingReply)
 }
 
 func (h *Hub) recordBrainStageError(
@@ -769,23 +751,15 @@ func (h *Hub) synthesizeAndEmitReply(
 
 // --- Default STT Client ---
 
-// DefaultSTTClient supports both Wyoming TCP protocol and HTTP Whisper endpoints.
+// DefaultSTTClient communicates with Wyoming TCP protocol endpoints.
 type DefaultSTTClient struct {
-	rawURL     string
-	isWyoming  bool
-	httpClient *http.Client
+	rawURL string
 }
 
 // NewDefaultSTTClient constructs an STTClient based on target URL scheme.
 func NewDefaultSTTClient(rawURL string) STTClient {
-	trimmed := strings.TrimSpace(rawURL)
-	isWyoming := strings.HasPrefix(trimmed, "tcp://") || strings.HasPrefix(trimmed, "wyoming://")
 	return &DefaultSTTClient{
-		rawURL:    trimmed,
-		isWyoming: isWyoming,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		rawURL: strings.TrimSpace(rawURL),
 	}
 }
 
@@ -795,10 +769,10 @@ func (c *DefaultSTTClient) Transcribe(ctx context.Context, wavData []byte) (stri
 		return "", errors.New("stt url is empty")
 	}
 
-	if c.isWyoming {
+	if strings.HasPrefix(c.rawURL, "tcp://") || strings.HasPrefix(c.rawURL, "wyoming://") {
 		return c.transcribeWyoming(ctx, wavData)
 	}
-	return c.transcribeHTTP(ctx, wavData)
+	return "", fmt.Errorf("unsupported stt scheme: %s", c.rawURL)
 }
 
 func (c *DefaultSTTClient) transcribeWyoming(ctx context.Context, wavData []byte) (string, error) {
@@ -885,55 +859,6 @@ func (c *DefaultSTTClient) transcribeWyoming(ctx context.Context, wavData []byte
 	}
 }
 
-func (c *DefaultSTTClient) transcribeHTTP(ctx context.Context, wavData []byte) (string, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	partHeader := make(textproto.MIMEHeader)
-	partHeader.Set("Content-Disposition", `form-data; name="audio"; filename="audio.wav"`)
-	partHeader.Set("Content-Type", "audio/wav")
-	part, err := writer.CreatePart(partHeader)
-	if err != nil {
-		return "", err
-	}
-	if _, err = part.Write(wavData); err != nil {
-		return "", err
-	}
-	if err = writer.Close(); err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.rawURL, &body)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if err := readHTTPError(resp, "stt"); err != nil {
-		return "", err
-	}
-
-	var res struct {
-		Text       string `json:"text"`
-		Transcript string `json:"transcript"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return "", fmt.Errorf("stt decode error: %w", err)
-	}
-
-	if res.Text != "" {
-		return strings.TrimSpace(res.Text), nil
-	}
-	return strings.TrimSpace(res.Transcript), nil
-}
-
 // --- Default Brain Client ---
 
 // DefaultBrainClient communicates with Aerial Brain via HTTP SSE or JSON.
@@ -952,24 +877,6 @@ func NewDefaultBrainClient(url string, timeoutSec int) BrainClient {
 			},
 		},
 	}
-}
-
-// Ask sends the transcribed prompt to the agent brain and listens for status updates and reply.
-func (b *DefaultBrainClient) Ask(ctx context.Context, ask AskRequest, onStatus func(status string)) (string, error) {
-	if b.url == "" {
-		return "I heard: " + ask.Prompt, nil
-	}
-
-	resp, jsonReply, err := b.doAskRequest(ctx, ask)
-	if err != nil {
-		return "", err
-	}
-	if resp == nil {
-		// Non-SSE JSON response, already fully decoded.
-		return jsonReply, nil
-	}
-	defer resp.Body.Close()
-	return b.consumeSSE(resp.Body, onStatus)
 }
 
 // AskStreaming is like Ask, but also delivers sentence-level audio as it
@@ -1055,10 +962,6 @@ func (b *DefaultBrainClient) doAskRequest(ctx context.Context, ask AskRequest) (
 		return nil, strings.TrimSpace(res.Text), nil
 	}
 	return nil, strings.TrimSpace(res.Content), nil
-}
-
-func (*DefaultBrainClient) consumeSSE(r io.Reader, onStatus func(status string)) (string, error) {
-	return consumeStreamingSSE(r, onStatus, nil)
 }
 
 // sseScannerMaxLine is the max single SSE `data:` line consumeSSEStreaming

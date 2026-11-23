@@ -63,7 +63,7 @@ mirrormere/
 ├── web/                    # Web display client runtime (static CSS/JS HUD tokens, display_react.html shell)
 ├── sidecars/               # Off-device server sidecars (eink-renderer, voice-fingerprinter, hass-proxy)
 ├── client/                 # On-device hardware daemons (ear, remote, cast-watcher, eink-node)
-├── deploy/                 # Docker Compose manifests, go2rtc config, and host display launch units
+├── deploy/                 # Example configurations, go2rtc config, and kiosk display scripts
 ├── docs/                   # Architectural decisions and deployment documentation
 ├── scripts/                # Verification (verify.sh) and development scripts
 ├── Dockerfile              # Multi-stage, multi-arch build for mirrormere-core
@@ -80,17 +80,15 @@ mirrormere/
    cp deploy/examples/config.yaml deploy/config/config.yaml
    cp deploy/examples/custom.css deploy/config/custom.css # Optional: or deploy/examples/eink.css for 1-bit e-paper
    ```
-2. **Launch `mirrormere-core` (Docker Compose or Standalone Image)**:
+2. **Launch `mirrormere-core` (Standalone Container Image)**:
    ```bash
-   docker compose -f deploy/compose.yml up -d mirrormere-core
-   # Or standalone (widgets are baked into the image, /config is volume-mounted):
-   # docker run -d --name mirrormere-core -p 8080:8080 -v ./deploy/config:/config:ro -v ./deploy/data:/data ghcr.io/azylman/mirrormere:latest
+   docker run -d --name mirrormere-core -p 8080:8080 -v ./deploy/config:/config:ro -v ./deploy/data:/data ghcr.io/azylman/mirrormere:latest
    ```
 3. **Open the Display & Hot-Reload**:
    - Open `http://localhost:8080/display` (add `?hide_cursor=true` on touch kiosks or `?node=<node_id>` for per-node `chat-log` views).
    - Live-reload `config.yaml` and `custom.css` without restarting: `docker kill -s HUP mirrormere-core`.
 4. **Hardware Profiles & Edge Daemons**:
-   - **Touch Display (Wayland + Chrome)**: Run `sudo ./deploy/display/install.sh` and see `deploy/examples/compose.client.yaml`.
+   - **Touch Display (Wayland + Chromium)**: Build or run the containerized kiosk display image (`deploy/display/Dockerfile`).
    - **E-Ink & Voice Sidecars**: See `deploy/eink/mirrormere-eink.service`, `client/ear/README.md`, and `sidecars/hass-proxy/README.md`.
 
 ---

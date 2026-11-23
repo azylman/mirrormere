@@ -91,8 +91,8 @@ func newTestManager(t *testing.T, yamlStr, overridePath string) (*config.Manager
 					Version:  "1.0.0",
 					Provider: "builtin",
 					SupportedDimensions: []domain.Dimension{
-						domain.NewDimension(3, 2),
-						domain.NewDimension(6, 2),
+						{Cols: 3, Rows: 2},
+						{Cols: 6, Rows: 2},
 					},
 				},
 			},
@@ -103,7 +103,7 @@ func newTestManager(t *testing.T, yamlStr, overridePath string) (*config.Manager
 					Version:  "1.0.0",
 					Provider: "builtin",
 					SupportedDimensions: []domain.Dimension{
-						domain.NewDimension(3, 2),
+						{Cols: 3, Rows: 2},
 					},
 				},
 			},
@@ -435,7 +435,7 @@ func TestDefaultLayoutEditorHandler_DimensionResolution(t *testing.T) {
 					Name:                "custom-card",
 					Version:             "1.0.0",
 					Provider:            "builtin",
-					SupportedDimensions: []domain.Dimension{domain.NewDimension(2, 2)},
+					SupportedDimensions: []domain.Dimension{{Cols: 2, Rows: 2}},
 				},
 			},
 			"no-sup": {
@@ -451,9 +451,9 @@ func TestDefaultLayoutEditorHandler_DimensionResolution(t *testing.T) {
 		fallback domain.Dimension
 		wantDim  [2]int
 	}{
-		{name: "loader_supported_dims", wType: "custom-card", fallback: domain.NewDimension(2, 2), wantDim: [2]int{2, 2}},
-		{name: "fallback_when_no_supported_dims", wType: "no-sup", fallback: domain.NewDimension(4, 2), wantDim: [2]int{4, 2}},
-		{name: "fallback_when_unknown_pkg", wType: "unknown-pkg", fallback: domain.NewDimension(1, 1), wantDim: [2]int{1, 1}},
+		{name: "loader_supported_dims", wType: "custom-card", fallback: domain.Dimension{Cols: 2, Rows: 2}, wantDim: [2]int{2, 2}},
+		{name: "fallback_when_no_supported_dims", wType: "no-sup", fallback: domain.Dimension{Cols: 4, Rows: 2}, wantDim: [2]int{4, 2}},
+		{name: "fallback_when_unknown_pkg", wType: "unknown-pkg", fallback: domain.Dimension{Cols: 1, Rows: 1}, wantDim: [2]int{1, 1}},
 	}
 
 	for _, tc := range tests {

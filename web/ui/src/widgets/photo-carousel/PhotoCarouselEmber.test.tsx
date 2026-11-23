@@ -33,10 +33,10 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
     wantConnectBtn: string | null;
     wantSyncUrl: string | null;
   }[] = [
-    { name: 'share_url source', config: { source: 'share_url' }, data: { photos: [] }, bridge: [], wantTitle: 'No photos in shared album', wantConnectBtn: null, wantSyncUrl: null },
+    { name: 'share_url source', config: { albums: [{ name: 'Shared', source: 'share_url' }] }, data: { photos: [] }, bridge: [], wantTitle: 'No photos in shared album', wantConnectBtn: null, wantSyncUrl: null },
     {
       name: 'ember_bridge source without a bridge',
-      config: { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/test' },
+      config: { albums: [{ name: 'Ember', source: 'ember_bridge', url: 'https://photos.app.goo.gl/test' }] },
       data: { photos: [] },
       bridge: [],
       wantTitle: 'No photos available',
@@ -45,7 +45,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
     },
     {
       name: 'ember_bridge source with connectGooglePhotos',
-      config: { source: 'ember_bridge', album_url: album1 },
+      config: { albums: [{ name: 'Ember', source: 'ember_bridge', url: album1 }] },
       data: { photos: [] },
       bridge: ['connectGooglePhotos'],
       wantTitle: 'No photos available',
@@ -112,7 +112,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       syncGooglePhotosAlbum: syncMock,
     };
 
-    seedWidget(widgetId, widgetMeta('photo-carousel', { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }), { photos: [{ url: 'https://example.com/1.jpg' }] });
+    seedWidget(widgetId, widgetMeta('photo-carousel', { albums: [{ name: 'Ember', source: 'ember_bridge', url: 'https://photos.app.goo.gl/album1' }] }), { photos: [{ url: 'https://example.com/1.jpg' }] });
 
     const { unmount } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
@@ -142,7 +142,7 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
       syncGooglePhotosAlbum: syncMock,
     };
 
-    seedWidget(widgetId, widgetMeta('photo-carousel', { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }), { photos: [] });
+    seedWidget(widgetId, widgetMeta('photo-carousel', { albums: [{ name: 'Ember', source: 'ember_bridge', url: 'https://photos.app.goo.gl/album1' }] }), { photos: [] });
 
     const { container } = renderWidget(PhotoCarouselWidget, widgetId, 'photo-carousel');
 
@@ -191,13 +191,13 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
     useDisplayStore.setState({
       widgets: {
         [widgetId]: {
-          meta: widgetMeta('photo-carousel', { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album1' }),
+          meta: widgetMeta('photo-carousel', { albums: [{ name: 'Ember 1', source: 'ember_bridge', url: 'https://photos.app.goo.gl/album1' }] }),
           data: { photos: [] },
           state: 'ready',
           timestamp: '2026-10-31T12:00:00Z',
         },
         ['w-photo-2']: {
-          meta: widgetMeta('photo-carousel', { source: 'ember_bridge', album_url: 'https://photos.app.goo.gl/album2' }),
+          meta: widgetMeta('photo-carousel', { albums: [{ name: 'Ember 2', source: 'ember_bridge', url: 'https://photos.app.goo.gl/album2' }] }),
           data: { photos: [] },
           state: 'ready',
           timestamp: '2026-10-31T12:00:00Z',

@@ -86,17 +86,7 @@ func (c *timeoutFakeClock) Advance(d time.Duration) {
 	c.mu.Unlock()
 }
 
-type funcBrain func(context.Context, AskRequest, func(string)) (string, error)
-
-func (f funcBrain) Ask(ctx context.Context, r AskRequest, s func(string)) (string, error) {
-	return f(ctx, r, s)
-}
-
 type funcStreamingBrain func(context.Context, AskRequest, func(string), func(BrainAudioChunk)) (string, error)
-
-func (f funcStreamingBrain) Ask(ctx context.Context, r AskRequest, s func(string)) (string, error) {
-	return f(ctx, r, s, nil)
-}
 
 func (f funcStreamingBrain) AskStreaming(ctx context.Context, r AskRequest, s func(string), a func(BrainAudioChunk)) (string, error) {
 	return f(ctx, r, s, a)
@@ -142,7 +132,7 @@ func (s timeoutBrainScript) client(clk *timeoutFakeClock) BrainClient {
 	if s.streaming {
 		return run
 	}
-	return funcBrain(func(ctx context.Context, r AskRequest, onStatus func(string)) (string, error) {
+	return funcStreamingBrain(func(ctx context.Context, r AskRequest, onStatus func(string), _ func(BrainAudioChunk)) (string, error) {
 		return run(ctx, r, onStatus, nil)
 	})
 }

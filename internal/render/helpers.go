@@ -350,26 +350,6 @@ func derefSlice(arg any) (reflect.Value, bool) {
 	return val, true
 }
 
-func mapFloat(m map[string]any, key string) (float64, bool) {
-	if v, ok := m[key].(float64); ok {
-		return v, true
-	}
-	if v, ok := m[key].(int); ok {
-		return float64(v), true
-	}
-	return 0, false
-}
-
-func mapInt(m map[string]any, key string) (int, bool) {
-	if v, ok := m[key].(int); ok {
-		return v, true
-	}
-	if v, ok := m[key].(float64); ok {
-		return int(v), true
-	}
-	return 0, false
-}
-
 func structString(v reflect.Value, field string) string {
 	if f := v.FieldByName(field); f.IsValid() && f.Kind() == reflect.String {
 		return f.String()
@@ -399,23 +379,6 @@ func structInt(v reflect.Value, field string) int {
 		}
 	}
 	return 0
-}
-
-func hourlyPointFromMap(m map[string]any) hourlyPoint {
-	var pt hourlyPoint
-	if t, ok := m["time"].(string); ok {
-		pt.timeStr = t
-	}
-	if tmp, ok := mapFloat(m, "temp"); ok {
-		pt.temp = tmp
-	}
-	if p, ok := mapInt(m, "precip_prob"); ok {
-		pt.precipProb = p
-	}
-	if ic, ok := m["icon"].(string); ok {
-		pt.icon = ic
-	}
-	return pt
 }
 
 func hourlyPointFromStruct(item any) (hourlyPoint, bool) {
@@ -455,12 +418,8 @@ func extractHourlyPoints(arg any) []hourlyPoint {
 			continue
 		}
 
-		var pt hourlyPoint
-		if m, ok := item.(map[string]any); ok {
-			pt = hourlyPointFromMap(m)
-		} else if parsed, ok := hourlyPointFromStruct(item); ok {
-			pt = parsed
-		} else {
+		pt, ok := hourlyPointFromStruct(item)
+		if !ok {
 			continue
 		}
 
@@ -474,27 +433,6 @@ func extractHourlyPoints(arg any) []hourlyPoint {
 	}
 
 	return pts
-}
-
-func computeHourlyTempSpan(pts []hourlyPoint) (float64, float64) {
-	minTemp := pts[0].temp
-	maxTemp := pts[0].temp
-	for _, p := range pts[1:] {
-		if p.temp < minTemp {
-			minTemp = p.temp
-		}
-		if p.temp > maxTemp {
-			maxTemp = p.temp
-		}
-	}
-
-	span := maxTemp - minTemp
-	if span < 4.0 {
-		mid := (minTemp + maxTemp) / 2.0
-		minTemp = mid - 2.0
-		span = 4.0
-	}
-	return minTemp, span
 }
 
 // WeatherHourlyGraph renders an SVG continuous line graph showing hourly temperature trends,
@@ -536,7 +474,23 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 	}
 	totalWidth := float64(n) * colWidth
 
-	minTemp, span := computeHourlyTempSpan(pts)
+	minTemp := pts[0].temp
+	maxTemp := pts[0].temp
+	for _, p := range pts[1:] {
+		if p.temp < minTemp {
+			minTemp = p.temp
+		}
+		if p.temp > maxTemp {
+			maxTemp = p.temp
+		}
+	}
+
+	span := maxTemp - minTemp
+	if span < 4.0 {
+		mid := (minTemp + maxTemp) / 2.0
+		minTemp = mid - 2.0
+		span = 4.0
+	}
 
 	step := 0.0
 	if n > 1 {
@@ -591,72 +545,51 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 	}
 
 	for i, pt := range pts {
-		fmt.Fprintf(&sb, `<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="rgba(90, 60, 30, 0.08)" stroke-dasharray="2 2"/>`,
-			pt.x, pt.y+6.0, pt.x, baseY)
-
-		if pt.precipProb > 0 {
-			fmt.Fprintf(&sb, `<text x="%.1f" y="12" text-anchor="middle" font-size="11" font-weight="700" fill="var(--mm-sky, #3b9edd)" style="user-select: none; pointer-events: none;">☂ %d%%</text>`,
-				pt.x, pt.precipProb)
-		}
-
-		iconPath := weatherIconPath(pt.icon)
-		fmt.Fprintf(&sb, `<g transform="translate(%.1f, 18) scale(1.2)" fill="none" stroke="var(--mm-honey, #f59e0b)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">%s</g>`,
-			pt.x-14.4, iconPath)
-
-		tempRound := int(math.Round(pt.temp))
-		fmt.Fprintf(&sb, `<text x="%.1f" y="%.1f" text-anchor="middle" font-size="14" font-weight="800" fill="var(--mm-text-title, #2a2338)" style="user-select: none; pointer-events: none;">%d°</text>`,
-			pt.x, pt.y-10.0, tempRound)
-
-		fmt.Fprintf(&sb, `<circle cx="%.1f" cy="%.1f" r="4.0" fill="#ffffff" stroke="var(--mm-coral, #ff6f59)" stroke-width="2.5"/>`,
-			pt.x, pt.y)
-
-		timeLabel := "Now"
-		timeWeight := "800"
-		timeColor := "var(--mm-coral, #ff6f59)"
-		if i > 0 {
-			timeWeight = "600"
-			timeColor = "var(--mm-text-dim, #8b819f)"
-			if formatted := FormatTimeInLocation(nil, "3 PM", pt.timeStr); formatted != "" {
-				timeLabel = formatted
-			} else {
-				timeLabel = pt.timeStr
-			}
-		}
-		fmt.Fprintf(&sb, `<text x="%.1f" y="262" text-anchor="middle" font-size="13" font-weight="%s" fill="%s" style="user-select: none; pointer-events: none;">%s</text>`,
-			pt.x, timeWeight, timeColor, template.HTMLEscapeString(timeLabel))
+		renderHourlyPoint(&sb, i, pt, baseY)
 	}
 
 	sb.WriteString("</svg>")
 	return template.HTML(sb.String()) //nolint:gosec // G203: only numbers, fixed icon paths and HTMLEscapeString labels are interpolated
 }
 
-func precipProbFromMap(v map[string]any) int {
-	if daily, ok := v["daily"].([]any); ok && len(daily) > 0 {
-		if first, ok := daily[0].(map[string]any); ok {
-			if p, ok := mapInt(first, "precip_prob_max"); ok {
-				return p
-			}
+func renderHourlyPoint(sb *strings.Builder, i int, pt hourlyPoint, baseY float64) {
+	fmt.Fprintf(sb, `<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="rgba(90, 60, 30, 0.08)" stroke-dasharray="2 2"/>`,
+		pt.x, pt.y+6.0, pt.x, baseY)
+
+	if pt.precipProb > 0 {
+		fmt.Fprintf(sb, `<text x="%.1f" y="12" text-anchor="middle" font-size="11" font-weight="700" fill="var(--mm-sky, #3b9edd)" style="user-select: none; pointer-events: none;">☂ %d%%</text>`,
+			pt.x, pt.precipProb)
+	}
+
+	iconPath := weatherIconPath(pt.icon)
+	fmt.Fprintf(sb, `<g transform="translate(%.1f, 18) scale(1.2)" fill="none" stroke="var(--mm-honey, #f59e0b)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">%s</g>`,
+		pt.x-14.4, iconPath)
+
+	tempRound := int(math.Round(pt.temp))
+	fmt.Fprintf(sb, `<text x="%.1f" y="%.1f" text-anchor="middle" font-size="14" font-weight="800" fill="var(--mm-text-title, #2a2338)" style="user-select: none; pointer-events: none;">%d°</text>`,
+		pt.x, pt.y-10.0, tempRound)
+
+	fmt.Fprintf(sb, `<circle cx="%.1f" cy="%.1f" r="4.0" fill="#ffffff" stroke="var(--mm-coral, #ff6f59)" stroke-width="2.5"/>`,
+		pt.x, pt.y)
+
+	timeLabel := "Now"
+	timeWeight := "800"
+	timeColor := "var(--mm-coral, #ff6f59)"
+	if i > 0 {
+		timeWeight = "600"
+		timeColor = "var(--mm-text-dim, #8b819f)"
+		if formatted := FormatTimeInLocation(nil, "3 PM", pt.timeStr); formatted != "" {
+			timeLabel = formatted
+		} else {
+			timeLabel = pt.timeStr
 		}
 	}
-	if daily, ok := v["daily"].([]provider.WeatherDaily); ok && len(daily) > 0 {
-		return daily[0].PrecipProbMax
-	}
-	if cur, ok := v["current"].(map[string]any); ok {
-		if p, ok := mapInt(cur, "precip_prob_max"); ok {
-			return p
-		}
-	}
-	if cur, ok := v["current"].(provider.WeatherCurrent); ok {
-		return cur.PrecipProbMax
-	}
-	if p, ok := mapInt(v, "precip_prob_max"); ok {
-		return p
-	}
-	return 0
+	fmt.Fprintf(sb, `<text x="%.1f" y="262" text-anchor="middle" font-size="13" font-weight="%s" fill="%s" style="user-select: none; pointer-events: none;">%s</text>`,
+		pt.x, timeWeight, timeColor, template.HTMLEscapeString(timeLabel))
 }
 
 // TodayPrecipProb extracts today's maximum precipitation probability percentage (0-100)
-// from WeatherSnapshot, WeatherCurrent, map data, or slices.
+// from WeatherSnapshot, WeatherCurrent, or slices.
 func TodayPrecipProb(arg any) int {
 	if arg == nil {
 		return 0
@@ -679,8 +612,6 @@ func TodayPrecipProb(arg any) int {
 		if len(v) > 0 {
 			return v[0].PrecipProbMax
 		}
-	case map[string]any:
-		return precipProbFromMap(v)
 	}
 
 	return 0

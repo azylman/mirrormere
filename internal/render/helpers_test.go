@@ -247,7 +247,7 @@ func TestStandardFuncMap(t *testing.T) {
 		{
 			name:         "family view helpers and combined data",
 			tmpl:         `{{ $w := calendarGridView .Data .Cfg .Dims }}{{ $m := monthView .Data .Cfg .Dims }}{{ $c := calendarGridData $w $m .Cfg }}{{ $w.RangeStart }}:{{ $m.MonthName }}:{{ index $c "range_start" }}:{{ isMonthView .MonthCfg }}:{{ isMonthView .Cfg }}`,
-			data:         map[string]any{"Data": provider.CalendarSnapshot{}, "Cfg": familyCfg, "MonthCfg": map[string]any{"default_view": "month"}, "Dims": domain.NewDimension(6, 2)},
+			data:         map[string]any{"Data": provider.CalendarSnapshot{}, "Cfg": familyCfg, "MonthCfg": map[string]any{"default_view": "month"}, "Dims": domain.Dimension{Cols: 6, Rows: 2}},
 			wantContains: []string{"2026-09-27:September:2026-09-27:true:false"},
 		},
 		{name: "nil nowFunc fallback", funcMap: render.StandardFuncMap(nil), tmpl: `{{formatDate "2006" "2026-09-25"}}`, wantContains: []string{"2026"}},
@@ -363,8 +363,8 @@ func TestWeatherHourlyGraph(t *testing.T) {
 			wantContains: []string{`id="mm-weather-grad-custom-id"`, "-5°", "0°", "10°", "50%"},
 		},
 		{
-			name:            "map slice with NaN Inf int temps and unparseable time",
-			args:            []any{[]map[string]any{{"time": "2026-09-26T14:00", "temp": math.NaN(), "precip_prob": 25.0, "icon": ""}, {"time": "custom-time-format", "temp": math.Inf(1), "precip_prob": 0, "icon": "weather-partly-cloudy"}, {"time": "2026-09-26T16:00", "temp": 70, "precip_prob": 40, "icon": "weather-rainy"}}},
+			name:            "struct slice with NaN Inf int temps and unparseable time",
+			args:            []any{[]testHourlyItem{{Time: "2026-09-26T14:00", Temp: math.NaN(), PrecipProb: 25, Icon: ""}, {Time: "custom-time-format", Temp: math.Inf(1), PrecipProb: 0, Icon: "weather-partly-cloudy"}, {Time: "2026-09-26T16:00", Temp: 70, PrecipProb: 40, Icon: "weather-rainy"}}},
 			wantContains:    []string{"custom-time-format", "70°", "40%"},
 			wantNotContains: []string{"NaN", "Inf"},
 		},
@@ -438,14 +438,6 @@ func TestTodayPrecipProb(t *testing.T) {
 		{"nil *WeatherCurrent pointer", (*provider.WeatherCurrent)(nil), 0},
 		{"[]WeatherDaily slice", []provider.WeatherDaily{{PrecipProbMax: 90}}, 90},
 		{"empty []WeatherDaily slice", []provider.WeatherDaily{}, 0},
-		{"map with daily slice", map[string]any{"daily": []any{map[string]any{"precip_prob_max": 50}}}, 50},
-		{"map with daily float precip", map[string]any{"daily": []any{map[string]any{"precip_prob_max": float64(50)}}}, 50},
-		{"map with current map", map[string]any{"current": map[string]any{"precip_prob_max": 25}}, 25},
-		{"map with current map float", map[string]any{"current": map[string]any{"precip_prob_max": float64(25)}}, 25},
-		{"map with WeatherDaily slice", map[string]any{"daily": []provider.WeatherDaily{{PrecipProbMax: 70}}}, 70},
-		{"map with WeatherCurrent", map[string]any{"current": provider.WeatherCurrent{PrecipProbMax: 15}}, 15},
-		{"map with direct precip_prob_max", map[string]any{"precip_prob_max": 85}, 85},
-		{"map with direct float precip_prob_max", map[string]any{"precip_prob_max": float64(85)}, 85},
 		{"unrelated type", "not-weather-data", 0},
 	}
 

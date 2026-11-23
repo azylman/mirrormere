@@ -18,9 +18,11 @@ Normative API and SSE event payload schemas live in `internal/api/types.go` and 
 - **Reload Policy & Restart Warnings**: Server configuration reload is triggered via `SIGHUP` signal (or container restart), avoiding inode detachment issues with editor file renames. Dynamic configuration (widgets, layout, weather, rotation) reloads live. Because open network sockets cannot be rebound at runtime, modifications to `host` or `port` during live reload emit a structured "restart required" warning log and require a server restart to take effect.
 - **Last-Known-Good Configuration (LKGC)**: If proposed configuration changes fail validation, the running configuration remains active and untouched.
 - **Multi-Stage Container & Baked Widgets**: `ghcr.io/azylman/mirrormere` compiles the React display bundle (`web/ui` -> `/app/web/static/ui`), the Go binary (`/app/server`), `web/templates` + `web/static`, and widgets in a multi-stage `Dockerfile` so generated UI bundles and built-in widget packages (`/app/widgets/`) are baked directly into the image. User configuration (`/config`) and custom widget packages (`/config/widgets`) remain volume-mounted.
+- **Photo Carousel Albums Schema**: Photo carousel widget instances require multi-album configuration (`albums: [{name, source, url/url_env}]`). Legacy single-album root keys (`source`, `album_url`, `share_url`) and HTML regex scraping fallbacks have been discontinued in favor of structured album sources and canonical `AF_initDataCallback` extraction.
 
 ## 4. Audio & Voice Pipeline
 - **Raw PCM Audio**: Edge microphone capture streams raw 16kHz 16-bit mono PCM audio over LAN HTTP/WebSockets to the voice hub.
+- **Wyoming STT Protocol**: The voice hub communicates with speech-to-text endpoints strictly over the Wyoming TCP protocol (`tcp://` or `wyoming://`), validated at configuration load time. Legacy HTTP STT endpoints are discontinued.
 - **Voice Ingress**: Centralized hub coordination for wake word detection, speech-to-text, and assistant deliberation.
 - **Volume Ceiling**: Strict software volume caps to protect domestic audio environments.
 

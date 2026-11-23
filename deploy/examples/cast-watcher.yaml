@@ -2,9 +2,8 @@
 #
 # Monitors Chromecast CastV2 socket state and notifies Mirrormere Core to auto-switch
 # display between dashboard HUD and WebRTC live stream.
-# NOTE: Hardware IPs and endpoints are examples for single-host Docker bridge topology
-# (deploy/compose.yml) where container service names resolve via Docker DNS.
-# For client display host networking (deploy/examples/compose.client.yaml), see cast-watcher.client.yaml.
+# NOTE: Hardware IPs and endpoints are examples where container service names
+# resolve via local network or Docker DNS.
 
 chromecast_addr: "10.0.0.50:8009"
 core_url: "http://mirrormere-core:8080"

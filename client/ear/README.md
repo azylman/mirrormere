@@ -128,13 +128,7 @@ Pull the pre-built multi-architecture container image from GitHub Container Regi
 docker pull ghcr.io/azylman/mirrormere-ear:latest
 ```
 
-Run as part of the example edge kiosk compose stack (`deploy/examples/compose.client.yaml`):
-
-```bash
-docker compose -f deploy/examples/compose.client.yaml up -d mirrormere-ear
-```
-
-Or run directly with ALSA capture and PipeWire PulseAudio socket passthrough:
+Run directly with ALSA capture and PipeWire PulseAudio socket passthrough:
 
 ```bash
 docker run -d \

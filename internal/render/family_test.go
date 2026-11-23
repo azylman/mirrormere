@@ -169,15 +169,15 @@ func buildFamilyViewBasicCases() []buildFamilyViewTestCase {
 			data: snap(provider.CalendarEvent{ID: "evt_priv", CalendarName: "secret-work", Title: "1:1 with manager", Location: "Room 4", Description: "sensitive", Start: "2026-09-30T14:00:00Z", End: "2026-09-30T15:00:00Z"}),
 			exp:  buildFamilyViewExpectations{daysCount: 7, eventRedacted: map[string]string{"evt_priv": "Busy"}},
 		},
-		{name: "window day-count auto 6x2 is 7 days", dims: domain.NewDimension(6, 2), exp: buildFamilyViewExpectations{daysCount: 7}},
-		{name: "window day-count auto 4x2 is 5 days", dims: domain.NewDimension(4, 2), exp: buildFamilyViewExpectations{daysCount: 5}},
-		{name: "window day-count explicit days 3", dims: domain.NewDimension(4, 2), cfg: withFamilyCfg(map[string]any{"days": "3"}), exp: buildFamilyViewExpectations{daysCount: 3}},
-		{name: "window day-count explicit days 7 at 4x2 allowed", dims: domain.NewDimension(4, 2), cfg: withFamilyCfg(map[string]any{"days": "7"}), exp: buildFamilyViewExpectations{daysCount: 7}},
+		{name: "window day-count auto 6x2 is 7 days", dims: domain.Dimension{Cols: 6, Rows: 2}, exp: buildFamilyViewExpectations{daysCount: 7}},
+		{name: "window day-count auto 4x2 is 5 days", dims: domain.Dimension{Cols: 4, Rows: 2}, exp: buildFamilyViewExpectations{daysCount: 5}},
+		{name: "window day-count explicit days 3", dims: domain.Dimension{Cols: 4, Rows: 2}, cfg: withFamilyCfg(map[string]any{"days": "3"}), exp: buildFamilyViewExpectations{daysCount: 3}},
+		{name: "window day-count explicit days 7 at 4x2 allowed", dims: domain.Dimension{Cols: 4, Rows: 2}, cfg: withFamilyCfg(map[string]any{"days": "7"}), exp: buildFamilyViewExpectations{daysCount: 7}},
 		{name: "week aligns to sunday start", cfg: withFamilyCfg(map[string]any{"week_starts": "sunday"}), exp: buildFamilyViewExpectations{rangeStart: "2026-09-27"}},
 		{name: "week aligns to monday start", cfg: withFamilyCfg(map[string]any{"week_starts": "monday"}), exp: buildFamilyViewExpectations{rangeStart: "2026-09-21"}},
 		{
 			name: "overflow cutoff on 4x2",
-			dims: domain.NewDimension(4, 2),
+			dims: domain.Dimension{Cols: 4, Rows: 2},
 			data: snap(
 				mkCalEv("evt_o1", "alpha-personal", "Busy 1", "2026-09-27T01:00:00Z", "2026-09-27T09:00:00Z", false),
 				mkCalEv("evt_o2", "alpha-personal", "Busy 2", "2026-09-27T02:00:00Z", "2026-09-27T09:00:00Z", false),
@@ -237,7 +237,7 @@ func buildFamilyViewAdvancedCases(pdtLoc *time.Location) []buildFamilyViewTestCa
 		},
 		{
 			name: "continuous spanning bars custom day count 4x2",
-			dims: domain.NewDimension(4, 2),
+			dims: domain.Dimension{Cols: 4, Rows: 2},
 			data: snap(
 				mkCalEv("e_single", "alpha-personal", "Town Hall", "2026-09-30", "2026-09-30", true),
 				mkCalEv("e_multi", "alpha-personal", "Camping Trip", "2026-09-28", "2026-09-30", true),
@@ -281,7 +281,7 @@ func buildFamilyViewAdvancedCases(pdtLoc *time.Location) []buildFamilyViewTestCa
 		{name: "date override 2026-10-15 Thursday", cfg: withFamilyCfg(map[string]any{"date": "2026-10-15"}), exp: buildFamilyViewExpectations{rangeStart: "2026-10-11", rangeEnd: "2026-10-17", today: "2026-09-27", dayIsToday: map[int]bool{0: false, 3: false, 6: false}}},
 		{name: "date override 2026-09-29 current week", cfg: withFamilyCfg(map[string]any{"date": "2026-09-29"}), exp: buildFamilyViewExpectations{rangeStart: "2026-09-27", rangeEnd: "2026-10-03", today: "2026-09-27", dayIsToday: map[int]bool{0: true, 1: false, 2: false}}},
 		{name: "date override week starts monday", cfg: withFamilyCfg(map[string]any{"week_starts": "monday", "date": "2026-10-15"}), exp: buildFamilyViewExpectations{rangeStart: "2026-10-12", rangeEnd: "2026-10-18"}},
-		{name: "date override days 3", dims: domain.NewDimension(3, 2), cfg: withFamilyCfg(map[string]any{"days": 3, "date": "2026-10-15"}), exp: buildFamilyViewExpectations{daysCount: 3, rangeStart: "2026-10-15", rangeEnd: "2026-10-17"}},
+		{name: "date override days 3", dims: domain.Dimension{Cols: 3, Rows: 2}, cfg: withFamilyCfg(map[string]any{"days": 3, "date": "2026-10-15"}), exp: buildFamilyViewExpectations{daysCount: 3, rangeStart: "2026-10-15", rangeEnd: "2026-10-17"}},
 		{
 			name: "time_format 12h produces 12-hour hour markers and timeline markers",
 			cfg:  withFamilyCfg(map[string]any{"time_format": "12h"}),
@@ -347,7 +347,7 @@ func runBuildFamilyViewCase(t *testing.T, tc buildFamilyViewTestCase) {
 	if !tc.now.IsZero() {
 		now = tc.now
 	}
-	dims := domain.NewDimension(6, 2)
+	dims := domain.Dimension{Cols: 6, Rows: 2}
 	if tc.dims.Cols > 0 || tc.dims.Rows > 0 {
 		dims = tc.dims
 	}
@@ -659,17 +659,14 @@ func assertColorAndParsingHelpers(t *testing.T) {
 	if _, ok := parseFamilyTime("not-a-time"); ok {
 		t.Errorf("expected garbage time to fail")
 	}
-	if got := eventDateKey(mkCalEv("e", "c", "t", "not-a-time", "", false), time.UTC); got != "not-a-time" {
-		t.Errorf("eventDateKey fallback = %q", got)
-	}
 }
 
 func assertConfigAndFormattingHelpers(t *testing.T) {
 	t.Helper()
-	if resolveFamilyDayCount(map[string]any{"days": 7}, domain.NewDimension(4, 2)) != 7 ||
-		resolveFamilyDayCount(map[string]any{"days": float64(3)}, domain.NewDimension(6, 2)) != 3 ||
-		resolveFamilyDayCount(map[string]any{"days": 0}, domain.NewDimension(6, 2)) != 7 ||
-		resolveFamilyDayCount(map[string]any{"days": float64(-1)}, domain.NewDimension(4, 2)) != 5 {
+	if resolveFamilyDayCount(map[string]any{"days": 7}, domain.Dimension{Cols: 4, Rows: 2}) != 7 ||
+		resolveFamilyDayCount(map[string]any{"days": float64(3)}, domain.Dimension{Cols: 6, Rows: 2}) != 3 ||
+		resolveFamilyDayCount(map[string]any{"days": 0}, domain.Dimension{Cols: 6, Rows: 2}) != 7 ||
+		resolveFamilyDayCount(map[string]any{"days": float64(-1)}, domain.Dimension{Cols: 4, Rows: 2}) != 5 {
 		t.Errorf("resolveFamilyDayCount numeric branches failed")
 	}
 	if stringOr(nil, "k", "fb") != "fb" || stringOr(map[string]any{"k": 123}, "k", "fb") != "fb" || stringOr(map[string]any{"k": "   "}, "k", "fb") != "fb" {

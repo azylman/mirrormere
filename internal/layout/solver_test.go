@@ -12,7 +12,7 @@ import (
 )
 
 func mkW(id string, c, r int, pinned bool) layout.WidgetInput {
-	return layout.WidgetInput{ID: id, Dimensions: domain.NewDimension(c, r), Pinned: pinned}
+	return layout.WidgetInput{ID: id, Dimensions: domain.Dimension{Cols: c, Rows: r}, Pinned: pinned}
 }
 
 func fullGridMask(gridCols, gridRows int) uint32 {
@@ -210,7 +210,7 @@ func TestSolve_ErrorsAndDeadlocks(t *testing.T) {
 
 func TestPlacedWidget_JSON(t *testing.T) {
 	t.Parallel()
-	pw := layout.PlacedWidget{WidgetID: "family-calendar", Type: "calendar-feed", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(4, 2), Pinned: true}
+	pw := layout.PlacedWidget{WidgetID: "family-calendar", Type: "calendar-feed", Origin: [2]int{0, 0}, Dimensions: domain.Dimension{Cols: 4, Rows: 2}, Pinned: true}
 	data, err := json.Marshal(pw)
 	if err != nil {
 		t.Fatalf("failed to marshal PlacedWidget: %v", err)
@@ -372,7 +372,7 @@ func mkExp(id, typ string, screen, col, row, cols, rows int, pinned bool) layout
 		Type:       typ,
 		Screen:     screen,
 		Origin:     [2]int{col, row},
-		Dimensions: domain.NewDimension(cols, rows),
+		Dimensions: domain.Dimension{Cols: cols, Rows: rows},
 		Pinned:     pinned,
 	}
 }

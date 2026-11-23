@@ -29,12 +29,15 @@ supported_dimensions:
 
 config_schema:
   type: object
+  required:
+    - albums
   properties:
     cache_dir:
       type: string
     albums:
       type: array
       minItems: 1
+      description: List of album sources to cycle through.
       items:
         type: object
         required:
@@ -52,20 +55,6 @@ config_schema:
           url_env:
             type: string
         additionalProperties: false
-    source:
-      type: string
-      enum:
-        - share_url
-        - ember_bridge
-    album_url:
-      type: string
-      format: uri
-    album_url_env:
-      type: string
-    share_url:
-      type: string
-    share_url_env:
-      type: string
     cycle_interval_seconds:
       type: integer
       minimum: 1

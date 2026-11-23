@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Mirrormere Touch Display Stage 1 Launcher (Host -> Cage Compositor)
-# Runs as unprivileged display user under systemd mirrormere-display.service.
+# Runs as unprivileged display user or container entrypoint.
 set -euo pipefail
 
 # Source configuration overrides if present (with fallback to legacy kiosk config)

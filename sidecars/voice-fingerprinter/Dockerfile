@@ -5,8 +5,7 @@
 # never the default PyPI index (which resolves a multi-GB CUDA build).
 # The ECAPA model (~80MB, speechbrain/spkrec-ecapa-voxceleb) is NOT baked
 # into the image — it is downloaded on first run into /models, which MUST
-# be a persistent volume (see deploy/compose.yml's voice-fingerprinter
-# service) or every container restart re-downloads it.
+# be a persistent volume or every container restart re-downloads it.
 
 FROM python:3.12-slim AS base
 

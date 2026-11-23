@@ -24,8 +24,19 @@ const (
 	mockPhotosProtobufVideoHTML = `<!DOCTYPE html><html><head><meta property="og:title" content="Family Vacation 2026 - Google Photos"><title>Family Vacation 2026 - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["photo_1",["https://lh3.googleusercontent.com/pw/AL9nZEW1=w1024-h768",1200,800],1755268200000,null,null,null,null,null,null,{"146008172":[0,1500]}],["video_proto",["https://lh3.googleusercontent.com/pw/AL9nZEProtoVideo",1920,1080],1755354600000,null,null,null,null,null,null,{"76647426":[14200,null,1920,1080]}],["photo_2",["https://lh3.googleusercontent.com/pw/AL9nZEW2",1920,1080],1755441000000,null,null,null,null,null,null,{"76647426":null}]]],sideChannel:{}});</script></body></html>`
 	mockPhotosSameDayHTML       = `<!DOCTYPE html><html><head><meta property="og:title" content="Family Vacation 2026 - Google Photos"></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["photo_1",["https://lh3.googleusercontent.com/pw/AL9nZEW1=w1024-h768",1200,800],1755268200000],["photo_2",["https://lh3.googleusercontent.com/pw/AL9nZEW2",1920,1080],1755268300000],["photo_3",["https://lh3.googleusercontent.com/pw/AL9nZEW3=s0",1000,1000],1755268400000]]],sideChannel:{}});</script></body></html>`
 	mockPhotosFuncHTML          = `<!DOCTYPE html><html><head><title>Summer Roadtrip - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:function(){return ["key",[["img_a",["https://lh3.googleusercontent.com/pw/ROADA",800,600],1755268200000]]]},sideChannel:{}});</script></body></html>`
-	mockPhotosFallbackHTML      = `<!DOCTYPE html><html><head><meta property="og:title" content="Art Showcase"></head><body><div><img src="https://lh3.googleusercontent.com/pw/ART_ITEM_1=w500-h300"/><img src="https://lh4.googleusercontent.com/pw/ART_ITEM_2"/><img src="https://lh3.googleusercontent.com/pw/ART_ITEM_1=w100"/><img src="https://lh3.googleusercontent.com/a/AVATAR_IGNORED"/></div></body></html>`
 )
+
+func testAlbumConfig(source, url string) map[string]any {
+	return map[string]any{
+		"albums": []any{
+			map[string]any{
+				"name":   "Shared Album",
+				"source": source,
+				"url":    url,
+			},
+		},
+	}
+}
 
 type photosExtractionTestCase struct {
 	name               string
@@ -45,7 +56,7 @@ func runPhotosFetchExtractionCase(t *testing.T, tc photosExtractionTestCase) {
 	t.Parallel()
 	ts := provider.NewPhotosHTMLServer(t, tc.html)
 	p := provider.NewPhotosProvider()
-	if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{}); err != nil {
+	if err := p.Init(context.Background(), testAlbumConfig("share_url", ts.URL), provider.InitOptions{}); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 	res, err := p.Fetch(context.Background())
@@ -92,11 +103,14 @@ func assertPhotosExtractionDetails(t *testing.T, snap *provider.PhotoSnapshot, t
 func TestPhotosProvider_FetchExtraction(t *testing.T) {
 	t.Parallel()
 	var tenPhotos strings.Builder
-	tenPhotos.WriteString("<html><body>")
+	tenPhotos.WriteString(`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[`)
 	for i := 1; i <= 10; i++ {
-		fmt.Fprintf(&tenPhotos, `<img src="https://lh3.googleusercontent.com/pw/PHOTO_%d"/>`, i)
+		if i > 1 {
+			tenPhotos.WriteString(",")
+		}
+		fmt.Fprintf(&tenPhotos, `["p%d",["https://lh3.googleusercontent.com/pw/PHOTO_%d",800,600],%d]`, i, i, 1755268200000+int64(i)*86400000)
 	}
-	tenPhotos.WriteString("</body></html>")
+	tenPhotos.WriteString(`]]});</script></body></html>`)
 
 	const photo1URL = "https://lh3.googleusercontent.com/pw/AL9nZEW1"
 	const photo1TS = "2025-08-15T14:30:00Z"
@@ -118,7 +132,6 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 		},
 		{name: "same_day_burst", html: mockPhotosSameDayHTML, wantAlbum: "Family Vacation 2026", wantTotal: 3, wantPhotos: 1},
 		{name: "func_wrapper", html: mockPhotosFuncHTML, wantAlbum: "Summer Roadtrip", wantTotal: 1, wantPhotos: 1, wantFirstID: "img_a", wantFirstURL: "https://lh3.googleusercontent.com/pw/ROADA", wantFirstTimestamp: photo1TS},
-		{name: "fallback_regex", html: mockPhotosFallbackHTML, wantAlbum: "Art Showcase", wantTotal: 2, wantPhotos: 2},
 		{name: "ten_photos", html: tenPhotos.String(), wantAlbum: "Shared Album", wantTotal: 10, wantPhotos: 10},
 		{name: "empty_album", html: "<html><body><div>Empty Album</div></body></html>", wantAlbum: "Shared Album"},
 	}
@@ -173,7 +186,7 @@ func TestPhotosProvider_FetchErrors(t *testing.T) {
 			}))
 			defer ts.Close()
 			p := provider.NewPhotosProvider(provider.WithPhotosTransport(photosLoopbackTransport{}))
-			if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{}); err != nil {
+			if err := p.Init(context.Background(), testAlbumConfig("share_url", ts.URL), provider.InitOptions{}); err != nil {
 				t.Fatalf("Init: %v", err)
 			}
 			if _, err := p.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
@@ -188,12 +201,12 @@ func TestPhotosProvider_FetchErrors(t *testing.T) {
 func TestPhotosProvider_FetchServesStaleOnSyncFailure(t *testing.T) {
 	t.Parallel()
 	ts, _ := testutil.RouteServer(t, map[string]testutil.Route{"/": {
-		Body:        `<html><head><title>SWR</title></head><body><img src="https://lh3.googleusercontent.com/pw/SWROK"/></body></html>`,
+		Body:        `<!DOCTYPE html><html><head><title>SWR</title></head><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["swr_1",["https://lh3.googleusercontent.com/pw/SWROK",800,600],1755268200000]]]});</script></body></html>`,
 		ContentType: "text/html",
 		Next:        []testutil.Route{{Status: http.StatusInternalServerError}},
 	}})
 	p := provider.NewPhotosProvider()
-	if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{}); err != nil {
+	if err := p.Init(context.Background(), testAlbumConfig("share_url", ts.URL), provider.InitOptions{}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	if _, err := p.Fetch(context.Background()); err != nil {
@@ -237,7 +250,7 @@ func runPhotosInitCase(t *testing.T, tc photosInitTestCase) {
 func assertPhotosProviderEmberAndMalformed(t *testing.T) {
 	t.Helper()
 	pEmber := provider.NewPhotosProvider()
-	if err := pEmber.Init(context.Background(), map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/ember"}, provider.InitOptions{}); err != nil {
+	if err := pEmber.Init(context.Background(), testAlbumConfig("ember_bridge", "https://photos.app.goo.gl/ember"), provider.InitOptions{}); err != nil {
 		t.Fatalf("Init ember_bridge failed: %v", err)
 	}
 	if pEmber.Source() != provider.PhotoSourceEmberBridge {
@@ -258,7 +271,7 @@ func assertPhotosProviderEmberAndMalformed(t *testing.T) {
 	}
 	tsMal := provider.NewPhotosHTMLServer(t, `<html><body><script>AF_initDataCallback({key:'ds:1',data:[INVALID JSON...});</script></body></html>`)
 	pMal := provider.NewPhotosProvider()
-	_ = pMal.Init(context.Background(), map[string]any{"source": "share_url", "album_url": tsMal.URL}, provider.InitOptions{})
+	_ = pMal.Init(context.Background(), testAlbumConfig("share_url", tsMal.URL), provider.InitOptions{})
 	resMal, err := pMal.Fetch(context.Background())
 	if err != nil || len(testutil.As[*provider.PhotoSnapshot](t, resMal).Photos) != 0 {
 		t.Fatalf("expected empty photos on malformed JSON, got %v, err=%v", resMal, err)
@@ -279,21 +292,21 @@ func assertPhotosProviderEmberAndMalformed(t *testing.T) {
 
 func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 	tests := []photosInitTestCase{
-		{"missing_source", "", "", map[string]any{"album_url": "https://p.app/1"}, provider.InitOptions{}, "'source' is required"},
-		{"invalid_source", "", "", map[string]any{"source": "bad_source", "album_url": "https://p.app/1"}, provider.InitOptions{}, "must be either"},
-		{"mutex", "", "", map[string]any{"source": "share_url", "album_url": "https://p.app/1", "album_url_env": "E"}, provider.InitOptions{}, "mutually exclusive"},
-		{"neither", "", "", map[string]any{"source": "share_url"}, provider.InitOptions{}, "requires either 'album_url' or 'album_url_env'"},
-		{"unset_env", "", "", map[string]any{"source": "share_url", "album_url_env": "MISSING"}, provider.InitOptions{}, "is not set or empty"},
-		{"opts_secret", "", "", map[string]any{"source": "share_url", "album_url_env": "S"}, provider.InitOptions{Secrets: map[string]string{"S": "https://p.app/s"}}, ""},
-		{"env_var", "TEST_ALBUM_ENV", "https://p.app/env", map[string]any{"source": "share_url", "album_url_env": "TEST_ALBUM_ENV"}, provider.InitOptions{}, ""},
-		{"opts_override", "", "", map[string]any{"source": "share_url", "album_url": "https://p.app/raw"}, provider.InitOptions{Secrets: map[string]string{"album_url": "https://p.app/over"}}, ""},
-		{"bad_scheme", "", "", map[string]any{"source": "share_url", "album_url": "ftp://photos.google.com/album"}, provider.InitOptions{}, "invalid album URL"},
-		{"bad_host", "", "", map[string]any{"source": "share_url", "album_url": "http:///no-host"}, provider.InitOptions{}, "invalid album URL"},
-		{"ember_bridge_valid", "", "", map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/ember"}, provider.InitOptions{}, ""},
-		{"legacy_share_url", "", "", map[string]any{"share_url": "https://p.app/leg"}, provider.InitOptions{}, ""},
-		{"legacy_share_url_env", "LEGACY_ENV", "https://p.app/leg_env", map[string]any{"share_url_env": "LEGACY_ENV"}, provider.InitOptions{}, ""},
-		{"legacy_share_url_opts", "", "", map[string]any{"share_url_env": "LEG_S"}, provider.InitOptions{Secrets: map[string]string{"share_url": "https://p.app/sec"}}, ""},
-		{"legacy_production_config", "", "", map[string]any{"share_url": "https://photos.app.goo.gl/example-album", "cycle_interval_seconds": 30, "shuffle": true}, provider.InitOptions{}, ""},
+		{"missing_albums", "", "", map[string]any{}, provider.InitOptions{}, "'albums' is required"},
+		{"empty_albums", "", "", map[string]any{"albums": []any{}}, provider.InitOptions{}, "must contain at least one album"},
+		{"not_object", "", "", map[string]any{"albums": []any{"invalid"}}, provider.InitOptions{}, "must be an object"},
+		{"missing_name", "", "", map[string]any{"albums": []any{map[string]any{"source": "share_url", "url": "https://p.app/1"}}}, provider.InitOptions{}, "requires non-empty 'name'"},
+		{"missing_source_and_url", "", "", map[string]any{"albums": []any{map[string]any{"name": "Album"}}}, provider.InitOptions{}, "requires 'source'"},
+		{"invalid_source", "", "", map[string]any{"albums": []any{map[string]any{"name": "Album", "source": "bad_source", "url": "https://p.app/1"}}}, provider.InitOptions{}, "must be either"},
+		{"mutex_url_and_url_env", "", "", map[string]any{"albums": []any{map[string]any{"name": "Album", "source": "share_url", "url": "https://p.app/1", "url_env": "E"}}}, provider.InitOptions{}, "mutually exclusive"},
+		{"neither_url_nor_url_env", "", "", map[string]any{"albums": []any{map[string]any{"name": "Album", "source": "share_url"}}}, provider.InitOptions{}, "requires either 'url' or 'url_env'"},
+		{"unset_env", "", "", map[string]any{"albums": []any{map[string]any{"name": "Album", "source": "share_url", "url_env": "MISSING"}}}, provider.InitOptions{}, "is not set or empty"},
+		{"opts_secret", "", "", map[string]any{"albums": []any{map[string]any{"name": "Album", "source": "share_url", "url_env": "S"}}}, provider.InitOptions{Secrets: map[string]string{"S": "https://p.app/s"}}, ""},
+		{"env_var", "TEST_ALBUM_ENV", "https://p.app/env", map[string]any{"albums": []any{map[string]any{"name": "Album", "source": "share_url", "url_env": "TEST_ALBUM_ENV"}}}, provider.InitOptions{}, ""},
+		{"opts_override", "", "", map[string]any{"albums": []any{map[string]any{"name": "Album", "source": "share_url", "url": "https://p.app/raw"}}}, provider.InitOptions{Secrets: map[string]string{"albums[0].url": "https://p.app/over"}}, ""},
+		{"bad_scheme", "", "", map[string]any{"albums": []any{map[string]any{"name": "Album", "source": "share_url", "url": "ftp://photos.google.com/album"}}}, provider.InitOptions{}, "invalid album URL"},
+		{"bad_host", "", "", map[string]any{"albums": []any{map[string]any{"name": "Album", "source": "share_url", "url": "http:///no-host"}}}, provider.InitOptions{}, "invalid album URL"},
+		{"ember_bridge_valid", "", "", map[string]any{"albums": []any{map[string]any{"name": "Album", "source": "ember_bridge", "url": "https://photos.app.goo.gl/ember"}}}, provider.InitOptions{}, ""},
 	}
 	for _, tc := range tests {
 		runPhotosInitCase(t, tc)
@@ -315,11 +328,14 @@ func deckWindowRoute(batches [][]string) testutil.Route {
 	routes := make([]testutil.Route, len(batches))
 	for i, batch := range batches {
 		var b strings.Builder
-		b.WriteString("<html><body>")
-		for _, id := range batch {
-			fmt.Fprintf(&b, `<img src="https://lh3.googleusercontent.com/pw/%s"/>`, id)
+		b.WriteString(`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[`)
+		for j, id := range batch {
+			if j > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, `["%s",["https://lh3.googleusercontent.com/pw/%s",800,600],%d]`, id, id, 1755268200000+int64(j)*86400000)
 		}
-		b.WriteString("</body></html>")
+		b.WriteString(`]]});</script></body></html>`)
 		routes[i] = testutil.Route{Body: b.String(), ContentType: "text/html; charset=utf-8"}
 	}
 	first := routes[0]
@@ -332,7 +348,7 @@ func runDeckWindowCase(t *testing.T, tc deckWindowTestCase) {
 	t.Parallel()
 	ts, _ := testutil.RouteServer(t, map[string]testutil.Route{"/": deckWindowRoute(tc.pollBatches)})
 	p := provider.NewPhotosProvider()
-	if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{}); err != nil {
+	if err := p.Init(context.Background(), testAlbumConfig("share_url", ts.URL), provider.InitOptions{}); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 	snapshots := make([]*provider.PhotoSnapshot, len(tc.pollBatches))
@@ -542,7 +558,7 @@ func TestPhotosProvider_FetchAlbums(t *testing.T) {
 				map[string]any{"name": "Ember Feed", "source": "ember_bridge", "url": "https://photos.app.goo.gl/ember-url"},
 			}},
 			secrets:      map[string]string{"albums[0].url": "$0"},
-			htmlByServer: []string{`<html><head><title>Share Vacation</title></head><body><img src="https://lh3.googleusercontent.com/pw/P_SHARE1"/><img src="https://lh3.googleusercontent.com/pw/P_DUP"/></body></html>`},
+			htmlByServer: []string{`<!DOCTYPE html><html><head><title>Share Vacation</title></head><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["p1",["https://lh3.googleusercontent.com/pw/P_SHARE1",800,600],1755268200000],["p2",["https://lh3.googleusercontent.com/pw/P_DUP",800,600],1755354600000]]]});</script></body></html>`},
 			// The first ember_bridge album's URL takes precedence for AlbumURL.
 			wantAlbumName: "Vacation 2026, Ember Feed", wantAlbumURL: "https://photos.app.goo.gl/ember-url", wantTotal: 2, wantDealt: 2,
 			wantPhotoAlbum: "Vacation 2026", wantPageHits: 1,
@@ -566,7 +582,7 @@ func TestPhotosProvider_FetchAlbums(t *testing.T) {
 		},
 		{
 			name:         "warm_boot_zero_http",
-			cfg:          map[string]any{"source": "share_url", "album_url": "$0"},
+			cfg:          testAlbumConfig("share_url", "$0"),
 			htmlByServer: []string{""},
 			diskSeed: &photosDiskSeed{
 				albumName: "Cached Album", scrapedTitle: "Warm Scraped Title", url: "$0", page1Age: 10 * time.Minute, fullAge: 2 * time.Hour,
@@ -580,7 +596,7 @@ func TestPhotosProvider_FetchAlbums(t *testing.T) {
 		},
 		{
 			name:          "snAcKc_pagination",
-			cfg:           map[string]any{"source": "share_url", "album_url": "$0"},
+			cfg:           testAlbumConfig("share_url", "$0"),
 			htmlByServer:  []string{photosPage1HTML},
 			batchPages:    []testutil.Route{{Body: photosBatchPage2}, {Body: photosBatchPage3}},
 			wantAlbumName: "Paged Album", wantAlbumURL: "$0", wantTotal: 3, wantDealt: 1,
@@ -588,7 +604,7 @@ func TestPhotosProvider_FetchAlbums(t *testing.T) {
 		},
 		{
 			name:         "snAcKc_repeated_token_then_error",
-			cfg:          map[string]any{"source": "share_url", "album_url": "$0"},
+			cfg:          testAlbumConfig("share_url", "$0"),
 			htmlByServer: []string{`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["p1",["https://lh3.googleusercontent.com/pw/PAGE1",1000,800],1755268100000]],"repeated_tok"]});</script></body></html>`},
 			batchPages: []testutil.Route{
 				{Body: `)]}'
@@ -677,7 +693,7 @@ func TestPhotosProvider_DeltaSyncSkipsPagination(t *testing.T) {
 	t.Parallel()
 	captured, r := photosFetchServers(t, []string{photosPage1HTML}, []testutil.Route{{Body: photosBatchPage2}, {Body: photosBatchPage3}})
 	p := provider.NewPhotosProvider(provider.WithPhotosCacheDir(t.TempDir()))
-	if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": r.Replace("$0")}, provider.InitOptions{}); err != nil {
+	if err := p.Init(context.Background(), testAlbumConfig("share_url", r.Replace("$0")), provider.InitOptions{}); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 	if _, err := p.Fetch(context.Background()); err != nil {
@@ -705,12 +721,12 @@ func TestPhotosProvider_SubscribeEmitsHealthy(t *testing.T) {
 	}{
 		{
 			name:  "sync_ticks_after_hydration",
-			html:  `<html><head><title>Sub Album</title></head><body><img src="https://lh3.googleusercontent.com/pw/SUB1"/></body></html>`,
+			html:  `<!DOCTYPE html><html><head><title>Sub Album</title></head><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["sub1",["https://lh3.googleusercontent.com/pw/SUB1",800,600],1755268200000]]]});</script></body></html>`,
 			page1: 10 * time.Millisecond, full: 50 * time.Millisecond,
 		},
 		{
 			name:  "warm_boot_stale_cache_syncs",
-			html:  `<html><head><title>Stale Sub</title></head><body><img src="https://lh3.googleusercontent.com/pw/STALE1"/></body></html>`,
+			html:  `<!DOCTYPE html><html><head><title>Stale Sub</title></head><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["stale1",["https://lh3.googleusercontent.com/pw/STALE1",800,600],1755268200000]]]});</script></body></html>`,
 			page1: 10 * time.Hour, full: 24 * time.Hour,
 			diskSeed: &photosDiskSeed{
 				albumName: "Stale Cached", scrapedTitle: "Stale Scraped", url: "$0", page1Age: 48 * time.Hour, fullAge: 48 * time.Hour,
@@ -725,7 +741,7 @@ func TestPhotosProvider_SubscribeEmitsHealthy(t *testing.T) {
 			dir := t.TempDir()
 			writePhotosDiskSeed(t, dir, tc.diskSeed, r)
 			p := provider.NewPhotosProvider(provider.WithPhotosCacheDir(dir), provider.WithPhotosSyncIntervals(tc.page1, tc.full))
-			if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": r.Replace("$0")}, provider.InitOptions{}); err != nil {
+			if err := p.Init(context.Background(), testAlbumConfig("share_url", r.Replace("$0")), provider.InitOptions{}); err != nil {
 				t.Fatalf("Init failed: %v", err)
 			}
 			if tc.diskSeed == nil {

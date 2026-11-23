@@ -16,10 +16,6 @@ location:
 
 # Display and layout configuration
 display:
-  # Display shell served at /display. Only "react" (display_react.html + web/static/ui/app.js) is
-  # accepted and it is the default; "legacy" is rejected because that shell was removed.
-  ui: "react"
-
   # Live canvas layout editing and atomic disk override file path (optional)
   allow_layout_edit: true
   layout_override_path: "/data/layout-override.yaml"
@@ -194,8 +190,7 @@ display:
 
 # Speaker identification. Optional: with
 # this block absent, `speaker` is always empty. Uncomment and point
-# embed_url at the voice-fingerprinter sidecar (deploy/compose.yml,
-# profile "speaker-id") to enable it. Enroll speakers directly into config.yaml
+# embed_url at the voice-fingerprinter sidecar to enable it. Enroll speakers directly into config.yaml
 # with `python3 sidecars/voice-fingerprinter/enroll.py <id> --wav <file>...
 # --output deploy/config/config.yaml` and send SIGHUP to mirrormere-core.
 # voice_hub:

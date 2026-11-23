@@ -39,9 +39,9 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 			{ID: "sensor-1", Type: "sensor"}, {ID: "b1", Type: "broken"}, {ID: "cal-1", Type: "cal", Config: map[string]any{"default_view": "week"}},
 		}}},
 		Layout: &layout.Layout{Screens: []layout.Screen{{Index: 0, Widgets: []layout.PlacedWidget{
-			{WidgetID: "sensor-1", Type: "sensor", Dimensions: domain.NewDimension(2, 1)},
-			{WidgetID: "b1", Type: "broken", Dimensions: domain.NewDimension(2, 1)},
-			{WidgetID: "cal-1", Type: "cal", Dimensions: domain.NewDimension(2, 1)},
+			{WidgetID: "sensor-1", Type: "sensor", Dimensions: domain.Dimension{Cols: 2, Rows: 1}},
+			{WidgetID: "b1", Type: "broken", Dimensions: domain.Dimension{Cols: 2, Rows: 1}},
+			{WidgetID: "cal-1", Type: "cal", Dimensions: domain.Dimension{Cols: 2, Rows: 1}},
 		}}}},
 		Packages: pkgs,
 	}

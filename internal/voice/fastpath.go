@@ -169,10 +169,6 @@ func brainStageSeconds(b BrainClient, total time.Duration) (float64, bool) {
 	return d.Seconds(), true
 }
 
-func (b *fastPathBrain) Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error) {
-	return b.AskStreaming(ctx, req, onStatus, nil)
-}
-
 func (b *fastPathBrain) AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
 	start := time.Now()
 	res := b.fp.Try(ctx, req, onAudio)
@@ -192,8 +188,5 @@ func (b *fastPathBrain) AskStreaming(ctx context.Context, req AskRequest, onStat
 	if b.inner == nil {
 		return "", ErrBrainFailed
 	}
-	if s, ok := b.inner.(AudioStreamingBrainClient); ok {
-		return s.AskStreaming(ctx, req, onStatus, onAudio)
-	}
-	return b.inner.Ask(ctx, req, onStatus)
+	return b.inner.AskStreaming(ctx, req, onStatus, onAudio)
 }

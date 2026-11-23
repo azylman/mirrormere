@@ -215,7 +215,7 @@ func fallbackWidgetDimension(w *config.WidgetConfig, pkg *domain.Package) domain
 	if pkg != nil && pkg.Manifest.DefaultDimensions.IsValid() {
 		return pkg.Manifest.DefaultDimensions
 	}
-	return domain.NewDimension(1, 1)
+	return domain.Dimension{Cols: 1, Rows: 1}
 }
 
 func resolveWidgetPlacement(widgetID string, w *config.WidgetConfig, pkg *domain.Package, snap *config.Snapshot) ([2]int, domain.Dimension) {

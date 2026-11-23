@@ -119,6 +119,18 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	assertEq(t, "secret album_url", photos.Secrets["albums[0].url"], mockEnv["GOOGLE_PHOTOS_ALBUM_URL"])
 }
 
+func TestValidateConfigFile_PhotoCarouselLegacyRejected(t *testing.T) {
+	t.Parallel()
+
+	loader := widget.NewLoader(filepath.Join("..", "..", "widgets"), t.TempDir())
+	legacyYAML := []byte("timezone: America/Los_Angeles\ndisplay:\n  widgets:\n    - id: photos\n      type: photo-carousel\n      dimensions: [3, 2]\n      config:\n        source: share_url\n        album_url: https://photos.app.goo.gl/example\n    - id: pad\n      type: spacer\n      dimensions: [3, 2]\n")
+
+	_, err := config.ValidatePipeline(legacyYAML, loader, mockGetenv(nil))
+	if err == nil || !strings.Contains(err.Error(), "manifest config_schema validation error for widget 'photos'") {
+		t.Fatalf("expected manifest config_schema validation error, got: %v", err)
+	}
+}
+
 func TestParseConfig_ValidationErrors(t *testing.T) {
 	t.Parallel()
 
@@ -173,6 +185,7 @@ func TestParseConfig_ValidationErrors(t *testing.T) {
 		{"widget whitespace padded endpoint url", "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      endpoint: \" http://example.com/api \"\n", "invalid endpoint URL"},
 		{"chat_log non-positive ttl", withBaseYAML("chat_log:\n  ttl_minutes: 0\n"), "chat_log ttl_minutes must be positive"},
 		{"chat_log non-positive max_messages", withBaseYAML("chat_log:\n  max_messages_per_node: -1\n"), "chat_log max_messages_per_node must be positive"},
+		{"voice_hub invalid stt_url scheme", withBaseYAML("voice_hub:\n  enabled: true\n  stt_url: http://127.0.0.1:10300\n"), "voice_hub stt_url must use tcp:// or wyoming:// scheme"},
 		{"voice_hub brain timeout non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  brain_timeout_seconds: 0\n"), "voice_hub brain_timeout_seconds must be positive"},
 		{"voice_hub tts timeout non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  tts_timeout_seconds: -2\n"), "voice_hub tts_timeout_seconds must be positive"},
 		{"fast_path timeout_ms non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: http://127.0.0.1:8000/intent\n    timeout_ms: 0\n"), "voice_hub fast_path timeout_ms must be positive"},

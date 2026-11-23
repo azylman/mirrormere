@@ -12,10 +12,6 @@ body[data-theme="night"] {
 
 #header-clock,
 .next-event-countdown,
-.hud-time,
-.progress-times,
-.countdown-days,
-.cal-event-time,
 .cf-event-time {
   font-variant-numeric: tabular-nums;
 }

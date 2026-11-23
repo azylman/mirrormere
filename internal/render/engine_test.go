@@ -77,7 +77,7 @@ func createTestPackage(t *testing.T, dir, widgetType, viewContent string) *domai
 	}
 	return &domain.Package{
 		Type: widgetType, Source: "builtin", Dir: pkgDir, ManifestPath: manifestPath, ViewPath: viewPath, AssetsDir: assetsDir,
-		Manifest: domain.WidgetManifest{Name: widgetType, Version: "1.0.0", Provider: "http", DefaultDimensions: domain.NewDimension(2, 1)},
+		Manifest: domain.WidgetManifest{Name: widgetType, Version: "1.0.0", Provider: "http", DefaultDimensions: domain.Dimension{Cols: 2, Rows: 1}},
 	}
 }
 
@@ -165,7 +165,7 @@ func TestEngine_RenderWidget(t *testing.T) {
 				},
 			},
 		},
-		Layout:   &layout.Layout{Screens: []layout.Screen{{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "w-placed", Type: "generic", Origin: [2]int{2, 1}, Dimensions: domain.NewDimension(3, 1)}}}}},
+		Layout:   &layout.Layout{Screens: []layout.Screen{{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "w-placed", Type: "generic", Origin: [2]int{2, 1}, Dimensions: domain.Dimension{Cols: 3, Rows: 1}}}}}},
 		Packages: map[string]*domain.Package{"generic": pkg},
 	}
 

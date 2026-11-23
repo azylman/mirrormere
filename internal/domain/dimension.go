@@ -13,11 +13,6 @@ type Dimension struct {
 	Rows int `yaml:"rows"`
 }
 
-// NewDimension creates a Dimension with the specified columns and rows.
-func NewDimension(cols, rows int) Dimension {
-	return Dimension{Cols: cols, Rows: rows}
-}
-
 // DimensionFromSlice converts a 2-element integer slice [cols, rows] to Dimension.
 func DimensionFromSlice(s []int) (Dimension, error) {
 	if len(s) != 2 {
@@ -43,16 +38,6 @@ func (d Dimension) IsValid() bool {
 // IsValidForGrid checks if the dimension fits within a gridCols x gridRows grid.
 func (d Dimension) IsValidForGrid(gridCols, gridRows int) bool {
 	return d.Cols >= 1 && d.Cols <= gridCols && d.Rows >= 1 && d.Rows <= gridRows
-}
-
-// Slice returns the dimension as a 2-element slice [cols, rows].
-func (d Dimension) Slice() []int {
-	return []int{d.Cols, d.Rows}
-}
-
-// String returns the string representation [cols, rows].
-func (d Dimension) String() string {
-	return fmt.Sprintf("[%d, %d]", d.Cols, d.Rows)
 }
 
 // UnmarshalYAML implements custom unmarshaling supporting both [cols, rows] sequences and mappings.

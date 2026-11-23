@@ -1091,11 +1091,6 @@ def resolve_yt_audio_stream_with_headers(video_id):
     return None, None, {}
 
 
-def resolve_yt_audio_stream(video_id):
-    url, ctype, _ = resolve_yt_audio_stream_with_headers(video_id)
-    return url, ctype
-
-
 def _cast_track_to_speaker(speaker, track):
     if not speaker or not track or not track.get("video_id"):
         return False
@@ -2688,84 +2683,6 @@ def build_feed(feed_name):
     return (header + body + footer).encode("utf-8")
 
 
-def _derive_screens_from_config():
-    cfg = _load_config()
-    for k in ("screens", "screen_layouts"):
-        if k in cfg and isinstance(cfg[k], list):
-            return cfg[k]
-    if "display" in cfg and isinstance(cfg["display"], dict):
-        for k in ("screens", "screen_layouts"):
-            if k in cfg["display"] and isinstance(cfg["display"][k], list):
-                return cfg["display"][k]
-    if "hearth" in cfg and isinstance(cfg["hearth"], dict):
-        for k in ("screens", "screen_layouts"):
-            if k in cfg["hearth"] and isinstance(cfg["hearth"][k], list):
-                return cfg["hearth"][k]
-
-    core_url = str(_cfg("MIRRORMERE_CORE_URL", _cfg("CORE_URL", "http://127.0.0.1:8080"))).rstrip(
-        "/"
-    )
-    try:
-        req = urllib.request.Request(f"{core_url}/api/screens")
-        with urllib.request.urlopen(req, timeout=2) as r:
-            if r.status == 200:
-                data = json.loads(r.read().decode())
-                if isinstance(data, dict) and "screens" in data:
-                    return data["screens"]
-                elif isinstance(data, list):
-                    return data
-    except Exception:
-        pass
-
-    widgets = []
-    if "display" in cfg and isinstance(cfg["display"], dict):
-        widgets = cfg["display"].get("widgets", [])
-    if not widgets and "widgets" in cfg:
-        widgets = cfg.get("widgets", [])
-
-    if widgets and isinstance(widgets, list):
-        screens = []
-        current_screen = []
-        current_cells = 0
-        screen_idx = 0
-        for w in widgets:
-            if not isinstance(w, dict):
-                continue
-            wid = w.get("id") or w.get("widget_id")
-            if not wid:
-                continue
-            dims = w.get("dimensions", [2, 1])
-            cells = (dims[0] * dims[1]) if (isinstance(dims, list) and len(dims) >= 2) else 2
-            if current_cells + cells > 12 and current_screen:
-                screens.append({"screen_index": screen_idx, "widgets": current_screen})
-                screen_idx += 1
-                current_screen = []
-                current_cells = 0
-            current_screen.append(
-                {
-                    "widget_id": wid,
-                    "origin": w.get("origin", [current_cells % 6, (current_cells // 6) % 2]),
-                    "dimensions": dims,
-                }
-            )
-            current_cells += cells
-        if current_screen:
-            screens.append({"screen_index": screen_idx, "widgets": current_screen})
-        if screens:
-            return screens
-
-    return [
-        {
-            "screen_index": 0,
-            "widgets": [
-                {"widget_id": "family-calendar", "origin": [0, 0], "dimensions": [4, 2]},
-                {"widget_id": "home-weather", "origin": [4, 0], "dimensions": [2, 1]},
-                {"widget_id": "household-tasks", "origin": [4, 1], "dimensions": [2, 1]},
-            ],
-        }
-    ]
-
-
 class Handler(BaseHTTPRequestHandler):
     def _is_internal_caller(self):
         client_ip = self.client_address[0] if self.client_address else ""
@@ -2859,17 +2776,6 @@ class Handler(BaseHTTPRequestHandler):
             if not is_head:
                 with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                     self.wfile.write(payload)
-            return
-
-        if path == "/hearth-api/screens/layout":
-            screens = _derive_screens_from_config()
-            payload = json.dumps({"screens": screens}).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            if not is_head:
-                self.wfile.write(payload)
             return
 
         if path == "/hearth-api/music/state":

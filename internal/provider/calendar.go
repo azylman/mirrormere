@@ -606,18 +606,19 @@ func extractEventImageURL(e *ical.VEvent, location string) string {
 	for _, token := range []string{"IMAGE", "ATTACH", "X-MEALIE-IMAGE", "URL"} {
 		if p := e.GetProperty(ical.ComponentProperty(token)); p != nil {
 			val := strings.TrimSpace(p.Value)
-			if isRecipeImageURL(val) {
+			if IsRecipeImageURL(val) {
 				return val
 			}
 		}
 	}
-	if isRecipeImageURL(location) {
+	if IsRecipeImageURL(location) {
 		return strings.TrimSpace(location)
 	}
 	return ""
 }
 
-func isRecipeImageURL(raw string) bool {
+// IsRecipeImageURL reports whether raw points to a recipe or mealie image asset.
+func IsRecipeImageURL(raw string) bool {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return false

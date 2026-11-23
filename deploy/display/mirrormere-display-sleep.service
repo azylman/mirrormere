@@ -1,9 +1,0 @@
-[Unit]
-Description=Mirrormere Display Evening Sleep (DPMS Off)
-After=mirrormere-display.service
-
-[Service]
-Type=oneshot
-EnvironmentFile=-/etc/default/mirrormere-display
-EnvironmentFile=-/etc/default/mirrormere-kiosk
-ExecStart=/opt/mirrormere/display/dpms.sh off

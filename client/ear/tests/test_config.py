@@ -223,16 +223,6 @@ voice:
             del os.environ["MIRRORMERE_KEYWORDS_THRESHOLD"]
             del os.environ["MIRRORMERE_SHERPA_NUM_THREADS"]
 
-    def test_client_compose_models_volume_bind_mount(self):
-        compose_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "..", "deploy", "examples", "compose.client.yaml"
-        )
-        self.assertTrue(os.path.exists(compose_path), f"compose file missing: {compose_path}")
-        with open(compose_path, encoding="utf-8") as f:
-            content = f.read()
-        self.assertIn("/opt/mirrormere/voice/models:/opt/mirrormere/voice/models:ro", content)
-        self.assertNotIn("ear-models", content)
-
     def test_ear_requirements_include_sherpa_token_tools(self):
         req_path = os.path.join(os.path.dirname(__file__), "..", "requirements.txt")
         self.assertTrue(os.path.exists(req_path), f"requirements file missing: {req_path}")
