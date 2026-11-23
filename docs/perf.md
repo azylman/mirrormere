@@ -38,14 +38,16 @@ Flags:
 | `--url` | required | Display page. `perf=1` is added to the query string. |
 | `--chrome` | `$CHROME_BIN`, then `google-chrome` | Path to the Chrome executable. |
 | `--cpu-throttle` | `4` | CPU slowdown factor, at least 1. Use `1` for a raw desktop run. |
+| `--loads` | `5` | Measured page loads (1..100) used to sample `screen_ready`, preceded by 1 discarded warm-up navigation. |
 | `--swipes` | `20` | Horizontal swipes. Even swipes go left (next), odd swipes go right (prev). |
 
-The script launches Chrome headless at 1920x1080 with touch emulation, waits for
-`data-screen-hydrated` on `#grid-canvas`, then sends each swipe as 300 px over 120 ms in 8 moves
-with a 1 s gap. It prints `window.__mmPerf.snapshot()` as JSON on stdout, plus
-`long_task_during_swipes`: the long tasks recorded between the first and last swipe, which leaves
-out the cold-load tasks in the snapshot. Progress messages go to stderr, so the output can be
-piped into a file.
+The script launches Chrome headless at 1920x1080 with touch emulation, runs 1 discarded
+warm-up navigation followed by `--loads` (default 5) measured page loads to sample `screen_ready`,
+waits for `data-screen-hydrated` on `#grid-canvas` on the final load, then sends each swipe as
+300 px over 120 ms in 8 moves with a 1 s gap. It prints `window.__mmPerf.snapshot()` as JSON on
+stdout, with `screen_ready` aggregated across the measured loads, plus `long_task_during_swipes`:
+the long tasks recorded between the first and last swipe, which leaves out the cold-load tasks in
+the snapshot. Progress messages go to stderr, so the output can be piped into a file.
 
 `--swipe-x <px>` and `--swipe-y <px>` set the centre of each swipe (default: the viewport centre).
 Before each swipe the bench reads the rects of the swipe-blocking elements and of the widgets in
@@ -59,10 +61,10 @@ which usually means the swipe centre is on a blocking widget.
 
 The performance budget check (`scripts/perf/bench.mjs` + `scripts/perf/check-budget.mjs`) is run manually
 against a local server rather than as an active job in `.github/workflows/ci.yml`. It runs the bench at 4x CPU
-throttle with 20 swipes against `/display`, and then runs `scripts/perf/check-budget.mjs`:
+throttle with 5 measured loads and 20 swipes against `/display`, and then runs `scripts/perf/check-budget.mjs`:
 
 ```sh
-node scripts/perf/bench.mjs --url 'http://localhost:8080/display?perf=1' --cpu-throttle 4 --swipes 20 > bench.json
+node scripts/perf/bench.mjs --url 'http://localhost:8080/display?perf=1' --cpu-throttle 4 --loads 5 --swipes 20 > bench.json
 node scripts/perf/check-budget.mjs --bench bench.json --budget scripts/perf/budget.json --app-js web/static/ui/app.js
 ```
 
@@ -86,6 +88,8 @@ FAMILY_CALENDAR_URL=http://localhost:9/fixture.ics TODOIST_API_TOKEN=fixture-tok
 
 Notes:
 
+- `screen_ready` is sampled across `--loads` (default 5) page loads following 1 warm-up navigation,
+  aggregated via `summarize()` to avoid single cold-load timing noise.
 - `swipe_settle` needs at least two screens configured. With one screen, swipes do nothing.
 - The carousel ignores swipes that start inside a calendar widget or an element marked
   `data-prevent-screen-swipe`, so those swipes produce no sample.

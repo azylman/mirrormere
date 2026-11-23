@@ -9,7 +9,7 @@
  *
  * Usage:
  *   node scripts/perf/bench.mjs --url http://localhost:8080/display \
- *     [--chrome <path>] [--cpu-throttle 4] [--swipes 20] [--swipe-x <px>] [--swipe-y <px>]
+ *     [--chrome <path>] [--cpu-throttle 4] [--loads 5] [--swipes 20] [--swipe-x <px>] [--swipe-y <px>]
  *
  * The output is the snapshot plus long_task_during_swipes (the long tasks recorded between the
  * first and last swipe, which excludes cold-load tasks), swipes_sent and swipes_settled (the
@@ -24,10 +24,14 @@
  */
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { pickSwipePoint } from './swipe-point.mjs';
+
+const require = createRequire(import.meta.url);
+const { summarize } = require('../../web/static/js/perf.js');
 
 const VIEWPORT = { width: 1920, height: 1080 };
 const SWIPE_BLOCKERS = '.widget-calendar-grid, .widget-calendar-family, [data-prevent-screen-swipe]';
@@ -48,6 +52,7 @@ export function parseArgs(argv) {
     url: null,
     chrome: process.env.CHROME_BIN || 'google-chrome',
     cpuThrottle: 4,
+    loads: 5,
     swipes: 20,
     swipeX: null,
     swipeY: null,
@@ -64,6 +69,7 @@ export function parseArgs(argv) {
       case '--url': opts.url = take(); break;
       case '--chrome': opts.chrome = take(); break;
       case '--cpu-throttle': opts.cpuThrottle = Number(take()); break;
+      case '--loads': opts.loads = Number(take()); break;
       case '--swipes': opts.swipes = Number(take()); break;
       case '--swipe-x': opts.swipeX = Number(take()); break;
       case '--swipe-y': opts.swipeY = Number(take()); break;
@@ -85,6 +91,9 @@ export function parseArgs(argv) {
   }
   if (!Number.isFinite(opts.cpuThrottle) || opts.cpuThrottle < 1) {
     throw new UsageError('--cpu-throttle must be a number >= 1');
+  }
+  if (!Number.isInteger(opts.loads) || opts.loads < 1 || opts.loads > 100) {
+    throw new UsageError('--loads must be an integer between 1 and 100');
   }
   if (!Number.isInteger(opts.swipes) || opts.swipes < 0 || opts.swipes > 1000) {
     throw new UsageError('--swipes must be an integer between 0 and 1000');
@@ -296,11 +305,23 @@ export async function runBench(opts, log = (msg) => process.stderr.write(`${msg}
     await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: opts.cpuThrottle });
 
-    const nav = await cdp.send('Page.navigate', { url: opts.pageURL });
-    if (nav.errorText) throw new Error(`navigation to ${opts.pageURL} failed: ${nav.errorText}`);
-    log(`loaded ${opts.pageURL} (cpu throttle ${opts.cpuThrottle}x)`);
-
+    const warmNav = await cdp.send('Page.navigate', { url: opts.pageURL });
+    if (warmNav.errorText) throw new Error(`navigation to ${opts.pageURL} failed: ${warmNav.errorText}`);
+    log(`warm-up loaded ${opts.pageURL} (cpu throttle ${opts.cpuThrottle}x)`);
     await waitForHydration(cdp);
+
+    const screenReadySamples = [];
+    for (let i = 0; i < opts.loads; i++) {
+      const nav = await cdp.send('Page.navigate', { url: opts.pageURL });
+      if (nav.errorText) throw new Error(`navigation to ${opts.pageURL} failed: ${nav.errorText}`);
+      await waitForHydration(cdp);
+      const sample = await evaluate(cdp, 'window.__mmPerf.snapshot().screen_ready.p50');
+      if (typeof sample === 'number' && Number.isFinite(sample)) {
+        screenReadySamples.push(sample);
+      }
+      log(`measured load ${i + 1}/${opts.loads}: screen_ready p50 = ${sample} ms`);
+    }
+
     // Drop the about:blank entry Chrome started with so a right swipe has no history to go back to.
     await cdp.send('Page.resetNavigationHistory');
     // Allow cold-load hydration microtasks, style passes, and initial effects to settle before measuring.
@@ -327,6 +348,7 @@ export async function runBench(opts, log = (msg) => process.stderr.write(`${msg}
     const json = await evaluate(cdp, 'JSON.stringify(window.__mmPerf.snapshot())');
     return {
       ...JSON.parse(json),
+      screen_ready: summarize(screenReadySamples),
       long_task_during_swipes: during,
       swipes_sent: sent,
       swipes_settled: settled,
@@ -338,11 +360,12 @@ export async function runBench(opts, log = (msg) => process.stderr.write(`${msg}
   }
 }
 
-const USAGE = `usage: node scripts/perf/bench.mjs --url <display-url> [--chrome <path>] [--cpu-throttle N] [--swipes N]
-                                  [--swipe-x <px>] [--swipe-y <px>]
+const USAGE = `usage: node scripts/perf/bench.mjs --url <display-url> [--chrome <path>] [--cpu-throttle N] [--loads N]
+                                  [--swipes N] [--swipe-x <px>] [--swipe-y <px>]
   --url           display page to measure, e.g. http://localhost:8080/display (perf=1 is added)
   --chrome        Chrome executable (default: $CHROME_BIN or google-chrome)
   --cpu-throttle  CPU slowdown factor, >= 1 (default 4)
+  --loads         measured page loads after 1 warm-up load, 1..100 (default 5)
   --swipes        number of horizontal swipes (default 20)
   --swipe-x       swipe centre x in px (default: viewport centre); moved off blocking widgets
   --swipe-y       swipe centre y in px (default: viewport centre)
