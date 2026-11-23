@@ -6,7 +6,7 @@ import { resolveCamerasStatusUrl } from './liveViewHelpers';
 import { useDisplayStore } from '../../store';
 import { PaneContext } from '../../carousel/PaneContext';
 import { itemAt } from '../../test-utils/lookup';
-import { FakeRTCPeerConnection } from '../../test-utils/fakeRTCPeerConnection';
+import { FakeRTCPeerConnection, MockMediaStream, createFakeTrack } from '../../test-utils/mediaFakes';
 import { renderWidget, seedWidget, widgetMeta } from '../../test-utils/widget';
 
 
@@ -108,11 +108,13 @@ describe('LiveViewWidget helpers', () => {
       expect(cfg.expand_stream_type).toBe('webrtc');
     });
 
-    it('handles timeout_seconds edge cases: ignores zero, negative, and non-numeric', () => {
-      expect(parseLiveViewConfig({ timeout_seconds: 0 }).timeout_seconds).toBeUndefined();
-      expect(parseLiveViewConfig({ timeout_seconds: -10 }).timeout_seconds).toBeUndefined();
-      expect(parseLiveViewConfig({ timeout_seconds: 'abc' }).timeout_seconds).toBeUndefined();
-      expect(parseLiveViewConfig({ timeout_seconds: '30' }).timeout_seconds).toBe(30);
+    it.each([
+      { input: { timeout_seconds: 0 }, want: undefined },
+      { input: { timeout_seconds: -10 }, want: undefined },
+      { input: { timeout_seconds: 'abc' }, want: undefined },
+      { input: { timeout_seconds: '30' }, want: 30 },
+    ])('handles timeout_seconds ($input.timeout_seconds)', ({ input, want }) => {
+      expect(parseLiveViewConfig(input).timeout_seconds).toBe(want);
     });
 
     it('parses refresh_interval_seconds, background_refresh_interval_seconds, and stagger_index with mjpeg defaults', () => {
@@ -738,14 +740,8 @@ describe('LiveViewWidget component', () => {
 
   it('constructs MediaStream with the track when the streams array is empty', async () => {
     const originalMediaStream = window.MediaStream;
-    class MockStream {
-      tracks: unknown[] = [];
-      constructor(tracks?: unknown[]) {
-        if (tracks) this.tracks = [...tracks];
-      }
-    }
     // @ts-expect-error mock MediaStream
-    window.MediaStream = MockStream;
+    window.MediaStream = MockMediaStream;
 
     try {
       seedLiveView({
@@ -760,14 +756,14 @@ describe('LiveViewWidget component', () => {
       });
 
       const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
-      const fakeTrack = { id: 'track-1', kind: 'video' } as MediaStreamTrack;
+      const fakeTrack = createFakeTrack('video', 'track-1');
 
       act(() => {
         lastPeerConnection?.ontrack?.({ streams: [], track: fakeTrack });
       });
 
-      expect(video.srcObject).toBeInstanceOf(MockStream);
-      expect((video.srcObject as unknown as MockStream).tracks).toContain(fakeTrack);
+      expect(video.srcObject).toBeInstanceOf(MockMediaStream);
+      expect((video.srcObject as unknown as MockMediaStream).tracks).toContain(fakeTrack);
     } finally {
       window.MediaStream = originalMediaStream;
     }

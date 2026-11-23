@@ -1352,12 +1352,10 @@ describe('HomeAssistantWidget', () => {
     { name: 'unknown domain is unchanged', state: 'off', domain: 'sensor', service: 'update', data: undefined, wantState: 'off', wantAttrs: {} },
   ];
 
-  for (const tc of applyOptimisticUpdateTests) {
-    it(`applyOptimisticUpdate: ${tc.name}`, () => {
-      const curr = { entity_id: `${tc.domain}.alpha`, state: tc.state, attributes: {} };
-      expect(applyOptimisticUpdate(curr, tc.domain, tc.service, tc.data)).toEqual({ ...curr, state: tc.wantState, attributes: tc.wantAttrs });
-    });
-  }
+  it.each(applyOptimisticUpdateTests)('applyOptimisticUpdate: $name', (tc) => {
+    const curr = { entity_id: `${tc.domain}.alpha`, state: tc.state, attributes: {} };
+    expect(applyOptimisticUpdate(curr, tc.domain, tc.service, tc.data)).toEqual({ ...curr, state: tc.wantState, attributes: tc.wantAttrs });
+  });
 
   const formatStateLabelTests = [
     { name: 'light on with brightness', domain: 'light', state: 'on', attrs: { brightness: 255 }, want: 'On · 100%' },
@@ -1380,11 +1378,9 @@ describe('HomeAssistantWidget', () => {
     { name: 'other domain returns state', domain: 'lock', state: 'locked', attrs: undefined, want: 'locked' },
   ];
 
-  for (const tc of formatStateLabelTests) {
-    it(`formatStateLabel: ${tc.name}`, () => {
-      expect(formatStateLabel(tc.domain, tc.state, tc.attrs)).toBe(tc.want);
-    });
-  }
+  it.each(formatStateLabelTests)('formatStateLabel: $name', (tc) => {
+    expect(formatStateLabel(tc.domain, tc.state, tc.attrs)).toBe(tc.want);
+  });
 
   const getBinaryLabelTests = [
     { isOn: true, dc: 'door', want: 'Open' },
@@ -1403,11 +1399,9 @@ describe('HomeAssistantWidget', () => {
     { isOn: false, dc: undefined, want: 'Off' },
   ];
 
-  for (const tc of getBinaryLabelTests) {
-    it(`getBinaryLabel(${tc.isOn}, ${tc.dc}) is ${tc.want}`, () => {
-      expect(getBinaryLabel(tc.isOn, tc.dc)).toBe(tc.want);
-    });
-  }
+  it.each(getBinaryLabelTests)('getBinaryLabel($isOn, $dc) is $want', (tc) => {
+    expect(getBinaryLabel(tc.isOn, tc.dc)).toBe(tc.want);
+  });
 
   it('covers inFlight state rendering and disabled interactions', async () => {
     let resolveAction!: (v: unknown) => void;

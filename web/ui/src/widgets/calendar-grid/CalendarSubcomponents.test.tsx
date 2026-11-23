@@ -1416,25 +1416,27 @@ describe('useCalendarRangeData & useInactivityReset', () => {
 
   describe('Special Day Highlights & Event Flairs', () => {
     describe('detectEventFlair', () => {
-      it('correctly classifies keyword-matched titles', () => {
-        expect(detectEventFlair("Maya's Birthday")).toBe('birthday');
-        expect(detectEventFlair('Sam Bday Bash')).toBe('birthday');
-        expect(detectEventFlair('Grandpa B-day')).toBe('birthday');
-        expect(detectEventFlair('Graduation Party')).toBe('party');
-        expect(detectEventFlair('Dentist Appointment')).toBe('dentist');
-        expect(detectEventFlair('Orthodontist Visit')).toBe('dentist');
-        expect(detectEventFlair('Movie Night')).toBe('movie');
-        expect(detectEventFlair('Film Screening')).toBe('movie');
-        expect(detectEventFlair('Flight to Chicago')).toBe('flight');
-        expect(detectEventFlair('Airline Booking')).toBe('flight');
-        expect(detectEventFlair('Soccer Practice')).toBe('sports');
-        expect(detectEventFlair('Baseball Game')).toBe('sports');
-        expect(detectEventFlair('Thanksgiving Dinner')).toBe('holiday');
-        expect(detectEventFlair('Halloween Trick or Treat')).toBe('holiday');
-        expect(detectEventFlair('Veterans Day')).toBe('holiday');
-        expect(detectEventFlair('Regular Meeting')).toBeNull();
-        expect(detectEventFlair('')).toBeNull();
-        expect(detectEventFlair(undefined)).toBeNull();
+      it.each([
+        { title: "Maya's Birthday", want: 'birthday' },
+        { title: 'Sam Bday Bash', want: 'birthday' },
+        { title: 'Grandpa B-day', want: 'birthday' },
+        { title: 'Graduation Party', want: 'party' },
+        { title: 'Dentist Appointment', want: 'dentist' },
+        { title: 'Orthodontist Visit', want: 'dentist' },
+        { title: 'Movie Night', want: 'movie' },
+        { title: 'Film Screening', want: 'movie' },
+        { title: 'Flight to Chicago', want: 'flight' },
+        { title: 'Airline Booking', want: 'flight' },
+        { title: 'Soccer Practice', want: 'sports' },
+        { title: 'Baseball Game', want: 'sports' },
+        { title: 'Thanksgiving Dinner', want: 'holiday' },
+        { title: 'Halloween Trick or Treat', want: 'holiday' },
+        { title: 'Veterans Day', want: 'holiday' },
+        { title: 'Regular Meeting', want: null },
+        { title: '', want: null },
+        { title: undefined, want: null },
+      ])('classifies "$title" as $want', ({ title, want }) => {
+        expect(detectEventFlair(title)).toBe(want);
       });
     });
 

@@ -554,7 +554,7 @@ func TestProviderCoordinator_ConfigAndOptionsResolution(t *testing.T) {
 	}
 }
 
-func TestProviderCoordinator_ShutdownEdgeCases(t *testing.T) {
+func TestProviderCoordinator_Shutdown(t *testing.T) {
 	t.Parallel()
 	coord := newCoord(regTypes("edge-type"), nil, nil, mkSnap("", nil, mkWidget("edge-tile", "edge-type", 30, nil)))
 	canceledCtx, cancel := context.WithCancel(context.Background())

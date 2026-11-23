@@ -51,61 +51,46 @@ func TestLoader_WholePackageOverride(t *testing.T) {
 	}
 }
 
-func TestLoader_LoadPackageErrorsAndEdgeCases(t *testing.T) {
+func TestLoader_LoadPackage(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, pkgName, manifest, view, wantErr string
-		inCustom                               bool
-	}{
-		{"missing_manifest", "bad", "", "<div></div>", "missing required file manifest.yaml", true},
-		{"missing_view", "bad", weatherManifest, "", "missing required file manifest.yaml (or views/widget.html)", true},
-		{"yaml_syntax_error", "bad-yaml", "name: [unclosed", "<div></div>", "manifest syntax error", false},
-		{"disallowed_default", "has-default", defaultManifest, "<div></div>", "declares disallowed keyword 'default'", false},
-		{"hidden_dirs_skipped", ".git", "", "", "not found", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	type testCase struct {
+		name, pkgName, manifest, view, wantSource, wantErr string
+		inCustom                                           bool
+	}
+	tc := func(name, pkgName, manifest, view, wantSource, wantErr string, inCustom bool) testCase {
+		return testCase{name: name, pkgName: pkgName, manifest: manifest, view: view, wantSource: wantSource, wantErr: wantErr, inCustom: inCustom}
+	}
+	tests := []testCase{
+		tc("custom", "custom-w", weatherManifest, "<div></div>", "custom", "", true),
+		tc("builtin", "builtin-w", calManifest, "<div></div>", "builtin", "", false),
+		tc("missing", "non-existent", "", "", "", "not found", false),
+		tc("hidden", ".hidden", "", "", "", "not found", false),
+		tc("missing_manifest", "bad-no-manifest", "", "<div></div>", "", "missing required file manifest.yaml", true),
+		tc("missing_view", "bad-no-view", weatherManifest, "", "", "missing required file manifest.yaml (or views/widget.html)", true),
+		tc("yaml_syntax_error", "bad-yaml", "name: [unclosed", "<div></div>", "", "manifest syntax error", false),
+		tc("disallowed_default", "has-default", defaultManifest, "<div></div>", "", "declares disallowed keyword 'default'", false),
+		tc("hidden_dirs_skipped", ".git", "", "", "", "not found", true),
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			tmp := t.TempDir()
 			b, c := filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
 			_ = os.MkdirAll(b, 0o755)
 			_ = os.MkdirAll(c, 0o755)
-			if tc.pkgName == ".git" {
+			if tt.pkgName == ".git" {
 				_ = os.MkdirAll(filepath.Join(c, ".git"), 0o755)
-			} else {
+			} else if tt.manifest != "" || tt.view != "" {
 				dir := b
-				if tc.inCustom {
+				if tt.inCustom {
 					dir = c
 				}
-				createPackageFixture(t, dir, tc.pkgName, tc.manifest, tc.view, false)
+				createPackageFixture(t, dir, tt.pkgName, tt.manifest, tt.view, false)
 			}
 			loader := widget.NewLoader(b, c)
-			pkg, err := loader.LoadPackage(tc.pkgName)
-			if (err != nil) != (tc.wantErr != "") || (tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr)) {
-				t.Fatalf("LoadPackage(%q) = (%v, %v), wantErr=%q", tc.pkgName, pkg, err, tc.wantErr)
-			}
-		})
-	}
-}
-
-func TestLoader_LoadPackage(t *testing.T) {
-	t.Parallel()
-	tmp := t.TempDir()
-	b, c := filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
-	createPackageFixture(t, b, "builtin-w", calManifest, "<div></div>", false)
-	createPackageFixture(t, c, "custom-w", weatherManifest, "<div></div>", false)
-
-	loader := widget.NewLoader(b, c)
-	for _, tc := range []struct{ name, pkgType, wantSource, wantErr string }{
-		{"custom", "custom-w", "custom", ""},
-		{"builtin", "builtin-w", "builtin", ""},
-		{"missing", "non-existent", "", "not found"},
-		{"hidden", ".hidden", "", "not found"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			pkg, err := loader.LoadPackage(tc.pkgType)
-			if (err != nil) != (tc.wantErr != "") || (tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr)) || (err == nil && pkg.Source != tc.wantSource) {
-				t.Fatalf("LoadPackage(%q) = (%v, %v), want source=%q, err=%q", tc.pkgType, pkg, err, tc.wantSource, tc.wantErr)
+			pkg, err := loader.LoadPackage(tt.pkgName)
+			if (err != nil) != (tt.wantErr != "") || (tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr)) || (err == nil && pkg.Source != tt.wantSource) {
+				t.Fatalf("LoadPackage(%q) = (%v, %v), want source=%q, err=%q", tt.pkgName, pkg, err, tt.wantSource, tt.wantErr)
 			}
 		})
 	}

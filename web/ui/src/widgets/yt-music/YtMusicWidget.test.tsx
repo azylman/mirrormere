@@ -442,14 +442,39 @@ describe('YtMusicWidget', () => {
     });
   });
 
-  it('handles idle play fallback to first queue item when no track loaded', async () => {
+  it.each([
+    {
+      name: 'first queue item when no track loaded',
+      stateOverrides: { now_playing: {} },
+      expectedUrl: '/music/control',
+      verify: (b: Record<string, unknown>) => b.action === 'play_index' && b.index === 0,
+    },
+    {
+      name: 'first playlist when queue is empty',
+      stateOverrides: { now_playing: {}, queue: [] },
+      expectedUrl: '/music/play',
+      verify: (b: Record<string, unknown>) => b.playlist_id === 'PL_favorites',
+    },
+    {
+      name: 'first suggestion when queue and playlists are empty',
+      stateOverrides: { now_playing: {}, queue: [], playlists: [] },
+      expectedUrl: '/music/play',
+      verify: (b: Record<string, unknown>) => b.playlist_id === 'PL_supermix',
+    },
+    {
+      name: 'default suggestion when suggestions, queue, and playlists are empty',
+      stateOverrides: { now_playing: {}, queue: [], playlists: [], suggestions: [] },
+      expectedUrl: '/music/play',
+      verify: (b: Record<string, unknown>) => b.playlist_id === itemAt(DEFAULT_SUGGESTIONS, 0).playlist_id,
+    },
+  ])('handles idle play fallback to $name', async ({ stateOverrides, expectedUrl, verify }) => {
     fetchMock.mockImplementation(async (url: string | URL | Request) => {
       const urlStr = String(url);
       if (urlStr.includes('/music/state')) {
-        return new Response(JSON.stringify({ ...mockIdleState, now_playing: {} }), { status: 200 });
+        return new Response(JSON.stringify({ ...mockIdleState, ...stateOverrides }), { status: 200 });
       }
-      if (urlStr.includes('/music/control')) {
-        return new Response(JSON.stringify({ state: { ...mockIdleState, now_playing: { title: 'Starboy', state: 'playing' } } }), { status: 200 });
+      if (urlStr.includes('/music/control') || urlStr.includes('/music/play')) {
+        return new Response(JSON.stringify({ state: { ...mockIdleState, now_playing: { title: 'Loaded', state: 'playing' } } }), { status: 200 });
       }
       return new Response('{}', { status: 200 });
     });
@@ -458,79 +483,10 @@ describe('YtMusicWidget', () => {
     fireEvent.click(container.querySelector('#btn-play')!);
     await waitFor(() => {
       const call = fetchMock.mock.calls.find((c) => {
-        if (!String(c[0]).includes('/music/control')) return false;
+        if (!String(c[0]).includes(expectedUrl)) return false;
         const b = JSON.parse(String(c[1]?.body ?? '{}'));
-        return b.action === 'play_index' && b.index === 0;
+        return verify(b);
       });
-      expect(call).toBeDefined();
-    });
-  });
-
-  it('handles idle play fallback to first playlist when queue is empty', async () => {
-    fetchMock.mockImplementation(async (url: string | URL | Request) => {
-      const urlStr = String(url);
-      if (urlStr.includes('/music/state')) {
-        return new Response(JSON.stringify({ ...mockIdleState, now_playing: {}, queue: [] }), { status: 200 });
-      }
-      if (urlStr.includes('/music/play')) {
-        return new Response(JSON.stringify({ state: { ...mockIdleState, now_playing: { title: 'Daily Drive', state: 'playing' } } }), { status: 200 });
-      }
-      return new Response('{}', { status: 200 });
-    });
-    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
-    await waitFor(() => { expect(container.querySelector('#account-picker')).not.toBeNull(); });
-    fireEvent.click(container.querySelector('#btn-play')!);
-    await waitFor(() => {
-      const call = fetchMock.mock.calls.find((c) => {
-        if (!String(c[0]).includes('/music/play')) return false;
-        const b = JSON.parse(String(c[1]?.body ?? '{}'));
-        return b.playlist_id === 'PL_favorites';
-      });
-      expect(call).toBeDefined();
-    });
-  });
-
-  it('handles idle play fallback to first suggestion when queue and playlists are empty', async () => {
-    fetchMock.mockImplementation(async (url: string | URL | Request) => {
-      const urlStr = String(url);
-      if (urlStr.includes('/music/state')) {
-        return new Response(JSON.stringify({ ...mockIdleState, now_playing: {}, queue: [], playlists: [] }), { status: 200 });
-      }
-      if (urlStr.includes('/music/play')) {
-        return new Response(JSON.stringify({ state: { ...mockIdleState, now_playing: { title: 'My Supermix', state: 'playing' } } }), { status: 200 });
-      }
-      return new Response('{}', { status: 200 });
-    });
-    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
-    await waitFor(() => { expect(container.querySelector('#account-picker')).not.toBeNull(); });
-    fireEvent.click(container.querySelector('#btn-play')!);
-    await waitFor(() => {
-      const call = fetchMock.mock.calls.find((c) => {
-        if (!String(c[0]).includes('/music/play')) return false;
-        const b = JSON.parse(String(c[1]?.body ?? '{}'));
-        return b.playlist_id === 'PL_supermix';
-      });
-      expect(call).toBeDefined();
-    });
-  });
-
-  it('handles idle play fallback to default suggestion when suggestions, queue, and playlists are empty', async () => {
-    fetchMock.mockImplementation(async (url: string | URL | Request) => {
-      const urlStr = String(url);
-      if (urlStr.includes('/music/state')) {
-        return new Response(JSON.stringify({ ...mockIdleState, now_playing: {}, queue: [], playlists: [], suggestions: [] }), { status: 200 });
-      }
-      return new Response('{}', { status: 200 });
-    });
-    const { container } = renderWidget(YtMusicWidget, 'yt-1', 'yt-music');
-    await waitFor(() => { expect(container.querySelector('#account-picker')).not.toBeNull(); });
-    fireEvent.click(container.querySelector('#btn-play')!);
-    await waitFor(() => {
-      const call = fetchMock.mock.calls.find(
-        (c) =>
-          String(c[0]).includes('/music/play') &&
-          JSON.parse(String(c[1]?.body)).playlist_id === itemAt(DEFAULT_SUGGESTIONS, 0).playlist_id
-      );
       expect(call).toBeDefined();
     });
   });

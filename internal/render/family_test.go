@@ -144,12 +144,9 @@ func buildFamilyViewBasicCases() []buildFamilyViewTestCase {
 				mkCalEv("evt_light", "school", "Light bg", "2026-09-27T15:00:00Z", "2026-09-27T16:00:00Z", false),
 			),
 			exp: buildFamilyViewExpectations{
-				daysCount:       7,
-				rangeLabel:      "Sep 27 – Oct 3",
-				dayTimedCount:   map[int]int{0: 2},
-				dayAllDayCount:  map[int]int{0: 1},
-				dayIsToday:      map[int]bool{0: true, 3: false},
-				dayIsWeekend:    map[int]bool{0: true, 3: false, 6: true},
+				daysCount: 7, rangeLabel: "Sep 27 – Oct 3",
+				dayTimedCount: map[int]int{0: 2}, dayAllDayCount: map[int]int{0: 1},
+				dayIsToday: map[int]bool{0: true, 3: false}, dayIsWeekend: map[int]bool{0: true, 3: false, 6: true},
 				eventOwners:     map[string][]string{"evt_1": {"Alpha"}},
 				eventColors:     map[string]string{"evt_1": "#E07A5F", "evt_2": "#3D405B", "evt_light": "#81B29A"},
 				eventTextColors: map[string]string{"evt_1": "#ffffff", "evt_2": "#ffffff", "evt_light": "#000000"},
@@ -286,12 +283,8 @@ func buildFamilyViewAdvancedCases(pdtLoc *time.Location) []buildFamilyViewTestCa
 			name: "time_format 12h produces 12-hour hour markers and timeline markers",
 			cfg:  withFamilyCfg(map[string]any{"time_format": "12h"}),
 			exp: buildFamilyViewExpectations{
-				daysCount: 7,
-				hourMarkers: []string{
-					"7am", "8am", "9am", "10am", "11am", "12pm",
-					"1pm", "2pm", "3pm", "4pm", "5pm", "6pm",
-					"7pm", "8pm", "9pm",
-				},
+				daysCount:   7,
+				hourMarkers: []string{"7am", "8am", "9am", "10am", "11am", "12pm", "1pm", "2pm", "3pm", "4pm", "5pm", "6pm", "7pm", "8pm", "9pm"},
 				timelineMarkers: []TimelineMarker{
 					{Label: "7am", TopPct: 0, IsStart: true},
 					{Label: "8am", TopPct: 7.14},

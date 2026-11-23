@@ -103,30 +103,9 @@ func TestPhotos_ParsePhotosConfig(t *testing.T) {
 	}{
 		{name: "nil", cfg: nil, wantErr: "photo-carousel: configuration is required"},
 		{name: "missing_albums", cfg: map[string]any{}, wantErr: "photo-carousel: 'albums' is required"},
-		{
-			name:    "legacy_keys_rejected",
-			cfg:     map[string]any{"source": "share_url", "album_url": "https://example.com"},
-			wantErr: "photo-carousel: legacy single-album configuration ('source', 'album_url', 'share_url') is no longer supported; please migrate to 'albums: [{name, source, url/url_env}]'",
-		},
-		{
-			name: "share_url",
-			cfg: map[string]any{
-				"cache_dir": "/tmp/photos",
-				"albums": []any{
-					map[string]any{"name": "A1", "source": "share_url", "url": "https://photos.app.goo.gl/TEST"},
-				},
-			},
-			wantSource: "share_url", wantAlbumURL: "https://photos.app.goo.gl/TEST", wantCacheDir: "/tmp/photos",
-		},
-		{
-			name: "ember_env",
-			cfg: map[string]any{
-				"albums": []any{
-					map[string]any{"name": "A2", "source": "ember_bridge", "url_env": "ALBUM_ENV"},
-				},
-			},
-			wantSource: "ember_bridge", wantAlbumURLEnv: "ALBUM_ENV",
-		},
+		{name: "legacy_keys_rejected", cfg: map[string]any{"source": "share_url", "album_url": "https://example.com"}, wantErr: "photo-carousel: legacy single-album configuration ('source', 'album_url', 'share_url') is no longer supported; please migrate to 'albums: [{name, source, url/url_env}]'"},
+		{name: "share_url", cfg: map[string]any{"cache_dir": "/tmp/photos", "albums": []any{map[string]any{"name": "A1", "source": "share_url", "url": "https://photos.app.goo.gl/TEST"}}}, wantSource: "share_url", wantAlbumURL: "https://photos.app.goo.gl/TEST", wantCacheDir: "/tmp/photos"},
+		{name: "ember_env", cfg: map[string]any{"albums": []any{map[string]any{"name": "A2", "source": "ember_bridge", "url_env": "ALBUM_ENV"}}}, wantSource: "ember_bridge", wantAlbumURLEnv: "ALBUM_ENV"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -158,31 +137,11 @@ func TestPhotos_ParseMediaItem(t *testing.T) {
 		{name: "info_not_array", in: []any{"id", "not-an-array"}},
 		{name: "info_empty", in: []any{"id", []any{}}},
 		{name: "info_no_dims", in: []any{"id", []any{"https://example.com/pic.jpg"}}},
-		{
-			name:   "generated_id_and_color",
-			in:     []any{"", []any{"https://lh3.googleusercontent.com/pw/TEST", 800, 600, nil, nil, nil, nil, nil, nil, []any{3549993}}},
-			wantOK: true, wantIDPrefix: "photo_", wantAspect: 1.33, wantColor: "#362b29",
-		},
-		{
-			name:   "photo",
-			in:     []any{"p1", []any{"https://lh3.googleusercontent.com/pw/P1", 800, 600}, 1755268200000},
-			wantOK: true, wantIDPrefix: "p1", wantAspect: 1.33,
-		},
-		{
-			name:   "video_mime",
-			in:     []any{"v1", []any{"https://lh3.googleusercontent.com/pw/V1", 1920, 1080}, 1755268200000, []any{"video/mp4", 30000}},
-			wantOK: true, wantIDPrefix: "v1", wantAspect: 1.78, wantMediaType: "video",
-		},
-		{
-			name:   "video_extension",
-			in:     []any{"v2", []any{"https://lh3.googleusercontent.com/pw/V2", 1920, 1080}, 1755268200000, "clip.mp4"},
-			wantOK: true, wantIDPrefix: "v2", wantAspect: 1.78, wantMediaType: "video",
-		},
-		{
-			name:   "gif",
-			in:     []any{"g1", []any{"https://lh3.googleusercontent.com/pw/G1", 800, 600}, 1755268200000, map[string]any{"filename": "PXL_20261111-ANIMATION.gif"}},
-			wantOK: true, wantIDPrefix: "g1", wantAspect: 1.33, wantMediaType: "gif",
-		},
+		{name: "generated_id_and_color", in: []any{"", []any{"https://lh3.googleusercontent.com/pw/TEST", 800, 600, nil, nil, nil, nil, nil, nil, []any{3549993}}}, wantOK: true, wantIDPrefix: "photo_", wantAspect: 1.33, wantColor: "#362b29"},
+		{name: "photo", in: []any{"p1", []any{"https://lh3.googleusercontent.com/pw/P1", 800, 600}, 1755268200000}, wantOK: true, wantIDPrefix: "p1", wantAspect: 1.33},
+		{name: "video_mime", in: []any{"v1", []any{"https://lh3.googleusercontent.com/pw/V1", 1920, 1080}, 1755268200000, []any{"video/mp4", 30000}}, wantOK: true, wantIDPrefix: "v1", wantAspect: 1.78, wantMediaType: "video"},
+		{name: "video_extension", in: []any{"v2", []any{"https://lh3.googleusercontent.com/pw/V2", 1920, 1080}, 1755268200000, "clip.mp4"}, wantOK: true, wantIDPrefix: "v2", wantAspect: 1.78, wantMediaType: "video"},
+		{name: "gif", in: []any{"g1", []any{"https://lh3.googleusercontent.com/pw/G1", 800, 600}, 1755268200000, map[string]any{"filename": "PXL_20261111-ANIMATION.gif"}}, wantOK: true, wantIDPrefix: "g1", wantAspect: 1.33, wantMediaType: "gif"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -645,28 +604,12 @@ func TestPhotosProvider_IngestPushedPhotos(t *testing.T) {
 		wantTotal     int
 		wantAlbumURL  string
 	}{
-		{
-			name:    "share_url_rejects_push",
-			cfg:     map[string]any{"albums": []any{map[string]any{"name": "Share", "source": "share_url", "url": "https://photos.app.goo.gl/share"}}},
-			pushes:  []photosPush{{[]string{"https://lh3.googleusercontent.com/pw/VALID"}, "Test"}},
-			wantErr: ErrPhotoPushNotSupported,
-		},
+		{name: "share_url_rejects_push", cfg: map[string]any{"albums": []any{map[string]any{"name": "Share", "source": "share_url", "url": "https://photos.app.goo.gl/share"}}}, pushes: []photosPush{{[]string{"https://lh3.googleusercontent.com/pw/VALID"}, "Test"}}, wantErr: ErrPhotoPushNotSupported},
 		{name: "empty_payload", cfg: emberCfg, pushes: []photosPush{{nil, "Empty"}}, wantErr: ErrInvalidPhotoPushPayload},
 		{name: "bad_url", cfg: emberCfg, pushes: []photosPush{{[]string{"https://notgoogle.com/pic.jpg"}, "BadURL"}}, wantErr: ErrInvalidPhotoPushPayload},
-		{
-			name: "dedupes_urls", cfg: emberCfg, pushes: []photosPush{{validURLs, "Custom Album"}},
-			wantAlbumName: "Custom Album", wantTotal: 2, wantAlbumURL: "https://photos.app.goo.gl/ember",
-		},
-		{
-			name: "blank_name_keeps_cached", cfg: emberCfg,
-			pushes:        []photosPush{{validURLs, "Custom Album"}, {[]string{"https://lh3.googleusercontent.com/pw/VALID3"}, "  "}},
-			wantAlbumName: "Custom Album", wantTotal: 1, wantAlbumURL: "https://photos.app.goo.gl/ember",
-		},
-		{
-			name: "mixed_albums", cfg: mixedCfg, seedFirst: []PhotoItem{{ID: "share_p1", URL: "https://lh3.googleusercontent.com/pw/SHARE1"}},
-			pushes:        []photosPush{{[]string{"https://lh3.googleusercontent.com/pw/PUSHED1"}, ""}},
-			wantAlbumName: "Shared 1, Pushed 1", wantTotal: 2, wantAlbumURL: "https://photos.app.goo.gl/ember1",
-		},
+		{name: "dedupes_urls", cfg: emberCfg, pushes: []photosPush{{validURLs, "Custom Album"}}, wantAlbumName: "Custom Album", wantTotal: 2, wantAlbumURL: "https://photos.app.goo.gl/ember"},
+		{name: "blank_name_keeps_cached", cfg: emberCfg, pushes: []photosPush{{validURLs, "Custom Album"}, {[]string{"https://lh3.googleusercontent.com/pw/VALID3"}, "  "}}, wantAlbumName: "Custom Album", wantTotal: 1, wantAlbumURL: "https://photos.app.goo.gl/ember"},
+		{name: "mixed_albums", cfg: mixedCfg, seedFirst: []PhotoItem{{ID: "share_p1", URL: "https://lh3.googleusercontent.com/pw/SHARE1"}}, pushes: []photosPush{{[]string{"https://lh3.googleusercontent.com/pw/PUSHED1"}, ""}}, wantAlbumName: "Shared 1, Pushed 1", wantTotal: 2, wantAlbumURL: "https://photos.app.goo.gl/ember1"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1042,6 +985,21 @@ func TestPhotos_ParseBatchexecuteResponse(t *testing.T) {
 	}
 }
 
+type safePhotosTransport struct {
+	base http.RoundTripper
+}
+
+func (s safePhotosTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return s.base.RoundTrip(req)
+}
+
+func photosTestClient() *http.Client {
+	return &http.Client{
+		Transport: safePhotosTransport{base: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+}
+
 func TestPhotos_FetchBatchexecutePage(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -1057,11 +1015,13 @@ func TestPhotos_FetchBatchexecutePage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			albumURL := photosClosedURL(t)
+			client := photosTestClient()
 			if tc.route != nil {
 				srv, _ := testutil.RouteServer(t, map[string]testutil.Route{photosBatchexecutePath: *tc.route})
 				albumURL = srv.URL
+				client = srv.Client()
 			}
-			_, _, err := fetchBatchexecutePage(context.Background(), &http.Client{}, albumURL, "key", "token", "auth")
+			_, _, err := fetchBatchexecutePage(context.Background(), client, albumURL, "key", "token", "auth")
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("err = %v, want containing %q", err, tc.wantErr)
 			}
