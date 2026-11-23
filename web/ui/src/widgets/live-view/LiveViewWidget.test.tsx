@@ -6,7 +6,7 @@ import { resolveCamerasStatusUrl } from './liveViewHelpers';
 import { useDisplayStore } from '../../store';
 import { PaneContext } from '../../carousel/PaneContext';
 import { itemAt } from '../../test-utils/lookup';
-import { FakeRTCPeerConnection, MockMediaStream, createFakeTrack } from '../../test-utils/mediaFakes';
+import { FakeRTCPeerConnection, MockMediaStream, createFakeTrack, installPointerEventPolyfill } from '../../test-utils/mediaFakes';
 import { renderWidget, seedWidget, widgetMeta } from '../../test-utils/widget';
 
 
@@ -163,29 +163,7 @@ describe('LiveViewWidget component', () => {
   const widgetId = 'w-live-1';
   const seedLiveView = (config: Record<string, unknown> = {}) => { seedWidget(widgetId, widgetMeta('live-view', config, [3, 2]), {}); };
 
-  if (typeof window.PointerEvent === 'undefined') {
-    // @ts-expect-error polyfill PointerEvent for JSDOM
-    window.PointerEvent = class PointerEvent extends MouseEvent {
-      pointerId: number;
-      width: number;
-      height: number;
-      pressure: number;
-      pointerType: string;
-      isPrimary: boolean;
-      changedTouches?: { clientX: number; clientY: number }[];
-
-      constructor(type: string, params: PointerEventInit & { changedTouches?: { clientX: number; clientY: number }[] } = {}) {
-        super(type, params);
-        this.pointerId = params.pointerId ?? 0;
-        this.width = params.width ?? 1;
-        this.height = params.height ?? 1;
-        this.pressure = params.pressure ?? 0;
-        this.pointerType = params.pointerType ?? '';
-        this.isPrimary = params.isPrimary ?? false;
-        if (params.changedTouches) this.changedTouches = params.changedTouches;
-      }
-    };
-  }
+  installPointerEventPolyfill();
 
   let originalPeerConnection: typeof RTCPeerConnection;
   let originalFetch: typeof globalThis.fetch;
@@ -444,7 +422,7 @@ describe('LiveViewWidget component', () => {
     }
   });
 
-  it('tears down decoders and clears loading when videoMode becomes "video", and resumes on "widgets"', async () => {
+  it('tears down decoders when videoMode becomes "video", and resumes when "widgets"', async () => {
     seedLiveView({
       stream_url: 'https://cam.example.com/webrtc',
       stream_type: 'webrtc',
@@ -457,7 +435,7 @@ describe('LiveViewWidget component', () => {
     });
     const activePc = lastPeerConnection;
 
-    // Switch to fullscreen video mode
+    // Switch videoMode to video
     act(() => {
       useDisplayStore.setState({
         video: {
@@ -472,14 +450,18 @@ describe('LiveViewWidget component', () => {
       });
     });
 
-    expect(activePc?.closed).toBe(true);
     const root = container.querySelector('.widget-live-view');
     expect(root?.classList.contains('loading')).toBe(false);
+    expect(activePc?.closed).toBe(true);
 
-    // Return to widgets dashboard mode
+    // Switch back to widgets mode
     act(() => {
       useDisplayStore.setState({
-        video: { mode: 'widgets', primary: null, pip: null },
+        video: {
+          mode: 'widgets',
+          primary: null,
+          pip: null,
+        },
       });
     });
 
@@ -712,31 +694,6 @@ describe('LiveViewWidget component', () => {
     expect(globalThis.fetch).toHaveBeenCalledWith('https://cam.example.com/webrtc', expect.anything());
   });
 
-  it('aborts ICE gathering wait when component is unmounted', async () => {
-    let peerInstance: FakeRTCPeerConnection | null = null;
-    // @ts-expect-error mock RTCPeerConnection
-    window.RTCPeerConnection = function () {
-      const pc = new FakeRTCPeerConnection();
-      pc.iceGatheringState = 'gathering';
-      peerInstance = pc;
-      lastPeerConnection = pc;
-      return pc;
-    };
-
-    seedLiveView({
-      stream_url: 'https://cam.example.com/webrtc',
-      stream_type: 'webrtc',
-    });
-
-    const { unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
-
-    await vi.waitFor(() => {
-      expect(peerInstance).not.toBeNull();
-    });
-
-    unmount();
-    expect(peerInstance!.closed).toBe(true);
-  });
 
   it('constructs MediaStream with the track when the streams array is empty', async () => {
     const originalMediaStream = window.MediaStream;
@@ -915,6 +872,32 @@ describe('LiveViewWidget component', () => {
     warnSpy.mockRestore();
   });
 
+  it('aborts ICE gathering wait when component is unmounted', async () => {
+    let peerInstance: FakeRTCPeerConnection | null = null;
+    // @ts-expect-error mock RTCPeerConnection
+    window.RTCPeerConnection = function () {
+      const pc = new FakeRTCPeerConnection();
+      pc.iceGatheringState = 'gathering';
+      peerInstance = pc;
+      lastPeerConnection = pc;
+      return pc;
+    };
+
+    seedLiveView({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
+    });
+
+    const { unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
+
+    await vi.waitFor(() => {
+      expect(peerInstance).not.toBeNull();
+    });
+
+    unmount();
+    expect(peerInstance!.closed).toBe(true);
+  });
+
   it('closes RTCPeerConnection if unmounted while SDP exchange is in flight', async () => {
     let resolveSdp!: (res: Response) => void;
     const sdpPromise = new Promise<Response>((resolve) => {
@@ -975,6 +958,49 @@ describe('LiveViewWidget component', () => {
 
     unmount();
     resolveRemote();
+    expect(pc.closed).toBe(true);
+  });
+
+  it('closes pc and returns early if unmounted during SDP answer text resolution', async () => {
+    let resolveText: (v: string) => void = () => {};
+    const textPromise = new Promise<string>((resolve) => {
+      resolveText = resolve;
+    });
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === 'https://cam.example.com/webrtc') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => textPromise,
+        });
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    seedLiveView({
+      stream_url: 'https://cam.example.com/webrtc',
+      stream_type: 'webrtc',
+    });
+
+    const { unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
+
+    await vi.waitFor(() => {
+      expect(lastPeerConnection).not.toBeNull();
+    });
+    const pc = lastPeerConnection!;
+
+    act(() => {
+      pc.iceGatheringState = 'complete';
+      pc.dispatchEvent('icegatheringstatechange');
+    });
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith('https://cam.example.com/webrtc', expect.anything());
+    });
+
+    unmount();
+    resolveText('v=0\r\nanswer');
     expect(pc.closed).toBe(true);
   });
 
@@ -1052,48 +1078,6 @@ describe('LiveViewWidget component', () => {
     expect(root.classList.contains('loading')).toBe(true);
   });
 
-  it('closes pc and returns early if unmounted during SDP answer text resolution', async () => {
-    let resolveText: (v: string) => void = () => {};
-    const textPromise = new Promise<string>((resolve) => {
-      resolveText = resolve;
-    });
-
-    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
-      if (url === 'https://cam.example.com/webrtc') {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          text: () => textPromise,
-        });
-      }
-      return Promise.resolve(new Response('{}', { status: 200 }));
-    });
-
-    seedLiveView({
-      stream_url: 'https://cam.example.com/webrtc',
-      stream_type: 'webrtc',
-    });
-
-    const { unmount } = renderWidget(LiveViewWidget, widgetId, 'live-view');
-
-    await vi.waitFor(() => {
-      expect(lastPeerConnection).not.toBeNull();
-    });
-    const pc = lastPeerConnection!;
-
-    act(() => {
-      pc.iceGatheringState = 'complete';
-      pc.dispatchEvent('icegatheringstatechange');
-    });
-
-    await vi.waitFor(() => {
-      expect(globalThis.fetch).toHaveBeenCalledWith('https://cam.example.com/webrtc', expect.anything());
-    });
-
-    unmount();
-    resolveText('v=0\r\nanswer');
-    expect(pc.closed).toBe(true);
-  });
 
   it('returns early when RTCPeerConnection is unavailable in the environment', () => {
     const origPC = window.RTCPeerConnection;
