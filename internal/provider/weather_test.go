@@ -51,11 +51,14 @@ func makeHourlyDailyJSON(numHours, numDays int, curTime string) []byte {
 	if curTime == "" {
 		curTime = "2026-09-26T12:00"
 	}
-	b, _ := json.Marshal(map[string]any{
+	b, err := json.Marshal(map[string]any{
 		"current": map[string]any{"time": curTime, "temperature_2m": 70.0, "weather_code": 1, "wind_speed_10m": 5.0, "relative_humidity_2m": 50, "apparent_temperature": 69.0},
 		"hourly":  map[string]any{"time": hours, "temperature_2m": temps, "precipitation_probability": probs, "weather_code": codes},
 		"daily":   map[string]any{"time": days, "temperature_2m_max": dMax, "temperature_2m_min": dMin, "weather_code": dCodes, "precipitation_probability_max": dProbs},
 	})
+	if err != nil {
+		panic(err)
+	}
 	return b
 }
 
@@ -83,11 +86,14 @@ func makeMismatchedJSON() []byte {
 			dMin[i], dCodes[i], dProbs[i] = 50.0+float64(i), 0, 5
 		}
 	}
-	b, _ := json.Marshal(map[string]any{
+	b, err := json.Marshal(map[string]any{
 		"current": map[string]any{"temperature_2m": 70.0, "weather_code": 0, "wind_speed_10m": 5.0, "relative_humidity_2m": 50, "apparent_temperature": 69.0},
 		"hourly":  map[string]any{"time": hours, "temperature_2m": temps, "precipitation_probability": probs, "weather_code": codes},
 		"daily":   map[string]any{"time": days, "temperature_2m_max": dMax, "temperature_2m_min": dMin, "weather_code": dCodes, "precipitation_probability_max": dProbs},
 	})
+	if err != nil {
+		panic(err)
+	}
 	return b
 }
 
@@ -347,12 +353,15 @@ func TestWeatherProvider_FetchErrors(t *testing.T) {
 			baseURL := tc.baseURL
 			var client *http.Client
 			if tc.status > 0 {
-				ts, _ := newOpenMeteoServer(t, tc.status, tc.body)
+				ts, captured := newOpenMeteoServer(t, tc.status, tc.body)
+				_ = captured
 				baseURL = ts.URL
 				client = ts.Client()
 			}
 			p := provider.NewWeatherProviderWithClient(client, baseURL)
-			_ = p.Init(context.Background(), wCfg(37.0, -122.0, "", "", ""), provider.InitOptions{})
+			if err := p.Init(context.Background(), wCfg(37.0, -122.0, "", "", ""), provider.InitOptions{}); err != nil {
+				t.Fatalf("Init: %v", err)
+			}
 
 			ctx := context.Background()
 			if tc.cancel {

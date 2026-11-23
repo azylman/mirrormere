@@ -194,7 +194,8 @@ func TestHeaderWeatherPoller_StartStopUpdate(t *testing.T) {
 
 func TestProviderCoordinator_HeaderWeatherPoller_Lifecycle(t *testing.T) {
 	t.Parallel()
-	ts, _ := newOpenMeteoServer(t, 0, sampleHeaderOpenMeteoJSON())
+	ts, captured := newOpenMeteoServer(t, 0, sampleHeaderOpenMeteoJSON())
+	_ = captured
 
 	sink, broadcaster := &mockHeaderSink{}, &eventstest.Broadcaster{}
 	snap := &config.Snapshot{Config: &config.Config{Timezone: "America/Los_Angeles", Display: config.DisplayConfig{

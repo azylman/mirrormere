@@ -81,7 +81,9 @@ func TestTasksProvider_Init(t *testing.T) {
 		"web.json":       `{"web":{"client_id":"wid","client_secret":"wsec"}}`,
 		"bad.json":       "not-json",
 	} {
-		_ = os.WriteFile(filepath.Join(tmpDir, f), []byte(c), 0o600)
+		if err := os.WriteFile(filepath.Join(tmpDir, f), []byte(c), 0o600); err != nil {
+			t.Fatalf("WriteFile %s: %v", f, err)
+		}
 	}
 	tests := []struct {
 		name, wantErrSub string
@@ -121,8 +123,12 @@ func TestTasksProvider_Init(t *testing.T) {
 			if tc.wantErrSub == "" && err != nil {
 				t.Fatalf("unexpected Init error: %v", err)
 			}
-			_ = p.Subscribe(context.Background(), nil)
-			_ = p.Shutdown(context.Background())
+			if err := p.Subscribe(context.Background(), nil); err != nil {
+				t.Fatalf("Subscribe: %v", err)
+			}
+			if err := p.Shutdown(context.Background()); err != nil {
+				t.Fatalf("Shutdown: %v", err)
+			}
 		})
 	}
 }
@@ -148,7 +154,9 @@ func TestTasksProvider_Init_Todoist_EnvFallback(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Init failed: %v", err)
 			}
-			_ = p.Shutdown(context.Background())
+			if err := p.Shutdown(context.Background()); err != nil {
+				t.Fatalf("Shutdown: %v", err)
+			}
 		})
 	}
 }
@@ -276,7 +284,9 @@ func TestTasksProvider_CompleteItem(t *testing.T) {
 				p = provider.NewTasksProvider()
 			} else {
 				p = provider.NewTasksProviderWithAdapter(adapter)
-				_ = p.Init(ctx, map[string]any{"list_id": "list-1"}, provider.InitOptions{ID: "w-tasks"})
+				if err := p.Init(ctx, map[string]any{"list_id": "list-1"}, provider.InitOptions{ID: "w-tasks"}); err != nil {
+					t.Fatalf("Init: %v", err)
+				}
 			}
 
 			err := p.CompleteItem(ctx, tc.itemID)
@@ -295,7 +305,9 @@ func TestTasksProvider_CompleteItem(t *testing.T) {
 	}
 
 	pList := provider.NewTasksProviderWithAdapter(&fakeAdapter{name: "todoist"})
-	_ = pList.Init(context.Background(), map[string]any{"list_id": "upstream-list"}, provider.InitOptions{ID: "w-tasks"})
+	if err := pList.Init(context.Background(), map[string]any{"list_id": "upstream-list"}, provider.InitOptions{ID: "w-tasks"}); err != nil {
+		t.Fatalf("Init pList: %v", err)
+	}
 	if pList.ListID() != "upstream-list" {
 		t.Errorf("expected ListID 'upstream-list', got %q", pList.ListID())
 	}

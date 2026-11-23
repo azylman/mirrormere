@@ -200,11 +200,12 @@ func TestPhotosProvider_FetchErrors(t *testing.T) {
 // a failed forced re-sync keeps serving the last good snapshot.
 func TestPhotosProvider_FetchServesStaleOnSyncFailure(t *testing.T) {
 	t.Parallel()
-	ts, _ := testutil.RouteServer(t, map[string]testutil.Route{"/": {
+	ts, captured := testutil.RouteServer(t, map[string]testutil.Route{"/": {
 		Body:        `<!DOCTYPE html><html><head><title>SWR</title></head><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["swr_1",["https://lh3.googleusercontent.com/pw/SWROK",800,600],1755268200000]]]});</script></body></html>`,
 		ContentType: "text/html",
 		Next:        []testutil.Route{{Status: http.StatusInternalServerError}},
 	}})
+	_ = captured
 	p := provider.NewPhotosProvider()
 	if err := p.Init(context.Background(), testAlbumConfig("share_url", ts.URL), provider.InitOptions{}); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -271,7 +272,9 @@ func assertPhotosProviderEmberAndMalformed(t *testing.T) {
 	}
 	tsMal := provider.NewPhotosHTMLServer(t, `<html><body><script>AF_initDataCallback({key:'ds:1',data:[INVALID JSON...});</script></body></html>`)
 	pMal := provider.NewPhotosProvider()
-	_ = pMal.Init(context.Background(), testAlbumConfig("share_url", tsMal.URL), provider.InitOptions{})
+	if err = pMal.Init(context.Background(), testAlbumConfig("share_url", tsMal.URL), provider.InitOptions{}); err != nil {
+		t.Fatalf("Init pMal failed: %v", err)
+	}
 	resMal, err := pMal.Fetch(context.Background())
 	if err != nil || len(testutil.As[*provider.PhotoSnapshot](t, resMal).Photos) != 0 {
 		t.Fatalf("expected empty photos on malformed JSON, got %v, err=%v", resMal, err)
@@ -346,7 +349,8 @@ func deckWindowRoute(batches [][]string) testutil.Route {
 func runDeckWindowCase(t *testing.T, tc deckWindowTestCase) {
 	t.Helper()
 	t.Parallel()
-	ts, _ := testutil.RouteServer(t, map[string]testutil.Route{"/": deckWindowRoute(tc.pollBatches)})
+	ts, captured := testutil.RouteServer(t, map[string]testutil.Route{"/": deckWindowRoute(tc.pollBatches)})
+	_ = captured
 	p := provider.NewPhotosProvider()
 	if err := p.Init(context.Background(), testAlbumConfig("share_url", ts.URL), provider.InitOptions{}); err != nil {
 		t.Fatalf("Init failed: %v", err)

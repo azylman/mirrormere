@@ -461,7 +461,8 @@ func assertDayExpectations(t *testing.T, view *FamilyViewModel, exp buildFamilyV
 func assertEventProperties(t *testing.T, view *FamilyViewModel, exp buildFamilyViewExpectations) {
 	t.Helper()
 	for evID, wantOwners := range exp.eventOwners {
-		found, _ := findViewEvent(view, evID)
+		found, foundDate := findViewEvent(view, evID)
+		_ = foundDate
 		if found == nil || len(found.Owners) != len(wantOwners) {
 			t.Fatalf("event %q owners = %v, want %v", evID, found, wantOwners)
 		}
@@ -472,22 +473,30 @@ func assertEventProperties(t *testing.T, view *FamilyViewModel, exp buildFamilyV
 		}
 	}
 	for evID, wantColor := range exp.eventColors {
-		if found, _ := findViewEvent(view, evID); found == nil || found.Color != wantColor {
+		found, foundDate := findViewEvent(view, evID)
+		_ = foundDate
+		if found == nil || found.Color != wantColor {
 			t.Errorf("event %q color = %v, want %q", evID, found, wantColor)
 		}
 	}
 	for evID, wantTextColor := range exp.eventTextColors {
-		if found, _ := findViewEvent(view, evID); found == nil || found.TextColor != wantTextColor {
+		found, foundDate := findViewEvent(view, evID)
+		_ = foundDate
+		if found == nil || found.TextColor != wantTextColor {
 			t.Errorf("event %q text_color = %v, want %q", evID, found, wantTextColor)
 		}
 	}
 	for evID, wantPattern := range exp.eventPatterns {
-		if found, _ := findViewEvent(view, evID); found == nil || found.Pattern != wantPattern {
+		found, foundDate := findViewEvent(view, evID)
+		_ = foundDate
+		if found == nil || found.Pattern != wantPattern {
 			t.Errorf("event %q pattern = %v, want %q", evID, found, wantPattern)
 		}
 	}
 	for evID, wantTitle := range exp.eventRedacted {
-		if found, _ := findViewEvent(view, evID); found == nil || found.Title != wantTitle || found.Location != "" || found.Description != wantTitle {
+		found, foundDate := findViewEvent(view, evID)
+		_ = foundDate
+		if found == nil || found.Title != wantTitle || found.Location != "" || found.Description != wantTitle {
 			t.Errorf("event %q redacted = %+v, want %q", evID, found, wantTitle)
 		}
 	}

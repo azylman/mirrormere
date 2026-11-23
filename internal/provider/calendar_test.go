@@ -21,7 +21,8 @@ func icsDoc(events ...string) string {
 // newICSServer serves body as text/calendar at the server root.
 func newICSServer(t *testing.T, body string) *httptest.Server {
 	t.Helper()
-	srv, _ := testutil.RouteServer(t, map[string]testutil.Route{"/": {Body: body, ContentType: "text/calendar"}})
+	srv, captured := testutil.RouteServer(t, map[string]testutil.Route{"/": {Body: body, ContentType: "text/calendar"}})
+	_ = captured
 	return srv
 }
 
@@ -314,7 +315,8 @@ func TestCalendarProvider_FetchErrors(t *testing.T) {
 			if tc.bodyBytes > 0 {
 				body = strings.Repeat("A", tc.bodyBytes)
 			}
-			srv, _ := testutil.RouteServer(t, map[string]testutil.Route{"/cal.ics": {Status: tc.status, Body: body, ContentType: "text/calendar"}})
+			srv, captured := testutil.RouteServer(t, map[string]testutil.Route{"/cal.ics": {Status: tc.status, Body: body, ContentType: "text/calendar"}})
+			_ = captured
 			url := srv.URL + "/cal.ics"
 			if tc.scheme != "" {
 				url = tc.scheme + strings.TrimPrefix(url, "http")
@@ -385,7 +387,8 @@ func TestCalendarProvider_MultiFeedPartial(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			srv, _ := testutil.RouteServer(t, tc.routes)
+			srv, captured := testutil.RouteServer(t, tc.routes)
+			_ = captured
 			calendars := make([]any, len(tc.feeds))
 			for i, f := range tc.feeds {
 				calendars[i] = map[string]any{"name": f.name, "type": f.typ, "url": srv.URL + f.path, "username": "u", "password": "p", "enabled": !f.disabled}
