@@ -6,9 +6,14 @@ const { pathToFileURL } = require('node:url');
 
 const budgetPath = path.join(__dirname, 'budget.json');
 const checkPath = path.join(__dirname, 'check-budget.mjs');
+const benchPath = path.join(__dirname, 'bench.mjs');
 
 async function loadChecker() {
   return import(pathToFileURL(checkPath).href);
+}
+
+async function loadBench() {
+  return import(pathToFileURL(benchPath).href);
 }
 
 const stats = (count, p95, max = p95) => ({ count, p50: p95, p95, max });
@@ -21,7 +26,7 @@ function passingBench() {
     interaction: stats(380, 40),
     frame: stats(290, 16.7, 16.8),
     long_task: stats(1, 79),
-    screen_ready: stats(1, 650),
+    screen_ready: stats(5, 650),
     widget_update: stats(0, null, null),
     long_task_during_swipes: 0,
   };
@@ -56,6 +61,33 @@ test('a bench that dropped swipes fails on the minimum sample count, not on a lu
   const result = checkBudget({ bench, budget, appJsGzipBytes: 78000 }).find((r) => r.name === 'swipe_settle p95');
   assert.equal(result.ok, false);
   assert.match(result.message, /1 samples, at least 15 required/);
+});
+
+test('a bench with fewer than 5 screen_ready samples fails the min_count requirement', async () => {
+  const { checkBudget } = await loadChecker();
+  const budget = JSON.parse(fs.readFileSync(budgetPath, 'utf8'));
+  const bench = passingBench();
+  bench.screen_ready = stats(1, 650);
+  const result = checkBudget({ bench, budget, appJsGzipBytes: 78000 }).find((r) => r.name === 'screen_ready p95');
+  assert.equal(result.ok, false);
+  assert.match(result.message, /1 samples, at least 5 required/);
+});
+
+test('bench parseArgs defaults loads to 5, accepts valid --loads, and rejects invalid values', async () => {
+  const { parseArgs } = await loadBench();
+
+  const defaultOpts = parseArgs(['--url', 'http://localhost:8080/display']);
+  assert.equal(defaultOpts.loads, 5);
+
+  const customOpts = parseArgs(['--url', 'http://localhost:8080/display', '--loads', '7']);
+  assert.equal(customOpts.loads, 7);
+
+  for (const invalid of ['0', '101', 'abc']) {
+    assert.throws(
+      () => parseArgs(['--url', 'http://localhost:8080/display', '--loads', invalid]),
+      /--loads must be an integer between 1 and 100/,
+    );
+  }
 });
 
 test('a metric missing from the bench output fails the count, and a missing long-task key fails', async () => {
