@@ -38,7 +38,9 @@ func TestCoordinator_LifecycleAndUpdateConfig(t *testing.T) {
 		t.Fatalf("unexpected initial state or screen rotate data")
 	}
 
-	_, _ = coord.SelectScreen(2)
+	if _, err := coord.SelectScreen(2); err != nil {
+		t.Fatalf("unexpected select screen error: %v", err)
+	}
 	d2 := coord.UpdateConfig(makeTestSnapshot(2, 15, 60))
 	if coord.CurrentScreen() != 0 || d2.TotalScreens != 2 || d2.IntervalSeconds != 15 {
 		t.Fatalf("expected clamped screen 0 and 2 screens, got cur=%d total=%d", coord.CurrentScreen(), d2.TotalScreens)
@@ -138,7 +140,9 @@ func TestCoordinator_AutoRotateAndPauseTimers(t *testing.T) {
 		t.Fatal("expected idempotent resume")
 	}
 
-	_, _ = coord.PauseRotation(time.Hour)
+	if _, err := coord.PauseRotation(time.Hour); err != nil {
+		t.Fatalf("unexpected pause rotation error: %v", err)
+	}
 	coord.mu.Lock()
 	pGen := coord.pauseGen
 	coord.mu.Unlock()
@@ -191,6 +195,44 @@ func TestCoordinator_AutoRotateAndPauseTimers(t *testing.T) {
 	NewCoordinator(Config{}, makeTestSnapshot(2, 0, 120)).Stop()
 }
 
+func runCoordinatorConcurrencyWorker(t *testing.T, coord *Coordinator, id int) {
+	t.Helper()
+	if id%2 == 0 {
+		if _, err := coord.AdvanceScreen("next"); err != nil && err.Error() != "coordinator stopped" {
+			t.Errorf("AdvanceScreen failed: %v", err)
+		}
+		return
+	}
+	total := 4
+	coord.mu.Lock()
+	if coord.snapshot != nil && coord.snapshot.Layout != nil && coord.snapshot.Layout.TotalScreens > 0 {
+		total = coord.snapshot.Layout.TotalScreens
+	}
+	coord.mu.Unlock()
+	if _, err := coord.SelectScreen(id % total); err != nil && err.Error() != "coordinator stopped" {
+		t.Errorf("SelectScreen failed: %v", err)
+	}
+	if _, err := coord.PauseRotation(10 * time.Millisecond); err != nil && err.Error() != "coordinator stopped" {
+		t.Errorf("PauseRotation failed: %v", err)
+	}
+	if _, err := coord.ResumeRotation(); err != nil && err.Error() != "coordinator stopped" {
+		t.Errorf("ResumeRotation failed: %v", err)
+	}
+}
+
+func assertScreenRotateEventEmitted(t *testing.T, mb *eventstest.Broadcaster, wantScreen int) {
+	t.Helper()
+	for _, evt := range slices.Backward(mb.Events()) {
+		if evt.Type == events.EventScreenRotate {
+			var lastRotate events.ScreenRotateData
+			if err := json.Unmarshal(evt.Data, &lastRotate); err == nil && lastRotate.CurrentScreen == wantScreen {
+				return
+			}
+		}
+	}
+	t.Fatal("expected matching screen.rotate event")
+}
+
 func TestCoordinator_Concurrency(t *testing.T) {
 	t.Parallel()
 	mb := &eventstest.Broadcaster{}
@@ -202,13 +244,7 @@ func TestCoordinator_Concurrency(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			if id%2 == 0 {
-				_, _ = coord.AdvanceScreen("next")
-			} else {
-				_, _ = coord.SelectScreen(id % 4)
-				_, _ = coord.PauseRotation(10 * time.Millisecond)
-				_, _ = coord.ResumeRotation()
-			}
+			runCoordinatorConcurrencyWorker(t, coord, id)
 			runtime.Gosched()
 		}(i)
 	}
@@ -232,19 +268,19 @@ func TestCoordinator_Concurrency(t *testing.T) {
 		coord.mu.Unlock()
 		coord.onRotateTimeout(gen)
 	})
-	runWorker(func() { _, _ = coord.AdvanceScreen("next") })
-	runWorker(func() { _, _ = coord.SelectScreen(1) })
+	runWorker(func() {
+		if _, err := coord.AdvanceScreen("next"); err != nil && err.Error() != "coordinator stopped" {
+			t.Errorf("AdvanceScreen failed: %v", err)
+		}
+	})
+	runWorker(func() {
+		if _, err := coord.SelectScreen(1); err != nil {
+			t.Errorf("SelectScreen failed: %v", err)
+		}
+	})
 	wg.Wait()
 
-	for _, evt := range slices.Backward(mb.Events()) {
-		if evt.Type == events.EventScreenRotate {
-			var lastRotate events.ScreenRotateData
-			if err := json.Unmarshal(evt.Data, &lastRotate); err == nil && lastRotate.CurrentScreen == coord.CurrentScreen() {
-				return
-			}
-		}
-	}
-	t.Fatal("expected matching screen.rotate event")
+	assertScreenRotateEventEmitted(t, mb, coord.CurrentScreen())
 }
 
 func TestCoordinator_ScreenLayout(t *testing.T) {

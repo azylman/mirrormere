@@ -79,6 +79,13 @@ func doVideoReq(h http.HandlerFunc, m, p, b string) *httptest.ResponseRecorder {
 	return rec
 }
 
+func newTestVideoHandler(nilCoord bool, err error, state video.VideoState) *server.DefaultVideoHandler {
+	if nilCoord {
+		return server.NewDefaultVideoHandler(nil)
+	}
+	return server.NewDefaultVideoHandler(&mockVideoCoordinator{state: state, err: err})
+}
+
 func videoHandler(nilCoord bool, err error, state video.VideoState) (*server.DefaultVideoHandler, *mockVideoCoordinator) {
 	if nilCoord {
 		return server.NewDefaultVideoHandler(nil), nil
@@ -109,7 +116,7 @@ func TestDefaultVideoHandler_GetVideoState(t *testing.T) {
 				Primary: &video.VideoStream{ID: "cast", StreamURL: "http://stream", Type: video.TypeWebRTC},
 				Pip:     &video.VideoStream{ID: "pip", StreamURL: "http://pip", Muted: true},
 			}
-			h, _ := videoHandler(tc.nilCoord, nil, state)
+			h := newTestVideoHandler(tc.nilCoord, nil, state)
 			rec := doVideoReq(h.GetVideoState, tc.method, "/api/video/state", "")
 			if rec.Code != tc.wantCode {
 				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
@@ -170,7 +177,7 @@ func TestDefaultVideoHandler_PostVideoDismiss(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h, _ := videoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
+			h := newTestVideoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
 			rec := doVideoReq(h.PostVideoDismiss, tc.method, "/api/video/dismiss", tc.body)
 			if rec.Code != tc.wantCode {
 				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
@@ -197,7 +204,7 @@ func TestDefaultVideoHandler_PostVideoAction(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h, _ := videoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
+			h := newTestVideoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
 			rec := doVideoReq(h.PostVideoAction, tc.method, "/api/video/action", tc.body)
 			if rec.Code != tc.wantCode {
 				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)

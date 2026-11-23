@@ -13,16 +13,26 @@ import (
 func createPackageFixture(t *testing.T, baseDir, widgetType, manifest, view string, hasAssets bool) string {
 	t.Helper()
 	pkgDir := filepath.Join(baseDir, widgetType)
-	_ = os.MkdirAll(filepath.Join(pkgDir, "views"), 0o755)
+	if err := os.MkdirAll(filepath.Join(pkgDir, "views"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
 	if manifest != "" {
-		_ = os.WriteFile(filepath.Join(pkgDir, widget.ManifestFilename), []byte(manifest), 0o644)
+		if err := os.WriteFile(filepath.Join(pkgDir, widget.ManifestFilename), []byte(manifest), 0o644); err != nil {
+			t.Fatalf("WriteFile manifest: %v", err)
+		}
 	}
 	if view != "" {
-		_ = os.WriteFile(filepath.Join(pkgDir, widget.ViewFilename), []byte(view), 0o644)
+		if err := os.WriteFile(filepath.Join(pkgDir, widget.ViewFilename), []byte(view), 0o644); err != nil {
+			t.Fatalf("WriteFile view: %v", err)
+		}
 	}
 	if hasAssets {
-		_ = os.MkdirAll(filepath.Join(pkgDir, widget.AssetsDirname), 0o755)
-		_ = os.WriteFile(filepath.Join(pkgDir, widget.AssetsDirname, "icon.svg"), []byte("<svg></svg>"), 0o644)
+		if err := os.MkdirAll(filepath.Join(pkgDir, widget.AssetsDirname), 0o755); err != nil {
+			t.Fatalf("MkdirAll assets: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(pkgDir, widget.AssetsDirname, "icon.svg"), []byte("<svg></svg>"), 0o644); err != nil {
+			t.Fatalf("WriteFile icon: %v", err)
+		}
 	}
 	return pkgDir
 }
@@ -76,10 +86,16 @@ func TestLoader_LoadPackage(t *testing.T) {
 			t.Parallel()
 			tmp := t.TempDir()
 			b, c := filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
-			_ = os.MkdirAll(b, 0o755)
-			_ = os.MkdirAll(c, 0o755)
+			if err := os.MkdirAll(b, 0o755); err != nil {
+				t.Fatalf("MkdirAll b: %v", err)
+			}
+			if err := os.MkdirAll(c, 0o755); err != nil {
+				t.Fatalf("MkdirAll c: %v", err)
+			}
 			if tt.pkgName == ".git" {
-				_ = os.MkdirAll(filepath.Join(c, ".git"), 0o755)
+				if err := os.MkdirAll(filepath.Join(c, ".git"), 0o755); err != nil {
+					t.Fatalf("MkdirAll .git: %v", err)
+				}
 			} else if tt.manifest != "" || tt.view != "" {
 				dir := b
 				if tt.inCustom {

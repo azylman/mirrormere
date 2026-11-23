@@ -151,21 +151,28 @@ func makeValidWAV(sampleCount int) []byte {
 	return buf
 }
 
-func drainMockWyomingRequest(reader *bufio.Reader) {
+func drainMockWyomingRequest(reader *bufio.Reader) error {
 	for {
 		line, rErr := reader.ReadBytes('\n')
 		if rErr != nil {
-			break
+			if errors.Is(rErr, io.EOF) {
+				return nil
+			}
+			return rErr
 		}
 		var hdr struct {
 			Type          string `json:"type"`
 			DataLength    int    `json:"data_length"`
 			PayloadLength int    `json:"payload_length"`
 		}
-		_ = json.Unmarshal(line, &hdr)
-		_, _ = io.CopyN(io.Discard, reader, int64(hdr.DataLength+hdr.PayloadLength))
+		if err := json.Unmarshal(line, &hdr); err != nil {
+			return err
+		}
+		if _, err := io.CopyN(io.Discard, reader, int64(hdr.DataLength+hdr.PayloadLength)); err != nil {
+			return err
+		}
 		if hdr.Type == "audio-stop" {
-			break
+			return nil
 		}
 	}
 }
@@ -222,7 +229,9 @@ func runHubInteractCase(t *testing.T, tc hubInteractCase) {
 	}
 	sink, getEvents := collectEvents()
 	err := h.Interact(context.Background(), tc.audio, "kiosk-kitchen", "", func(event string, data any) error {
-		_ = sink(event, data)
+		if err := sink(event, data); err != nil {
+			return err
+		}
 		if tc.sinkErrEvent != "" && event == tc.sinkErrEvent {
 			if tc.wantErrStr != "" {
 				return errors.New(tc.wantErrStr)
@@ -328,7 +337,9 @@ func TestHub_Interact_PanicSetsErrorState(t *testing.T) {
 			t.Fatalf("expected panic and StateError, got state %s", coord.GetState().State)
 		}
 	}()
-	_ = h.Interact(context.Background(), wavRdr(100), "", "", func(string, any) error { return nil }, EdgeTimings{})
+	if err := h.Interact(context.Background(), wavRdr(100), "", "", func(string, any) error { return nil }, EdgeTimings{}); err != nil {
+		t.Fatalf("unexpected return: %v", err)
+	}
 }
 
 func TestDefaultSTTClient_Wyoming(t *testing.T) {
@@ -351,7 +362,9 @@ func TestDefaultSTTClient_Wyoming(t *testing.T) {
 			t.Parallel()
 			addr := startWyomingServer(t, func(conn net.Conn, r *bufio.Reader) {
 				if tc.drain {
-					drainMockWyomingRequest(r)
+					if err := drainMockWyomingRequest(r); err != nil && !errors.Is(err, io.EOF) {
+						t.Errorf("drainMockWyomingRequest failed: %v", err)
+					}
 				}
 				if tc.resp != "" {
 					_, _ = conn.Write([]byte(tc.resp))
@@ -388,18 +401,60 @@ func TestDefaultSTTClient_Errors(t *testing.T) {
 	}
 }
 
+type brainClientTestCase struct {
+	name, contentType      string
+	status                 int
+	rawURL, respBody       string
+	req                    AskRequest
+	wantReply              string
+	wantStatuses           []string
+	wantErr                bool
+	wantErrStr, wantNodeID string
+}
+
+func runBrainClientCase(t *testing.T, tc brainClientTestCase) {
+	t.Helper()
+	targetURL := tc.rawURL
+	var mu sync.Mutex
+	var lastBody map[string]any
+	if tc.status > 0 {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			if err := json.NewDecoder(r.Body).Decode(&lastBody); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				mu.Unlock()
+				return
+			}
+			mu.Unlock()
+			if tc.contentType != "" {
+				w.Header().Set("Content-Type", tc.contentType)
+			}
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(tc.respBody))
+		}))
+		defer ts.Close()
+		targetURL = ts.URL
+	}
+	var statuses []string
+	reply, err := NewDefaultBrainClient(targetURL, 5).AskStreaming(context.Background(), tc.req, func(s string) { statuses = append(statuses, s) }, nil)
+	if (err != nil) != tc.wantErr || (tc.wantErr && tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr)) {
+		t.Fatalf("err = %v, wantErr %v (%q)", err, tc.wantErr, tc.wantErrStr)
+	}
+	if !tc.wantErr && (!strings.Contains(reply, tc.wantReply) || (len(tc.wantStatuses) > 0 && !reflect.DeepEqual(statuses, tc.wantStatuses))) {
+		t.Fatalf("got reply=%q statuses=%v, want %q %v", reply, statuses, tc.wantReply, tc.wantStatuses)
+	}
+	if tc.wantNodeID != "" {
+		mu.Lock()
+		defer mu.Unlock()
+		if lastBody["node_id"] != tc.wantNodeID || !strings.HasPrefix(testutil.As[string](t, lastBody["session_id"]), "turn-") || lastBody["device_name"] != nil {
+			t.Errorf("unexpected request body: %+v", lastBody)
+		}
+	}
+}
+
 func TestDefaultBrainClient(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name, contentType      string
-		status                 int
-		rawURL, respBody       string
-		req                    AskRequest
-		wantReply              string
-		wantStatuses           []string
-		wantErr                bool
-		wantErrStr, wantNodeID string
-	}{
+	tests := []brainClientTestCase{
 		{"sse_success", "text/event-stream", 200, "", "event: status\ndata: {\"status\":\"⚡ executing tool\"}\n\nevent: reply\ndata: {\"reply\":\"The light is on\"}\n\nevent: done\ndata: {}\n\n", AskRequest{Prompt: "turn on light", SessionID: "s1"}, "The light is on", []string{"⚡ executing tool"}, false, "", ""},
 		{"json_success", "application/json", 200, "", `{"reply":"JSON reply"}`, AskRequest{Prompt: "hello", SessionID: "s1"}, "JSON reply", nil, false, "", ""},
 		{"turn_session_and_node_id", "application/json", 200, "", `{"reply":"ok"}`, AskRequest{Prompt: "hello", NodeID: "touch-kiosk-kitchen"}, "ok", nil, false, "", "touch-kiosk-kitchen"},
@@ -416,38 +471,7 @@ func TestDefaultBrainClient(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			targetURL := tc.rawURL
-			var mu sync.Mutex
-			var lastBody map[string]any
-			if tc.status > 0 {
-				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					mu.Lock()
-					_ = json.NewDecoder(r.Body).Decode(&lastBody)
-					mu.Unlock()
-					if tc.contentType != "" {
-						w.Header().Set("Content-Type", tc.contentType)
-					}
-					w.WriteHeader(tc.status)
-					_, _ = w.Write([]byte(tc.respBody))
-				}))
-				defer ts.Close()
-				targetURL = ts.URL
-			}
-			var statuses []string
-			reply, err := NewDefaultBrainClient(targetURL, 5).AskStreaming(context.Background(), tc.req, func(s string) { statuses = append(statuses, s) }, nil)
-			if (err != nil) != tc.wantErr || (tc.wantErr && tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr)) {
-				t.Fatalf("err = %v, wantErr %v (%q)", err, tc.wantErr, tc.wantErrStr)
-			}
-			if !tc.wantErr && (!strings.Contains(reply, tc.wantReply) || (len(tc.wantStatuses) > 0 && !reflect.DeepEqual(statuses, tc.wantStatuses))) {
-				t.Fatalf("got reply=%q statuses=%v, want %q %v", reply, statuses, tc.wantReply, tc.wantStatuses)
-			}
-			if tc.wantNodeID != "" {
-				mu.Lock()
-				defer mu.Unlock()
-				if lastBody["node_id"] != tc.wantNodeID || !strings.HasPrefix(testutil.As[string](t, lastBody["session_id"]), "turn-") || lastBody["device_name"] != nil {
-					t.Errorf("unexpected request body: %+v", lastBody)
-				}
-			}
+			runBrainClientCase(t, tc)
 		})
 	}
 }

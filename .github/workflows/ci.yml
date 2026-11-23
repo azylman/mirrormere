@@ -328,6 +328,10 @@ jobs:
           fi
           if [ "${{ needs.changes.outputs.ember }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
             echo "Running EMBER Android client test suite..."
+            if ! python3 -c "import pytest, yaml" >/dev/null 2>&1; then
+              echo "Installing pytest and pyyaml..."
+              python3 -m pip install --break-system-packages -q pytest pyyaml
+            fi
             PYTHONPATH="client/ember" python3 -m pytest client/ember/tests/test_ember.py -q
             (cd client/ember && ./gradlew testDebugUnitTest)
           fi

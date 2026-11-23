@@ -193,12 +193,12 @@ check_dependabot_coverage() {
 
 # 2. Ratcheted Code Health Gate (Cached Binary)
 CODE_HEALTH_BIN=""
-CODE_HEALTH_REF="github.com/azylman/aerial/scripts/code-health@fc8e678006b9b84a63486b5cc08cc24bc77c966c"
+CODE_HEALTH_REF="github.com/azylman/aerial/scripts/code-health@f9d767a4543be6b5f6876fece261050e698184e0"
 ensure_code_health() {
     gopath="$(go env GOPATH 2>/dev/null || true)"
     bin_dir="${gopath:-$HOME/go}/bin"
     mkdir -p "$bin_dir"
-    CODE_HEALTH_BIN="$bin_dir/aerial-code-health-fc8e678006b9"
+    CODE_HEALTH_BIN="$bin_dir/aerial-code-health-f9d767a4543b"
     if [ ! -x "$CODE_HEALTH_BIN" ]; then
         GOBIN="$bin_dir" GOFLAGS=-mod=mod go install "$CODE_HEALTH_REF"
         mv "$bin_dir/code-health" "$CODE_HEALTH_BIN"

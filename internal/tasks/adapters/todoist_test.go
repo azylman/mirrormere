@@ -53,7 +53,7 @@ type todoistFetchCase struct {
 
 func runTodoistFetchListCase(t *testing.T, tc todoistFetchCase) {
 	t.Helper()
-	srv, _ := testutil.RouteServer(t, tc.routes)
+	srv, captured := testutil.RouteServer(t, tc.routes)
 	cfg := tc.cfg
 	cfg.Token, cfg.BaseURL, cfg.Client = "tok", srv.URL, srv.Client()
 	ad, err := adapters.NewTodoistAdapter(cfg)
@@ -61,6 +61,9 @@ func runTodoistFetchListCase(t *testing.T, tc todoistFetchCase) {
 		t.Fatalf("failed to create adapter: %v", err)
 	}
 	list, items, err := ad.FetchList(context.Background())
+	if err == nil && tc.wantErr == "" && tc.wantErrIs == nil && len(captured.Requests()) == 0 {
+		t.Errorf("expected server to receive requests, got 0")
+	}
 	assertTodoistFetchResult(t, tc, list, items, err)
 }
 
@@ -259,17 +262,23 @@ func TestTodoistAdapter_CompleteItem(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			srv, _ := testutil.RouteServer(t, map[string]testutil.Route{"/api/v1/tasks/" + tc.itemID + "/close": tc.route})
+			srv, captured := testutil.RouteServer(t, map[string]testutil.Route{"/api/v1/tasks/" + tc.itemID + "/close": tc.route})
 			if tc.close {
 				srv.Close()
 			}
-			ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{Token: "tok", BaseURL: srv.URL, Client: srv.Client()})
+			ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{Token: "tok", BaseURL: srv.URL, Client: srv.Client()})
+			if err != nil {
+				t.Fatalf("failed to create adapter: %v", err)
+			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if tc.cancel {
 				cancel()
 			}
-			err := ad.CompleteItem(ctx, tc.itemID)
+			err = ad.CompleteItem(ctx, tc.itemID)
+			if !tc.close && !tc.cancel && tc.wantErr == "" && tc.wantErrIs == nil && tc.wantCode == 0 && len(captured.Requests()) == 0 {
+				t.Errorf("expected server to receive requests, got 0")
+			}
 			if tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs) {
 				t.Fatalf("expected %v, got %v", tc.wantErrIs, err)
 			} else if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {

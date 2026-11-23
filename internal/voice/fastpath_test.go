@@ -84,7 +84,9 @@ func TestFastPath_Outcomes(t *testing.T) {
 	t.Parallel()
 	streamH := func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("Decode error: %v", err)
+		}
 		if r.Method != http.MethodPost || body["text"] != "pause the music" || body["speaker"] != "sam" || body["node"] != "kitchen-ear" || body["turn_id"] != "turn-1" || body["tts"] != "none" {
 			t.Errorf("unexpected req: %+v", body)
 		}
