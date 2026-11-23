@@ -16,7 +16,7 @@ COPY --link . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -cover -covermode=atomic -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/hass-proxy ./sidecars/hass-proxy
+    go build -cover -coverpkg=./sidecars/hass-proxy/...,./internal/api/...,./internal/covflush/...,./internal/runutil/... -covermode=atomic -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/hass-proxy ./sidecars/hass-proxy
 
 # Runtime stage: minimal hardened Alpine 3.24 environment
 FROM alpine:3.24
