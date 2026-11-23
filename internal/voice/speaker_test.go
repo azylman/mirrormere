@@ -178,10 +178,14 @@ func TestDefaultEmbedClientAndHubIntegration(t *testing.T) {
 		case "/bad":
 			_, _ = w.Write([]byte("not json"))
 		case "/brain":
-			_ = json.NewDecoder(r.Body).Decode(&brainBody)
+			if err := json.NewDecoder(r.Body).Decode(&brainBody); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			_, _ = w.Write([]byte(`{"reply":"ok"}`))
 		default:
-			if b, _ := io.ReadAll(r.Body); r.Header.Get("Content-Type") != "audio/wav" || string(b) != "RIFFwav" {
+			b, err := io.ReadAll(r.Body)
+			if err != nil || r.Header.Get("Content-Type") != "audio/wav" || string(b) != "RIFFwav" {
 				http.Error(w, "bad req", http.StatusBadRequest)
 				return
 			}

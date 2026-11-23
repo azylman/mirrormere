@@ -69,13 +69,15 @@ func createMultipartReq(method, url, fieldName string, extraFields map[string]st
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if fieldName != "" {
-		part, _ := w.CreateFormFile(fieldName, "test.wav")
-		if part != nil {
+		part, err := w.CreateFormFile(fieldName, "test.wav")
+		if err == nil && part != nil {
 			_, _ = part.Write(dummyWAV)
 		}
 	}
 	for k, v := range extraFields {
-		_ = w.WriteField(k, v)
+		if err := w.WriteField(k, v); err != nil {
+			panic(err)
+		}
 	}
 	_ = w.Close()
 	req := httptest.NewRequest(method, url, &b)

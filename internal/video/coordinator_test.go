@@ -82,6 +82,33 @@ func mkStream(id, url, sType, prio string, timeout int) VideoStream {
 	return VideoStream{ID: id, StreamURL: url, Type: sType, Priority: prio, TimeoutSeconds: timeout}
 }
 
+func mustTrigger(t *testing.T, coord *Coordinator, s VideoStream) VideoState {
+	t.Helper()
+	st, err := coord.Trigger(s)
+	if err != nil {
+		t.Fatalf("unexpected Trigger(%+v) error: %v", s, err)
+	}
+	return st
+}
+
+func mustDismiss(t *testing.T, coord *Coordinator, id string) VideoState {
+	t.Helper()
+	st, err := coord.Dismiss(id)
+	if err != nil {
+		t.Fatalf("unexpected Dismiss(%q) error: %v", id, err)
+	}
+	return st
+}
+
+func mustUpdatePlayerState(t *testing.T, coord *Coordinator, id string, update VideoStream) VideoState {
+	t.Helper()
+	st, err := coord.UpdatePlayerState(id, update)
+	if err != nil {
+		t.Fatalf("unexpected UpdatePlayerState(%q, %+v) error: %v", id, update, err)
+	}
+	return st
+}
+
 func TestCoordinator_InitAndClose(t *testing.T) {
 	t.Parallel()
 	sink := &mockSink{}
@@ -106,7 +133,7 @@ func TestCoordinator_InitAndClose(t *testing.T) {
 		capturedCB = f
 		return &mockTimer{}
 	}))
-	_, _ = c2.Trigger(mkStream("t", "u", "", PriorityTemporary, 10))
+	mustTrigger(t, c2, mkStream("t", "u", "", PriorityTemporary, 10))
 	c2.Close()
 	if capturedCB != nil {
 		capturedCB()
@@ -247,7 +274,7 @@ func assertMetadataPreservation(t *testing.T, sMeta, sPatch, sRetrig, sPurge Vid
 
 func assertMovieMetadataTransitions(t *testing.T, coord *Coordinator) {
 	t.Helper()
-	_, _ = coord.Trigger(VideoStream{
+	mustTrigger(t, coord, VideoStream{
 		ID: "chromecast", StreamURL: "http://cast-tv", Priority: PriorityPersistent,
 		Title: "Ep 1", Series: "Show A", Season: "1", Episode: "2", Duration: 3600,
 	})
@@ -258,7 +285,7 @@ func assertMovieMetadataTransitions(t *testing.T, coord *Coordinator) {
 	if err != nil || sMovie.Primary.Title != "Movie Title" || sMovie.Primary.Series != "" || sMovie.Primary.Season != "" || sMovie.Primary.Episode != "" || sMovie.Primary.Duration != 3600 {
 		t.Fatalf("expected series/season/episode cleared and duration preserved on movie title update, got: %+v (err: %v)", sMovie.Primary, err)
 	}
-	_, _ = coord.Trigger(VideoStream{
+	mustTrigger(t, coord, VideoStream{
 		ID: "chromecast", StreamURL: "http://cast-tv", Priority: PriorityPersistent,
 		Title: "Ep 2", Series: "Show A", Season: "1", Episode: "3", Duration: 1800,
 	})
@@ -286,7 +313,7 @@ func TestCoordinator_PriorityStackAndTimers(t *testing.T) {
 	defer coord.Close()
 
 	// 1-6. Priority stack transitions
-	s1, _ := coord.Trigger(mkStream("chromecast", "http://cast", TypeWebRTC, PriorityPersistent, 0))
+	s1 := mustTrigger(t, coord, mkStream("chromecast", "http://cast", TypeWebRTC, PriorityPersistent, 0))
 	select {
 	case evt := <-subCh:
 		if evt.Type != events.EventVideoState {
@@ -295,16 +322,16 @@ func TestCoordinator_PriorityStackAndTimers(t *testing.T) {
 	default:
 		t.Fatal("expected SSE event published")
 	}
-	s2, _ := coord.Trigger(mkStream("doorbell", "http://doorbell", TypeWebRTC, PriorityTemporary, 30))
-	s3, _ := coord.Trigger(mkStream("backyard", "http://backyard", TypeWebRTC, PriorityTemporary, 0))
-	s4, _ := coord.Trigger(mkStream("backyard", "http://backyard-hd", TypeHLS, PriorityTemporary, 0))
-	s5, _ := coord.Dismiss("chromecast")
-	s6, _ := coord.Dismiss("backyard")
+	s2 := mustTrigger(t, coord, mkStream("doorbell", "http://doorbell", TypeWebRTC, PriorityTemporary, 30))
+	s3 := mustTrigger(t, coord, mkStream("backyard", "http://backyard", TypeWebRTC, PriorityTemporary, 0))
+	s4 := mustTrigger(t, coord, mkStream("backyard", "http://backyard-hd", TypeHLS, PriorityTemporary, 0))
+	s5 := mustDismiss(t, coord, "chromecast")
+	s6 := mustDismiss(t, coord, "backyard")
 	assertPriorityStackTransitions(t, s1, s2, s3, s4, s5, s6)
 
 	// 7. Demotion and timer expiry
-	_, _ = coord.Trigger(mkStream("doorbell", "http://doorbell", "", PriorityTemporary, 45))
-	s7, _ := coord.Trigger(mkStream("chromecast", "http://cast", "", PriorityPersistent, 0))
+	mustTrigger(t, coord, mkStream("doorbell", "http://doorbell", "", PriorityTemporary, 45))
+	s7 := mustTrigger(t, coord, mkStream("chromecast", "http://cast", "", PriorityPersistent, 0))
 	tf.fireAll()
 	st7 := coord.GetState()
 	if s7.Primary.ID != "chromecast" || s7.Pip == nil || !s7.Pip.Muted || st7.Primary == nil || st7.Pip != nil {
@@ -312,15 +339,15 @@ func TestCoordinator_PriorityStackAndTimers(t *testing.T) {
 	}
 
 	// 8-11. Primary timer expiry, Dismiss("all"), and Dismiss("*")
-	_, _ = coord.Dismiss("chromecast")
-	_, _ = coord.Trigger(mkStream("alert", "http://alert", "", PriorityTemporary, 45))
+	mustDismiss(t, coord, "chromecast")
+	mustTrigger(t, coord, mkStream("alert", "http://alert", "", PriorityTemporary, 45))
 	tf.fireAll()
-	_, _ = coord.Trigger(mkStream("p", "http://p", "", PriorityPersistent, 0))
-	_, _ = coord.Trigger(mkStream("a", "http://a", "", PriorityTemporary, 30))
-	sAll, _ := coord.Dismiss("all")
-	_, _ = coord.Trigger(mkStream("p", "http://p", "", PriorityPersistent, 0))
-	sW, _ := coord.Dismiss("*")
-	defSnap, _ := coord.Trigger(VideoStream{ID: "def", StreamURL: "http://def"})
+	mustTrigger(t, coord, mkStream("p", "http://p", "", PriorityPersistent, 0))
+	mustTrigger(t, coord, mkStream("a", "http://a", "", PriorityTemporary, 30))
+	sAll := mustDismiss(t, coord, "all")
+	mustTrigger(t, coord, mkStream("p", "http://p", "", PriorityPersistent, 0))
+	sW := mustDismiss(t, coord, "*")
+	defSnap := mustTrigger(t, coord, VideoStream{ID: "def", StreamURL: "http://def"})
 	if sAll.Mode != ModeWidgets || sW.Mode != ModeWidgets || defSnap.Primary.Priority != PriorityPersistent || defSnap.Primary.TimeoutSeconds != 0 {
 		t.Fatal("unexpected dismiss/defaults")
 	}
@@ -331,8 +358,8 @@ func TestCoordinator_PlayerStateAndMetadata(t *testing.T) {
 	coord := NewCoordinator(nil)
 	defer coord.Close()
 
-	_, _ = coord.Trigger(mkStream("cast", "http://cast", "", PriorityPersistent, 0))
-	_, _ = coord.Trigger(mkStream("doorbell", "http://doorbell", "", PriorityTemporary, 45))
+	mustTrigger(t, coord, mkStream("cast", "http://cast", "", PriorityPersistent, 0))
+	mustTrigger(t, coord, mkStream("doorbell", "http://doorbell", "", PriorityTemporary, 45))
 
 	for _, tc := range []struct {
 		id, state string
@@ -350,13 +377,13 @@ func TestCoordinator_PlayerStateAndMetadata(t *testing.T) {
 	}
 
 	// Metadata preservation and patching
-	sMeta, _ := coord.Trigger(VideoStream{
+	sMeta := mustTrigger(t, coord, VideoStream{
 		ID: "chromecast", StreamURL: "http://cast", Priority: PriorityPersistent,
 		Title: "Episode 1", Series: "Show A", Season: "1", Episode: "1", Position: 10.5, Duration: 3600,
 	})
-	sPatch, _ := coord.UpdatePlayerState("chromecast", VideoStream{PlayerState: PlayerStatePaused, Position: 25.0})
-	sRetrig, _ := coord.Trigger(VideoStream{ID: "chromecast", StreamURL: "http://cast-hd"})
-	sPurge, _ := coord.UpdatePlayerState("chromecast", VideoStream{PlayerState: PlayerStateIdle})
+	sPatch := mustUpdatePlayerState(t, coord, "chromecast", VideoStream{PlayerState: PlayerStatePaused, Position: 25.0})
+	sRetrig := mustTrigger(t, coord, VideoStream{ID: "chromecast", StreamURL: "http://cast-hd"})
+	sPurge := mustUpdatePlayerState(t, coord, "chromecast", VideoStream{PlayerState: PlayerStateIdle})
 	assertMetadataPreservation(t, sMeta, sPatch, sRetrig, sPurge)
 
 	assertMovieMetadataTransitions(t, coord)
@@ -374,10 +401,10 @@ func TestCoordinator_PlayerStateAndMetadata(t *testing.T) {
 		}
 	}
 
-	_, _ = coord.Trigger(VideoStream{ID: "pip-1", StreamURL: "http://pip", Priority: PriorityTemporary, TimeoutSeconds: 45, Position: 50.0})
-	sPipRetrig, _ := coord.Trigger(VideoStream{ID: "pip-1", StreamURL: "http://pip-updated", Priority: PriorityTemporary, TimeoutSeconds: 45})
-	sPipUp, _ := coord.UpdatePlayerState("pip-1", VideoStream{PlayerState: PlayerStatePlaying, Title: "PipT", Series: "PipS", Season: "S1", Episode: "E1", Duration: 1200.0, Position: 60.0, PositionUpdatedAt: 12345})
-	sRewind, _ := coord.UpdatePlayerState("pip-1", VideoStream{Position: 0, PositionUpdatedAt: 98765})
+	mustTrigger(t, coord, VideoStream{ID: "pip-1", StreamURL: "http://pip", Priority: PriorityTemporary, TimeoutSeconds: 45, Position: 50.0})
+	sPipRetrig := mustTrigger(t, coord, VideoStream{ID: "pip-1", StreamURL: "http://pip-updated", Priority: PriorityTemporary, TimeoutSeconds: 45})
+	sPipUp := mustUpdatePlayerState(t, coord, "pip-1", VideoStream{PlayerState: PlayerStatePlaying, Title: "PipT", Series: "PipS", Season: "S1", Episode: "E1", Duration: 1200.0, Position: 60.0, PositionUpdatedAt: 12345})
+	sRewind := mustUpdatePlayerState(t, coord, "pip-1", VideoStream{Position: 0, PositionUpdatedAt: 98765})
 	if sPipRetrig.Pip.Position != 50.0 || sPipUp.Pip.Title != "PipT" || sPipUp.Pip.Position != 60.0 || sRewind.Pip.Position != 0 || sRewind.Pip.PositionUpdatedAt != 98765 {
 		t.Fatal("unexpected pip metadata")
 	}
@@ -396,7 +423,10 @@ func TestCoordinator_ForwardAction(t *testing.T) {
 			http.Error(w, "server error", http.StatusInternalServerError)
 			return
 		}
-		_ = json.NewDecoder(r.Body).Decode(&receivedAction)
+		if err := json.NewDecoder(r.Body).Decode(&receivedAction); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}))
@@ -408,17 +438,17 @@ func TestCoordinator_ForwardAction(t *testing.T) {
 	if err := coord.ForwardAction(context.Background(), "cast", ActionPlay, nil); !errors.Is(err, ErrStreamNotFound) {
 		t.Fatalf("expected ErrStreamNotFound, got %v", err)
 	}
-	_, _ = coord.Trigger(VideoStream{ID: "non-ctrl", StreamURL: "http://v", Priority: PriorityPersistent})
+	mustTrigger(t, coord, VideoStream{ID: "non-ctrl", StreamURL: "http://v", Priority: PriorityPersistent})
 	if err := coord.ForwardAction(context.Background(), "non-ctrl", ActionPlay, nil); !errors.Is(err, ErrNotControllable) {
 		t.Fatalf("expected ErrNotControllable, got %v", err)
 	}
-	_, _ = coord.Trigger(VideoStream{ID: "no-url", StreamURL: "http://v", Priority: PriorityPersistent, Controllable: true})
+	mustTrigger(t, coord, VideoStream{ID: "no-url", StreamURL: "http://v", Priority: PriorityPersistent, Controllable: true})
 	if err := coord.ForwardAction(context.Background(), "no-url", ActionPlay, nil); !errors.Is(err, ErrNotControllable) {
 		t.Fatalf("expected ErrNotControllable for empty control_url, got %v", err)
 	}
 
-	_, _ = coord.Trigger(VideoStream{ID: "cast", StreamURL: "http://v", Priority: PriorityPersistent, Controllable: true, ControlURL: sidecar.URL + "/action"})
-	_, _ = coord.Trigger(VideoStream{ID: "pip-ctrl", StreamURL: "http://v", Priority: PriorityTemporary, Controllable: true, ControlURL: sidecar.URL + "/pip-action"})
+	mustTrigger(t, coord, VideoStream{ID: "cast", StreamURL: "http://v", Priority: PriorityPersistent, Controllable: true, ControlURL: sidecar.URL + "/action"})
+	mustTrigger(t, coord, VideoStream{ID: "pip-ctrl", StreamURL: "http://v", Priority: PriorityTemporary, Controllable: true, ControlURL: sidecar.URL + "/pip-action"})
 
 	for _, act := range []string{ActionTogglePlayback, ActionRewind, ActionFastForward, ActionBack, ActionHome, ActionCaptions, ActionNext, ActionPrevious} {
 		if err := coord.ForwardAction(context.Background(), "cast", act, nil); err != nil {
@@ -450,7 +480,7 @@ func TestCoordinator_ForwardAction(t *testing.T) {
 		}
 	}
 
-	_, _ = coord.Trigger(VideoStream{ID: "fail", StreamURL: "http://v", Priority: PriorityPersistent, Controllable: true, ControlURL: sidecar.URL + "/fail"})
+	mustTrigger(t, coord, VideoStream{ID: "fail", StreamURL: "http://v", Priority: PriorityPersistent, Controllable: true, ControlURL: sidecar.URL + "/fail"})
 	if err := coord.ForwardAction(context.Background(), "fail", ActionPlay, nil); !errors.Is(err, ErrControllerUnreachable) {
 		t.Fatalf("expected ErrControllerUnreachable, got %v", err)
 	}
@@ -467,14 +497,24 @@ func TestCoordinator_Concurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			if id%2 == 0 {
-				_, _ = coord.Trigger(mkStream("cast", "http://stream", "", PriorityPersistent, 0))
+				if _, err := coord.Trigger(mkStream("cast", "http://stream", "", PriorityPersistent, 0)); err != nil {
+					t.Errorf("Trigger failed: %v", err)
+				}
 			} else {
-				_, _ = coord.Trigger(mkStream("doorbell", "http://stream", "", PriorityTemporary, 45))
+				if _, err := coord.Trigger(mkStream("doorbell", "http://stream", "", PriorityTemporary, 45)); err != nil {
+					t.Errorf("Trigger failed: %v", err)
+				}
 			}
-			_ = coord.GetState()
-			_, _ = coord.UpdatePlayerState("cast", VideoStream{PlayerState: PlayerStatePlaying})
+			if st := coord.GetState(); st.Mode == "" {
+				t.Error("expected non-empty mode from GetState")
+			}
+			if _, err := coord.UpdatePlayerState("cast", VideoStream{PlayerState: PlayerStatePlaying}); err != nil && !errors.Is(err, ErrStreamNotFound) {
+				t.Errorf("UpdatePlayerState failed: %v", err)
+			}
 			if id%5 == 0 {
-				_, _ = coord.Dismiss("doorbell")
+				if _, err := coord.Dismiss("doorbell"); err != nil && !errors.Is(err, ErrStreamNotFound) {
+					t.Errorf("Dismiss failed: %v", err)
+				}
 			}
 		}(i)
 	}

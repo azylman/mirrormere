@@ -177,8 +177,12 @@ func TestCoordinator_ConcurrentSetState(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			txt := "query"
-			_, _ = c.SetState(states[idx%len(states)], &txt, nil, nil)
-			_ = c.GetState()
+			if _, err := c.SetState(states[idx%len(states)], &txt, nil, nil); err != nil {
+				t.Errorf("SetState failed: %v", err)
+			}
+			if st := c.GetState(); st.State == "" {
+				t.Error("expected non-empty state from GetState")
+			}
 		}(i)
 	}
 	wg.Wait()

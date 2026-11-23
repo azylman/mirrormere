@@ -253,7 +253,9 @@ func runHubInteractStreamingCase(t *testing.T, tc streamingInteractCase) {
 	if tc.ignoreSinkAudioChunk {
 		origSink := sink
 		sink = func(event string, data any) error {
-			_ = origSink(event, data)
+			if err := origSink(event, data); err != nil {
+				return err
+			}
 			if event == "audio_chunk" {
 				return errors.New("dock went away")
 			}
@@ -312,7 +314,10 @@ func assertStreamingAudioChunks(t *testing.T, tc streamingInteractCase, evs []re
 		}
 	}
 	if tc.wantRemainderBytes > 0 && len(chunks) >= 2 {
-		dec, _ := base64.StdEncoding.DecodeString(testutil.As[string](t, chunks[len(chunks)-2]["data"]))
+		dec, err := base64.StdEncoding.DecodeString(testutil.As[string](t, chunks[len(chunks)-2]["data"]))
+		if err != nil {
+			t.Fatalf("failed to decode base64 audio chunk: %v", err)
+		}
 		if len(dec) != tc.wantRemainderBytes {
 			t.Errorf("remainder bytes: want %d, got %d", tc.wantRemainderBytes, len(dec))
 		}

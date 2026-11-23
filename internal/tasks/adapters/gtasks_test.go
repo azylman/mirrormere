@@ -57,7 +57,7 @@ type gtasksFetchCase struct {
 
 func runGTasksFetchListCase(t *testing.T, tc gtasksFetchCase) {
 	t.Helper()
-	srv, _ := testutil.RouteServer(t, tc.routes)
+	srv, captured := testutil.RouteServer(t, tc.routes)
 	if tc.closeSrv {
 		srv.Close()
 	}
@@ -68,6 +68,9 @@ func runGTasksFetchListCase(t *testing.T, tc gtasksFetchCase) {
 		t.Fatalf("failed to create adapter: %v", err)
 	}
 	list, items, err := ad.FetchList(context.Background())
+	if !tc.closeSrv && err == nil && len(captured.Requests()) == 0 {
+		t.Errorf("expected server to receive requests, got 0")
+	}
 	assertGTasksFetchResult(t, tc, list, items, err)
 }
 
@@ -240,18 +243,67 @@ func TestGTasksAdapter_OAuthRefresh(t *testing.T) {
 	}
 }
 
+type gtasksCompleteItemCase struct {
+	name        string
+	itemID      string
+	routes      map[string]testutil.Route
+	withRefresh bool
+	closeSrv    bool
+	wantErr     string
+	wantErrIs   error
+	wantCode    int
+}
+
+func runGTasksCompleteItemCase(t *testing.T, tc gtasksCompleteItemCase) {
+	t.Helper()
+	srv, captured := testutil.RouteServer(t, tc.routes)
+	if tc.closeSrv {
+		srv.Close()
+	}
+	cfg := adapters.GTasksAdapterConfig{
+		TaskListID: "l1",
+		Token:      "tok",
+		BaseURL:    srv.URL,
+		Client:     srv.Client(),
+	}
+	if tc.withRefresh {
+		cfg.Token = ""
+		cfg.RefreshToken = "ref-tok"
+		cfg.TokenURL = srv.URL + "/token"
+	}
+	ad, err := adapters.NewGTasksAdapter(cfg)
+	if err != nil {
+		t.Fatalf("failed to create gtasks adapter: %v", err)
+	}
+
+	err = ad.CompleteItem(context.Background(), tc.itemID)
+	if !tc.closeSrv && tc.wantErr == "" && tc.wantErrIs == nil && tc.wantCode == 0 && len(captured.Requests()) == 0 {
+		t.Errorf("expected server to receive requests, got 0")
+	}
+	assertGTasksCompleteResult(t, tc, err)
+}
+
+func assertGTasksCompleteResult(t *testing.T, tc gtasksCompleteItemCase, err error) {
+	t.Helper()
+	switch {
+	case tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs):
+		t.Fatalf("expected error Is %v, got %v", tc.wantErrIs, err)
+	case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+		t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+	case tc.wantErr == "" && tc.wantErrIs == nil && tc.wantCode == 0 && err != nil:
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tc.wantCode != 0 {
+		var httpErr api.UpstreamHTTPError
+		if !errors.As(err, &httpErr) || httpErr.Code != tc.wantCode {
+			t.Fatalf("expected UpstreamHTTPError with code %d, got %v", tc.wantCode, err)
+		}
+	}
+}
+
 func TestGTasksAdapter_CompleteItem(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name        string
-		itemID      string
-		routes      map[string]testutil.Route
-		withRefresh bool
-		closeSrv    bool
-		wantErr     string
-		wantErrIs   error
-		wantCode    int
-	}{
+	tests := []gtasksCompleteItemCase{
 		{name: "patch_200_ok", itemID: "task-1", routes: map[string]testutil.Route{"/tasks/v1/lists/l1/tasks/task-1": {Body: `{"id":"task-1","status":"completed"}`}}},
 		{
 			name: "401_oauth_refresh_retry", itemID: "task-1", withRefresh: true,
@@ -271,41 +323,7 @@ func TestGTasksAdapter_CompleteItem(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			srv, _ := testutil.RouteServer(t, tc.routes)
-			if tc.closeSrv {
-				srv.Close()
-			}
-			cfg := adapters.GTasksAdapterConfig{
-				TaskListID: "l1",
-				Token:      "tok",
-				BaseURL:    srv.URL,
-				Client:     srv.Client(),
-			}
-			if tc.withRefresh {
-				cfg.Token = ""
-				cfg.RefreshToken = "ref-tok"
-				cfg.TokenURL = srv.URL + "/token"
-			}
-			ad, err := adapters.NewGTasksAdapter(cfg)
-			if err != nil {
-				t.Fatalf("failed to create gtasks adapter: %v", err)
-			}
-
-			err = ad.CompleteItem(context.Background(), tc.itemID)
-			switch {
-			case tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs):
-				t.Fatalf("expected error Is %v, got %v", tc.wantErrIs, err)
-			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
-				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
-			case tc.wantErr == "" && tc.wantErrIs == nil && tc.wantCode == 0 && err != nil:
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if tc.wantCode != 0 {
-				var httpErr api.UpstreamHTTPError
-				if !errors.As(err, &httpErr) || httpErr.Code != tc.wantCode {
-					t.Fatalf("expected UpstreamHTTPError with code %d, got %v", tc.wantCode, err)
-				}
-			}
+			runGTasksCompleteItemCase(t, tc)
 		})
 	}
 }
