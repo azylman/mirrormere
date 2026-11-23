@@ -81,7 +81,6 @@ type PhotosConfig struct {
 	AlbumURLEnv string        `json:"album_url_env,omitempty" yaml:"album_url_env,omitempty"`
 	Albums      []AlbumSource `json:"albums,omitempty"        yaml:"albums,omitempty"`
 	CacheDir    string        `json:"cache_dir,omitempty"     yaml:"cache_dir,omitempty"`
-	isLegacy    bool
 }
 
 type albumState struct {
@@ -1070,9 +1069,6 @@ var (
 
 	// AF_initDataCallback invocation prefix
 	afCallbackPrefixRe = regexp.MustCompile(`(?i)AF_initDataCallback\s*\(`)
-
-	// Fallback regex matching Google Photos user CDN URLs (/pw/ path)
-	pwURLRe = regexp.MustCompile(`https:\/\/lh[0-9]*\.googleusercontent\.com\/pw\/[a-zA-Z0-9_\-]+`)
 )
 
 // extractAlbumTitle discovers the album name from og:title or title tag, stripping Google Photos branding.
@@ -1095,12 +1091,6 @@ func extractPhotosFromHTML(html string, logger *slog.Logger) []PhotoItem {
 	// Strategy 1: AF_initDataCallback array extraction
 	photos, found := extractFromAFInitData(html)
 	if found {
-		return photos
-	}
-
-	// Strategy 2: Fallback regex on /pw/ image CDN URLs
-	photos = extractFromFallbackRegex(html)
-	if len(photos) > 0 {
 		return photos
 	}
 
@@ -1408,31 +1398,6 @@ func collectCallbackPayloads(matches [][]string) [][]any {
 		}
 	}
 	return payloads
-}
-
-// extractFromFallbackRegex scans the HTML for user media URLs (/pw/ path) and extracts clean URLs.
-func extractFromFallbackRegex(html string) []PhotoItem {
-	matches := pwURLRe.FindAllString(html, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-
-	seen := make(map[string]struct{})
-	var results []PhotoItem
-
-	for idx, rawURL := range matches {
-		cleanURL := cleanGooglePhotoURL(rawURL)
-		if _, exists := seen[cleanURL]; !exists {
-			seen[cleanURL] = struct{}{}
-			results = append(results, PhotoItem{
-				ID:          fmt.Sprintf("photo_%d", idx+1),
-				URL:         cleanURL,
-				AspectRatio: 1.33,
-			})
-		}
-	}
-
-	return results
 }
 
 // cleanGooglePhotoURL strips trailing sizing parameters (e.g. =w1024-h768 or =s0) from CDN URLs.

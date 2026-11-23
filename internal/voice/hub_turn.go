@@ -327,43 +327,6 @@ func (h *Hub) deliberateStreaming(
 	return outcomeSuccess, nil
 }
 
-func (h *Hub) deliberateUnary(
-	ctx context.Context,
-	turnBrain BrainClient,
-	askReq AskRequest,
-	nodeID string,
-	brainTimeout time.Duration,
-	heartbeatInterval time.Duration,
-	safeSink SSEEventSink,
-	onStatus func(status string),
-	emitNonStreamingReply func(reply string) error,
-) error {
-	brainCtx, resetBrain, stopBrain := newInactivityContext(ctx, brainTimeout, h.clock)
-	defer stopBrain()
-
-	stopThinking := startThinkingHeartbeat(brainCtx, heartbeatInterval, safeSink, h.clock)
-	defer stopThinking()
-
-	unaryOnStatus := func(status string) {
-		resetBrain()
-		onStatus(status)
-	}
-
-	brainStart := time.Now()
-	reply, err := turnBrain.Ask(brainCtx, askReq, unaryOnStatus)
-	brainDuration, recordBrain := brainStageSeconds(turnBrain, time.Since(brainStart))
-	stopThinking()
-	if err != nil {
-		return h.recordBrainStageError(ctx, brainCtx, nodeID, brainDuration, err, safeSink)
-	}
-	if recordBrain {
-		h.metrics.RecordStageDuration(nodeID, "brain", outcomeSuccess, brainDuration)
-	}
-	h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
-
-	return emitNonStreamingReply(reply)
-}
-
 func (h *Hub) recordTTSSynthesisError(
 	ctx, ttsCtx context.Context,
 	ttsErr error,

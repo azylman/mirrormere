@@ -164,7 +164,7 @@ func TestBuildHydrationBatch(t *testing.T) {
 		p := NewInMemoryStateProvider(nil)
 		p.SetSnapshot(&config.Snapshot{
 			Config: &config.Config{Timezone: "America/New_York", Display: config.DisplayConfig{Widgets: []config.WidgetConfig{{ID: "w1", Type: "clock"}}}},
-			Layout: &layout.Layout{TotalScreens: 1, Screens: []layout.Screen{{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "w1", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(3, 2)}}}}},
+			Layout: &layout.Layout{TotalScreens: 1, Screens: []layout.Screen{{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "w1", Origin: [2]int{0, 0}, Dimensions: domain.Dimension{Cols: 3, Rows: 2}}}}}},
 		})
 		p.SetWidgetState("w1", map[string]any{"time": "20:00"}, "healthy", "2026-09-25T20:00:00Z")
 		p.SetHeaderWeather(&HeaderWeather{Temperature: 68.5, Units: "F"})

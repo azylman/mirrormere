@@ -121,31 +121,8 @@ case "$cmd" in
             exit 1
         fi
         ;;
-    night-restart)
-        # Fix for Issue #257 & #280: Restart display service, re-assert DPMS off, and trigger idle state
-        echo "[Mirrormere DPMS] Restarting mirrormere-display.service for nightly memory refresh..."
-        systemctl restart mirrormere-display.service 2>/dev/null || systemctl restart mirrormere-kiosk.service
-        # Only re-assert night blackout if sleep timer is active
-        if systemctl is-active --quiet mirrormere-display-sleep.timer 2>/dev/null; then
-            if wait_for_wayland; then
-                output="$(get_output)"
-                echo "[Mirrormere DPMS] Re-asserting night blackout on output: ${output}"
-                run_display_wayland wlr-randr --output "${output}" --off
-                # Wait briefly for swayidle to initialize, then trigger idle state so night touches wake screen
-                for ((i=1; i<=10; i++)); do
-                    if pgrep -u "$DISPLAY_USER" swayidle >/dev/null 2>&1; then
-                        trigger_swayidle_idle
-                        break
-                    fi
-                    sleep 0.2
-                done
-            else
-                echo "[Mirrormere DPMS] Warning: Could not re-assert night blackout after restart" >&2
-            fi
-        fi
-        ;;
     *)
-        echo "Usage: $0 {on|off|status|night-restart}" >&2
+        echo "Usage: $0 {on|off|status}" >&2
         exit 1
         ;;
 esac

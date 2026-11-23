@@ -19,7 +19,7 @@ func mkTestPkg(t, src, prov string, c, r, refresh int, schema, respSchema map[st
 	return &domain.Package{
 		Type: t, Source: src,
 		Manifest: domain.WidgetManifest{
-			Name: t, Version: "1.0.0", Provider: prov, DefaultDimensions: domain.NewDimension(c, r),
+			Name: t, Version: "1.0.0", Provider: prov, DefaultDimensions: domain.Dimension{Cols: c, Rows: r},
 			Refresh: domain.ManifestRefresh{IntervalSeconds: refresh}, ConfigSchema: schema,
 			ResponseSchema: respSchema, SupportedDimensions: supported,
 		},
@@ -31,7 +31,7 @@ func createStandardPackages() map[string]*domain.Package {
 	tasks := map[string]any{"type": "object", "properties": map[string]any{"list_id": map[string]any{"type": "string"}, "source": map[string]any{"type": "string"}}}
 	return map[string]*domain.Package{
 		"calendar-feed":    mkTestPkg("calendar-feed", "builtin", "calendar-feed", 4, 2, 300, cal, nil),
-		"calendar-grid":    mkTestPkg("calendar-grid", "builtin", "calendar-feed", 6, 2, 300, nil, nil, domain.NewDimension(4, 2), domain.NewDimension(6, 2)),
+		"calendar-grid":    mkTestPkg("calendar-grid", "builtin", "calendar-feed", 6, 2, 300, nil, nil, domain.Dimension{Cols: 4, Rows: 2}, domain.Dimension{Cols: 6, Rows: 2}),
 		"weather-forecast": mkTestPkg("weather-forecast", "builtin", "weather-forecast", 2, 1, 600, nil, nil),
 		"tasks":            mkTestPkg("tasks", "builtin", "tasks", 2, 1, 120, tasks, nil),
 		"spacer":           mkTestPkg("spacer", "builtin", "spacer", 2, 1, 0, nil, nil),
@@ -249,6 +249,12 @@ func TestLKGC_ReloadValidationFailures(t *testing.T) {
 		{"Stage 3: omitted dimensions without manifest default", withLKGCWidgets("    - id: w1\n      type: no-default-pkg\n"), "widget 'w1' omits 'dimensions' and package manifest 'no-default-pkg' has no valid default_dimensions", withPkg("no-default-pkg", mkTestPkg("no-default-pkg", "builtin", "no-default-pkg", 0, 0, 60, nil, nil))},
 		{"Stage 3: unsupported dimensions [3, 2]", withLKGCWidgets(mkWYAML("family-cal", "calendar-grid", "[3, 2]", "")), "dimensions [3, 2] not supported by package 'calendar-grid'", nil},
 		{"Stage 4: missing required property calendars", withLKGCWidgets(mkWYAML("cal-missing", "calendar-feed", "[4, 2]", "      config: {view: month}\n") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-missing'", nil},
+		{"Stage 4: photo-carousel legacy config rejected", withLKGCWidgets(mkWYAML("photo-1", "photo-carousel", "[3, 2]", "      config: {source: share_url, album_url: \"https://photos.app.goo.gl/test\"}\n") + mkWYAML("filler", "spacer", "[3, 2]", "")), "manifest config_schema validation error for widget 'photo-1'", withPkg("photo-carousel", mkTestPkg("photo-carousel", "builtin", "photo-carousel", 3, 2, 3600, map[string]any{
+			"type":                 "object",
+			"required":             []string{"albums"},
+			"properties":           map[string]any{"albums": map[string]any{"type": "array", "minItems": 1}},
+			"additionalProperties": false,
+		}, nil, domain.Dimension{Cols: 3, Rows: 2}))},
 		{"Stage 4: calendars type mismatch", withLKGCWidgets(mkWYAML("cal-mismatch", "calendar-feed", "[4, 2]", "      config: {calendars: not-an-array}\n") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-mismatch'", nil},
 		{"Stage 4: nil config when schema requires properties", withLKGCWidgets(mkWYAML("cal-nil", "calendar-feed", "[4, 2]", "") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-nil'", nil},
 		{"Stage 5: sensor-http missing endpoint", withLKGCWidgets(mkWYAML("http-1", "sensor-http", "[2, 1]", "")), "widget 'http-1': provider 'http' requires non-empty 'endpoint' URL", nil},
@@ -454,7 +460,7 @@ func withVoice(c *config.Config, v *config.DisplayVoiceConfig) *config.Config {
 
 func TestResolveWidgetDefaultDimensions_Portrait3x6(t *testing.T) {
 	t.Parallel()
-	dim := domain.NewDimension
+	dim := func(c, r int) domain.Dimension { return domain.Dimension{Cols: c, Rows: r} }
 	sup := func(d ...domain.Dimension) []domain.Dimension { return d }
 	pad := func(dims ...string) string {
 		var sb strings.Builder
@@ -504,7 +510,7 @@ func TestResolveWidgetDefaultDimensions_Portrait3x6(t *testing.T) {
 					Name:              "pad-pkg",
 					Version:           "1.0.0",
 					Provider:          "test-provider",
-					DefaultDimensions: domain.NewDimension(1, 1),
+					DefaultDimensions: domain.Dimension{Cols: 1, Rows: 1},
 				},
 			}
 			loader := &testutil.Packages{ByType: map[string]*domain.Package{

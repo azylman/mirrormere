@@ -268,7 +268,7 @@ func parseBatchexecuteResponse(bodyBytes []byte, currentToken string) ([]PhotoIt
 		if photos, nextToken, found := extractBatchexecutePayload(root, currentToken); found {
 			return photos, nextToken, nil
 		}
-		return extractFromFallbackRegex(bodyStr), "", nil
+		return nil, "", nil
 	}
 
 	for line := range strings.SplitSeq(bodyStr, "\n") {
@@ -281,7 +281,7 @@ func parseBatchexecuteResponse(bodyBytes []byte, currentToken string) ([]PhotoIt
 		}
 	}
 
-	return extractFromFallbackRegex(bodyStr), "", nil
+	return nil, "", nil
 }
 
 func findBatchExecuteEnvelopes(node any, rpcID string) [][]any {

@@ -192,28 +192,18 @@ func newFamilyEvent(ev provider.CalendarEvent, loc *time.Location, timeFormat ..
 	return fe
 }
 
-func isMealieImageURL(raw string) bool {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return false
-	}
-	return strings.HasPrefix(s, "/hearth-api/mealie/image/") ||
-		strings.Contains(s, "/api/media/recipes/") ||
-		strings.HasPrefix(s, "data:image/")
-}
-
 func resolveMealieImageURL(imageURL, location string) string {
-	if isMealieImageURL(imageURL) {
+	if provider.IsRecipeImageURL(imageURL) {
 		return strings.TrimSpace(imageURL)
 	}
-	if isMealieImageURL(location) {
+	if provider.IsRecipeImageURL(location) {
 		return strings.TrimSpace(location)
 	}
 	return ""
 }
 
 func isMealieEventCandidate(id, title, location, imageURL, calendarName string) bool {
-	if isMealieImageURL(imageURL) || isMealieImageURL(location) {
+	if provider.IsRecipeImageURL(imageURL) || provider.IsRecipeImageURL(location) {
 		return true
 	}
 	if strings.HasPrefix(strings.TrimSpace(title), "🍽️") {
@@ -677,20 +667,6 @@ func matchWindowDates(dayIndex map[string]int, loc *time.Location) func(provider
 	}
 }
 
-// eventDateKey resolves the local calendar date a timed event's start falls on,
-// "Timezones" - the provider emits RFC3339 timestamps, which must be converted to the
-// household's location before date-keying or a UTC event near local midnight lands on the
-// wrong day. All-day events are already plain date strings with no timezone component.
-func eventDateKey(ev provider.CalendarEvent, loc *time.Location) string {
-	if ev.AllDay {
-		return ev.Start
-	}
-	if t, ok := parseFamilyTime(ev.Start); ok {
-		return t.In(loc).Format("2006-01-02")
-	}
-	return ev.Start
-}
-
 // timedEventDateRange returns every date key (inclusive, "2006-01-02") that a timed event
 // touches in the household's local timezone. For events spanning across midnight, it returns
 // multiple date keys so each affected day column can render its visible portion.
@@ -718,7 +694,7 @@ func timedEventDateRange(ev provider.CalendarEvent, loc *time.Location) []string
 		}
 		return dates
 	}
-	return []string{eventDateKey(ev, loc)}
+	return []string{ev.Start}
 }
 
 const maxDayLanes = 4

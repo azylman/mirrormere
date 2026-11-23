@@ -38,16 +38,12 @@ Stop the voice service on the voice node temporarily so it releases the ALSA cap
 # On the voice node / ear device:
 # Stop the voice container so it releases the audio device:
 docker stop mirrormere-ear
-# Or if running via Docker Compose:
-# docker compose -f deploy/examples/compose.client.yaml stop mirrormere-ear
 
 # Record 50s calibration audio:
 arecord -D <audio_device> -f S16_LE -r 16000 -c 1 -d 50 /tmp/enroll-<speaker_id>.wav
 
 # Restart the voice container:
 docker start mirrormere-ear
-# Or if running via Docker Compose:
-# docker compose -f deploy/examples/compose.client.yaml start mirrormere-ear
 ```
 
 > [!NOTE]
@@ -63,13 +59,7 @@ docker start mirrormere-ear
 On the Hub host, feed the recording to `enroll.py` targeting your Mirrormere `config.yaml` (which updates `voice_hub.speaker_id.model` and `voice_hub.speaker_id.speakers` in-place), reload `mirrormere-core`, and delete the temporary recording:
 
 ```bash
-# Running inside the sidecar container (with ./config mounted to /config):
-docker compose run --rm -v ./config:/config voice-fingerprinter python enroll.py <speaker_id> --wav /config/enroll-<speaker_id>.wav --output /config/config.yaml
-
-# Audio is never stored long-term; clean up the WAV:
-rm deploy/config/enroll-<speaker_id>.wav
-
-# Or running standalone against the sidecar HTTP endpoint:
+# Running standalone against the sidecar HTTP endpoint:
 python3 sidecars/voice-fingerprinter/enroll.py <speaker_id> --wav deploy/config/enroll-<speaker_id>.wav --embed-url http://localhost:9096/embed --output deploy/config/config.yaml
 rm deploy/config/enroll-<speaker_id>.wav
 

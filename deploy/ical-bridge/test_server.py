@@ -64,44 +64,6 @@ class TestConfigAndSecrets(unittest.TestCase):
         finally:
             os.environ.pop("CUSTOM_TEST_VAR", None)
 
-    def test_derive_screens_from_config(self):
-        # When no config, returns generic fallback with [col, row] origins
-        with patch.object(srv, "_load_config", return_value={}):
-            screens = srv._derive_screens_from_config()
-            self.assertIsInstance(screens, list)
-            self.assertGreaterEqual(len(screens), 1)
-            widgets = screens[0].get("widgets", [])
-            widget_ids = [w["widget_id"] for w in widgets]
-            self.assertEqual(widget_ids, ["family-calendar", "home-weather", "household-tasks"])
-            origins = {w["widget_id"]: w["origin"] for w in widgets}
-            self.assertEqual(origins["family-calendar"], [0, 0])
-            self.assertEqual(origins["home-weather"], [4, 0])
-            self.assertEqual(origins["household-tasks"], [4, 1])
-
-    def test_derive_screens_from_example_config(self):
-        screens = srv._derive_screens_from_config()
-        self.assertIsInstance(screens, list)
-        self.assertGreaterEqual(len(screens), 1)
-        first_screen_widgets = [w["widget_id"] for w in screens[0].get("widgets", [])]
-        self.assertIn("family-calendar", first_screen_widgets)
-
-    def test_derive_screens_dynamic_col_row(self):
-        with patch.object(
-            srv,
-            "_load_config",
-            return_value={
-                "widgets": [
-                    {"id": "widget-a", "dimensions": [2, 1]},
-                    {"id": "widget-b", "dimensions": [2, 1]},
-                ]
-            },
-        ):
-            screens = srv._derive_screens_from_config()
-            self.assertEqual(len(screens), 1)
-            w = screens[0]["widgets"]
-            self.assertEqual(w[0]["origin"], [0, 0])
-            self.assertEqual(w[1]["origin"], [2, 0])
-
 
 class MockServer:
     def __init__(self):
@@ -126,7 +88,7 @@ class TestHandlerEndpoints(unittest.TestCase):
 
     def test_external_caller_forbidden_on_hearth_api(self):
         # GET
-        h_get = self._create_handler("GET", "/hearth-api/screens/layout", client_ip="198.51.100.2")
+        h_get = self._create_handler("GET", "/hearth-api/music/state", client_ip="198.51.100.2")
         h_get.do_GET()
         h_get.send_response.assert_called_with(403)
 
@@ -200,14 +162,6 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertIsNone(srv.YT_VIDEO_ID_RE.match("invalid$char!"))
         self.assertIsNone(srv.YT_VIDEO_ID_RE.match("way_too_long_for_video_id"))
 
-        # resolve_yt_audio_stream rejects invalid video_id
-        url, ctype = srv.resolve_yt_audio_stream("invalid_id")
-        self.assertIsNone(url)
-        self.assertIsNone(ctype)
-        url, ctype = srv.resolve_yt_audio_stream("")
-        self.assertIsNone(url)
-        self.assertIsNone(ctype)
-
         # _cast_track_to_speaker rejects invalid video_id and invalid speaker entity ID
         self.assertFalse(
             srv._cast_track_to_speaker("media_player.speaker", {"video_id": "invalid"})
@@ -240,14 +194,6 @@ class TestHandlerEndpoints(unittest.TestCase):
         with patch.object(srv, "get_google_token", side_effect=RuntimeError("Token error")):
             events = srv.fetch_gcal_events("test-calendar-id")
             self.assertEqual(events, [])
-
-    def test_get_screens_layout_success(self):
-        h = self._create_handler("GET", "/hearth-api/screens/layout", client_ip="127.0.0.1")
-        h.do_GET()
-        h.send_response.assert_called_with(200)
-        output = h.wfile.getvalue().decode("utf-8")
-        data = json.loads(output)
-        self.assertIn("screens", data)
 
     def test_is_local_speaker(self):
         self.assertTrue(srv._is_local_speaker(""))
@@ -498,11 +444,6 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertEqual(c, "audio/mp4")
             self.assertEqual(h["User-Agent"], "Custom-UA")
 
-            # 2-tuple backwards compatibility
-            u2, c2 = srv.resolve_yt_audio_stream(valid_vid)
-            self.assertEqual(u2, cached_entry[1])
-            self.assertEqual(c2, "audio/mp4")
-
     def test_stream_proxy_forwards_range_and_mirrors_headers(self):
         valid_vid = "dQw4w9WgXcQ"
         upstream_url = "https://googlevideo.com/videoplayback?id=123"
@@ -592,13 +533,6 @@ class TestHandlerEndpoints(unittest.TestCase):
         h_health.do_HEAD()
         h_health.send_response.assert_called_with(200)
         self.assertEqual(h_health.wfile.getvalue(), b"")
-
-        # /hearth-api/screens/layout HEAD
-        h_layout = self._create_handler("HEAD", "/hearth-api/screens/layout")
-        h_layout.do_HEAD()
-        h_layout.send_response.assert_called_with(200)
-        h_layout.send_header.assert_any_call("Content-Type", "application/json; charset=utf-8")
-        self.assertEqual(h_layout.wfile.getvalue(), b"")
 
         # /hearth-api/music/state HEAD
         h_state = self._create_handler("HEAD", "/hearth-api/music/state")

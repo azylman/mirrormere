@@ -31,5 +31,17 @@ func (c *ProviderCoordinator) Cache() *SWRCache {
 	return c.cache
 }
 
+// Get returns the cached payload for the given widgetID, if present (test helper).
+func (c *SWRCache) Get(widgetID string) (WidgetPayload, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	e, ok := c.entries[widgetID]
+	if !ok {
+		return WidgetPayload{}, false
+	}
+	return e.toPayload(), true
+}
+
 // NewPhotosHTMLServer serves body as text/html at the server root.
 var NewPhotosHTMLServer = newPhotosHTMLServer

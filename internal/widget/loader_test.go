@@ -189,7 +189,10 @@ display:
       dimensions: [3, 2]
       refresh_interval_seconds: 60
       config:
-        share_url: "https://photos.app.goo.gl/example-album"
+        albums:
+          - name: "Family Album"
+            source: "share_url"
+            url: "https://photos.app.goo.gl/example-album"
         cycle_interval_seconds: 30
         shuffle: true
     - id: pad

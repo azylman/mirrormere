@@ -89,7 +89,7 @@ type Config struct {
 
 // DisplayConfig specifies visual presentation, rotation parameters, and active widget instances.
 type DisplayConfig struct {
-	UI                 string              `yaml:"ui,omitempty"` // only "react" (the default) is accepted; the legacy shell was removed
+	UI                 string              `yaml:"ui,omitempty"` // deprecated: only "react" is supported ("legacy" was removed)
 	HideCursor         bool                `yaml:"hide_cursor,omitempty"`
 	RemoteURL          string              `yaml:"remote_url,omitempty"`
 	AllowLayoutEdit    *bool               `yaml:"allow_layout_edit,omitempty"`
@@ -942,6 +942,12 @@ func (c *Config) validateVoiceAndChatLog() error {
 	vh := c.VoiceHub
 	if vh == nil || !vh.Enabled {
 		return nil
+	}
+	if strings.TrimSpace(vh.STTURL) != "" {
+		stt := strings.TrimSpace(vh.STTURL)
+		if !strings.HasPrefix(stt, "tcp://") && !strings.HasPrefix(stt, "wyoming://") {
+			return fmt.Errorf("voice_hub stt_url must use tcp:// or wyoming:// scheme (got %q)", vh.STTURL)
+		}
 	}
 	if err := checkPositiveInt(vh.BrainTimeoutSeconds, "voice_hub brain_timeout_seconds"); err != nil {
 		return err

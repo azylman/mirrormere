@@ -192,7 +192,7 @@ func TestBuildFamilyMonthView(t *testing.T) {
 		},
 		{
 			name: "density adaptation 6x2, redaction, multi-day and outside window",
-			dims: domain.NewDimension(6, 2),
+			dims: domain.Dimension{Cols: 6, Rows: 2},
 			data: snap(
 				mkCalEv("e_timed", "alpha-personal", "Later Timed Event", "2026-10-15T15:00:00Z", "2026-10-15T16:00:00Z", false),
 				mkCalEv("e_early", "alpha-personal", "Earlier Timed Event", "2026-10-15T09:00:00Z", "2026-10-15T10:00:00Z", false),
@@ -211,13 +211,13 @@ func TestBuildFamilyMonthView(t *testing.T) {
 		},
 		{
 			name: "density adaptation 4x2 resolves event title",
-			dims: domain.NewDimension(4, 2),
+			dims: domain.Dimension{Cols: 4, Rows: 2},
 			data: snap(mkCalEv("e_timed", "alpha-personal", "Later Timed Event", "2026-10-15T15:00:00Z", "2026-10-15T16:00:00Z", false), mkCalEv("e_allday", "alpha-personal", "All Day Conference", "2026-10-15", "2026-10-15", true)),
 			exp:  familyMonthViewExpectations{firstEventTitle: map[string]string{"2026-10-15": "All Day Conference"}},
 		},
 		{
 			name: "density adaptation narrow 2x2 omits event titles",
-			dims: domain.NewDimension(2, 2),
+			dims: domain.Dimension{Cols: 2, Rows: 2},
 			data: snap(mkCalEv("e_allday", "alpha-personal", "All Day Conference", "2026-10-15", "2026-10-15", true)),
 			exp:  familyMonthViewExpectations{emptyEventTitle: map[string]bool{"2026-10-15": true}},
 		},
@@ -227,7 +227,7 @@ func TestBuildFamilyMonthView(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			dims := domain.NewDimension(6, 2)
+			dims := domain.Dimension{Cols: 6, Rows: 2}
 			if tc.dims.Cols > 0 || tc.dims.Rows > 0 {
 				dims = tc.dims
 			}
@@ -466,14 +466,14 @@ func calendarFamilyWidgetTestCases() []calendarWidgetTestCase {
 		},
 		{
 			name:         "calendar-family month view template render 4x2",
-			dims:         domain.NewDimension(4, 2),
+			dims:         domain.Dimension{Cols: 4, Rows: 2},
 			data:         snap(mkCalEv("e_dentist", "alpha-personal", "Dentist Visit", "2026-10-10T14:00:00Z", "2026-10-10T15:00:00Z", false)),
 			cfg:          withFamilyCfg(map[string]any{"default_view": "month", "date": "2026-10-10"}),
 			wantContains: []string{"cf-view-month", "cf-month-dot", "cf-month-event-title", "Dentist Visit", `data-event-id="e_dentist"`},
 		},
 		{
 			name:            "calendar-family month view template render narrow dots only",
-			dims:            domain.NewDimension(2, 2),
+			dims:            domain.Dimension{Cols: 2, Rows: 2},
 			data:            snap(mkCalEv("e1", "alpha-personal", "Parent Teacher Night", "2026-09-27T18:00:00Z", "2026-09-27T19:00:00Z", false)),
 			cfg:             withFamilyCfg(map[string]any{"default_view": "month", "date": "2026-09-27"}),
 			wantContains:    []string{"cf-month-dot"},
@@ -501,7 +501,7 @@ func calendarFeedWidgetTestCases(laLoc *time.Location) []calendarWidgetTestCase 
 		{
 			name:      "calendar-feed alignment and hierarchy",
 			widgetDir: "calendar-feed",
-			dims:      domain.NewDimension(4, 3),
+			dims:      domain.Dimension{Cols: 4, Rows: 3},
 			data: provider.CalendarSnapshot{
 				LastSync: "2026-10-10T12:00:00Z",
 				Events: []provider.CalendarEvent{
@@ -519,7 +519,7 @@ func calendarFeedWidgetTestCases(laLoc *time.Location) []calendarWidgetTestCase 
 		{
 			name:                 "calendar-feed all-day sorting across timezones",
 			widgetDir:            "calendar-feed",
-			dims:                 domain.NewDimension(4, 3),
+			dims:                 domain.Dimension{Cols: 4, Rows: 3},
 			data:                 provider.CalendarSnapshot{LastSync: "2026-10-10T12:00:00Z", Events: tzEvents},
 			cfg:                  map[string]any{"title": "Upcoming", "__now": time.Date(2026, 10, 10, 12, 0, 0, 0, laLoc)},
 			wantOrdered:          []string{"Monday Evening Dinner", "Wednesday Game Night", "Weekend Bachelorette Party", "Brunch with Bridesmaids"},
@@ -556,7 +556,7 @@ func TestCalendarWidgetTemplates(t *testing.T) {
 			}
 			dims := tc.dims
 			if dims.Cols == 0 && dims.Rows == 0 {
-				dims = domain.NewDimension(6, 2)
+				dims = domain.Dimension{Cols: 6, Rows: 2}
 			}
 			html := renderWidgetTemplate(t, wDir, Context{ID: "test-" + wDir, Type: wDir, Dimensions: dims, Data: tc.data, Config: tc.cfg})
 			assertCalendarWidgetStrings(t, html, tc)
@@ -627,7 +627,7 @@ func assertMealieViewDeduplication(t *testing.T, view *FamilyViewModel) {
 
 func assertMealieMonthViewAndHTML(t *testing.T, events []provider.CalendarEvent, cfg map[string]any) {
 	t.Helper()
-	viewWithNonDup, err := BuildFamilyView(snap(events...), cfg, domain.NewDimension(6, 2), testNow)
+	viewWithNonDup, err := BuildFamilyView(snap(events...), cfg, domain.Dimension{Cols: 6, Rows: 2}, testNow)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -636,7 +636,7 @@ func assertMealieMonthViewAndHTML(t *testing.T, events []provider.CalendarEvent,
 		t.Errorf("expected timed Dinner event kept when no Mealie event on that day, got %+v", day1.Timed)
 	}
 
-	monthView, err := BuildFamilyMonthView(snap(events...), cfg, domain.NewDimension(6, 2), testNow)
+	monthView, err := BuildFamilyMonthView(snap(events...), cfg, domain.Dimension{Cols: 6, Rows: 2}, testNow)
 	if err != nil {
 		t.Fatalf("unexpected error in BuildFamilyMonthView: %v", err)
 	}
@@ -653,7 +653,7 @@ func assertMealieMonthViewAndHTML(t *testing.T, events []provider.CalendarEvent,
 	html := renderWidgetTemplate(t, "calendar-grid", Context{
 		ID:         "test-mealie-grid",
 		Type:       "calendar-grid",
-		Dimensions: domain.NewDimension(6, 2),
+		Dimensions: domain.Dimension{Cols: 6, Rows: 2},
 		Data:       snap(events...),
 		Config:     cfg,
 	})
@@ -774,7 +774,7 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 		},
 	}
 
-	view, err := BuildFamilyView(snap(events...), cfg, domain.NewDimension(6, 2), testNow)
+	view, err := BuildFamilyView(snap(events...), cfg, domain.Dimension{Cols: 6, Rows: 2}, testNow)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

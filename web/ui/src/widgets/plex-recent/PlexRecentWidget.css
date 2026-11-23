@@ -27,9 +27,7 @@
   color: var(--pr-text-main);
 }
 
-body.theme-day .widget-plex-recent,
 [data-theme="day"] .widget-plex-recent,
-body.theme-day .widget-card[data-widget-type="plex-recent"],
 [data-theme="day"] .widget-card[data-widget-type="plex-recent"] {
   --pr-text-main: #1e293b;
   --pr-text-sub: #64748b;

@@ -19,7 +19,7 @@ export function getVideoStreamURL(rawUrl?: string, suffixIndex = 0): string {
 export interface PhotoCarouselData { photos?: PhotoItem[]; album_url?: string; cycle_interval_seconds?: number; }
 export interface PhotoAlbumConfig { name?: string; source?: 'share_url' | 'ember_bridge'; url?: string; }
 export interface PhotoCarouselConfig {
-  source?: 'share_url' | 'ember_bridge'; album_url?: string; album_url_env?: string; albums?: PhotoAlbumConfig[];
+  albums?: PhotoAlbumConfig[];
 }
 export interface ContainerSize { width: number; height: number; }
 const CROSSFADE_MS = 850;
@@ -77,10 +77,10 @@ export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
 export function resolvePhotoCarouselSourceAndUrl(config?: PhotoCarouselConfig, data?: PhotoCarouselData): { source: 'share_url' | 'ember_bridge'; albumUrl: string } {
   if (Array.isArray(config?.albums) && config.albums.length > 0) {
     const emberEntry = config.albums.find((a) => a.source === 'ember_bridge');
-    if (emberEntry) return { source: 'ember_bridge', albumUrl: (emberEntry.url || config.album_url || data?.album_url || '').trim() };
-    return { source: 'share_url', albumUrl: (config.albums[0]?.url || config.album_url || data?.album_url || '').trim() };
+    if (emberEntry) return { source: 'ember_bridge', albumUrl: (emberEntry.url || data?.album_url || '').trim() };
+    return { source: 'share_url', albumUrl: (config.albums[0]?.url || data?.album_url || '').trim() };
   }
-  return { source: config?.source === 'ember_bridge' ? 'ember_bridge' : 'share_url', albumUrl: (config?.album_url || data?.album_url || '').trim() };
+  return { source: 'share_url', albumUrl: (data?.album_url || '').trim() };
 }
 export function getBackdropPhotoURL(rawUrl?: string, isGif = false): string {
   return rawUrl ? `${rawUrl}=w96-h54-c${isGif ? '-k' : ''}` : '';

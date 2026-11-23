@@ -40,18 +40,6 @@ func NewSWRCache() *SWRCache {
 	}
 }
 
-// Get returns the cached payload for the given widgetID, if present.
-func (c *SWRCache) Get(widgetID string) (WidgetPayload, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	e, ok := c.entries[widgetID]
-	if !ok {
-		return WidgetPayload{}, false
-	}
-	return e.toPayload(), true
-}
-
 // RecordSuccess records a successful data fetch. It sets the state to "healthy",
 // records LKG data, stamps the current RFC 3339 timestamp, resets failure counters,
 // and reports whether the state transitioned.

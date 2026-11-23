@@ -67,26 +67,13 @@ func hasErrorCode(evs []recordedEvent, code string) bool {
 }
 
 type mockStreamingBrain struct {
-	mu                            sync.Mutex
-	reply                         string
-	statuses                      []string
-	sentences                     []BrainAudioChunk
-	err                           error
-	lastReq                       AskRequest
-	askCalled, askStreamingCalled bool
-}
-
-func (m *mockStreamingBrain) Ask(_ context.Context, req AskRequest, onStatus func(status string)) (string, error) {
-	m.mu.Lock()
-	m.askCalled, m.lastReq = true, req
-	statuses, reply, err := append([]string(nil), m.statuses...), m.reply, m.err
-	m.mu.Unlock()
-	for _, s := range statuses {
-		if onStatus != nil {
-			onStatus(s)
-		}
-	}
-	return reply, err
+	mu                 sync.Mutex
+	reply              string
+	statuses           []string
+	sentences          []BrainAudioChunk
+	err                error
+	lastReq            AskRequest
+	askStreamingCalled bool
 }
 
 func (m *mockStreamingBrain) AskStreaming(_ context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {

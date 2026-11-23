@@ -314,13 +314,13 @@ func resolveWidgetDefaultDimensions(w *WidgetConfig, pkg *domain.Package, grid G
 		}
 	}
 	if !defDim.IsValidForGrid(grid.Columns, grid.Rows) {
-		flipped := domain.NewDimension(defDim.Rows, defDim.Cols)
+		flipped := domain.Dimension{Cols: defDim.Rows, Rows: defDim.Cols}
 		if flipped.IsValidForGrid(grid.Columns, grid.Rows) &&
 			(len(pkg.Manifest.SupportedDimensions) == 0 || slices.Contains(pkg.Manifest.SupportedDimensions, flipped)) {
 			defDim = flipped
 		}
 	}
-	w.Dimensions = defDim.Slice()
+	w.Dimensions = []int{defDim.Cols, defDim.Rows}
 	return nil
 }
 

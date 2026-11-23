@@ -142,8 +142,8 @@ func TestHandler_GetScreens(t *testing.T) {
 		CurrentScreen:   1,
 		IntervalSeconds: 60,
 		Screens: []layout.Screen{
-			{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "clock", Type: "clock", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(2, 1)}}},
-			{Index: 1, Widgets: []layout.PlacedWidget{{WidgetID: "weather", Origin: [2]int{2, 1}, Dimensions: domain.NewDimension(3, 2)}}},
+			{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "clock", Type: "clock", Origin: [2]int{0, 0}, Dimensions: domain.Dimension{Cols: 2, Rows: 1}}}},
+			{Index: 1, Widgets: []layout.PlacedWidget{{WidgetID: "weather", Origin: [2]int{2, 1}, Dimensions: domain.Dimension{Cols: 3, Rows: 2}}}},
 		},
 	}
 	tests := []struct {

@@ -310,7 +310,7 @@ func appendAutoSpacers(widgets []WidgetConfig, spacers []layout.PlacedWidget) []
 		widgets = append(widgets, WidgetConfig{
 			ID:         sp.WidgetID,
 			Type:       "spacer",
-			Dimensions: sp.Dimensions.Slice(),
+			Dimensions: []int{sp.Dimensions.Cols, sp.Dimensions.Rows},
 		})
 	}
 	return widgets

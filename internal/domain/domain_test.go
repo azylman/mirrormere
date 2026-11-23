@@ -21,20 +21,13 @@ func assertDimensionProperties(t *testing.T, d domain.Dimension, expCols, expRow
 	if !d.IsValid() {
 		t.Errorf("expected %dx%d to be valid", expCols, expRows)
 	}
-	slice := d.Slice()
-	if len(slice) != 2 || slice[0] != expCols || slice[1] != expRows {
-		t.Errorf("expected slice [%d, %d], got %v", expCols, expRows, slice)
-	}
 }
 
 func TestDimension_ConstructorsAndMethods(t *testing.T) {
 	t.Parallel()
 
-	d := domain.NewDimension(4, 2)
+	d := domain.Dimension{Cols: 4, Rows: 2}
 	assertDimensionProperties(t, d, 4, 2, 8)
-	if d.String() != "[4, 2]" {
-		t.Errorf("expected string [4, 2], got %s", d.String())
-	}
 
 	// DimensionFromSlice valid
 	d2, err := domain.DimensionFromSlice([]int{2, 1})
@@ -175,13 +168,13 @@ func assertManifestBasicValidationErrors(t *testing.T, base domain.WidgetManifes
 	}
 
 	mBadDefDim := base
-	mBadDefDim.DefaultDimensions = domain.NewDimension(7, 2)
+	mBadDefDim.DefaultDimensions = domain.Dimension{Cols: 7, Rows: 2}
 	if err := mBadDefDim.Validate(); err == nil || !strings.Contains(err.Error(), "default_dimensions [7, 2] violates 6x2 grid bounds") {
 		t.Fatalf("expected default_dimensions bounds error, got %v", err)
 	}
 
 	mBadSupDim := base
-	mBadSupDim.SupportedDimensions = []domain.Dimension{domain.NewDimension(4, 3)}
+	mBadSupDim.SupportedDimensions = []domain.Dimension{{Cols: 4, Rows: 3}}
 	if err := mBadSupDim.Validate(); err == nil || !strings.Contains(err.Error(), "supported_dimensions[0] [4, 3] violates 6x2 grid bounds") {
 		t.Fatalf("expected supported_dimensions bounds error, got %v", err)
 	}

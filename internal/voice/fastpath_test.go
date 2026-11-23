@@ -145,10 +145,6 @@ func TestFastPath_Outcomes(t *testing.T) {
 
 type streamingBrainStub struct{ called bool }
 
-func (*streamingBrainStub) Ask(context.Context, AskRequest, func(string)) (string, error) {
-	return "", nil
-}
-
 func (s *streamingBrainStub) AskStreaming(_ context.Context, _ AskRequest, _ func(string), onAudio func(BrainAudioChunk)) (string, error) {
 	s.called = true
 	onAudio(BrainAudioChunk{Text: "From the brain."})
@@ -194,7 +190,7 @@ func TestFastPath_ConfigAndBrainIntegration(t *testing.T) {
 	if err := hub.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kitchen-ear", "s", func(string, any) error { return nil }, EdgeTimings{}); err != nil || !brain.called || !slices.Equal(tts.texts, []string{"From the brain."}) {
 		t.Fatalf("miss streaming brain: err=%v spoken=%v", err, tts.texts)
 	}
-	if _, err := (&fastPathBrain{fp: stubFastPath{res: FastPathResult{Outcome: fastPathMiss}}, metrics: DefaultMetrics()}).Ask(context.Background(), AskRequest{}, nil); err == nil {
+	if _, err := (&fastPathBrain{fp: stubFastPath{res: FastPathResult{Outcome: fastPathMiss}}, metrics: DefaultMetrics()}).AskStreaming(context.Background(), AskRequest{}, nil, nil); err == nil {
 		t.Error("expected nil brain error on miss")
 	}
 

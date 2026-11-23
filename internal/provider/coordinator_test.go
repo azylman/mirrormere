@@ -670,8 +670,8 @@ func assertPushWidgetPhotosSuccess(t *testing.T) (*provider.ProviderCoordinator,
 		"custom-sensor":  mkPkg("custom-sensor", "http", 0, nil),
 	}
 	widgets := []config.WidgetConfig{
-		{ID: "tile-ember", Type: "photo-carousel", Config: map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/ember"}},
-		{ID: "tile-share", Type: "photo-carousel", Config: map[string]any{"source": "share_url", "album_url": closedServerURL(t)}},
+		{ID: "tile-ember", Type: "photo-carousel", Config: map[string]any{"albums": []any{map[string]any{"name": "Ember", "source": "ember_bridge", "url": "https://photos.app.goo.gl/ember"}}}},
+		{ID: "tile-share", Type: "photo-carousel", Config: map[string]any{"albums": []any{map[string]any{"name": "Share", "source": "share_url", "url": closedServerURL(t)}}}},
 		{ID: "tile-sensor", Type: "custom-sensor", Endpoint: "https://example.com/sensor"},
 	}
 	reg := provider.NewRegistry()

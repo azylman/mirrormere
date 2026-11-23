@@ -96,7 +96,7 @@ type mockBrain struct {
 	lastReq           AskRequest
 }
 
-func (m *mockBrain) Ask(_ context.Context, req AskRequest, onStatus func(status string)) (string, error) {
+func (m *mockBrain) AskStreaming(_ context.Context, req AskRequest, onStatus func(status string), _ func(chunk BrainAudioChunk)) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calledWith, m.lastReq = req.Prompt, req
@@ -365,39 +365,24 @@ func TestDefaultSTTClient_Wyoming(t *testing.T) {
 	}
 }
 
-func TestDefaultSTTClient_HTTPAndErrors(t *testing.T) {
+func TestDefaultSTTClient_Errors(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name                       string
-		status                     int
-		respBody, rawURL, wantText string
-		wantErr                    bool
-		wantErrStr                 string
+		name       string
+		rawURL     string
+		wantErr    bool
+		wantErrStr string
 	}{
-		{"http_success", http.StatusOK, `{"text":"test transcript from http"}`, "", "test transcript from http", false, ""},
-		{"transcript_fallback", http.StatusOK, `{"transcript":"fallback transcript"}`, "", "fallback transcript", false, ""},
-		{"malformed_json", http.StatusOK, `not valid json`, "", "", true, "stt decode error"},
-		{"empty_url", 0, "", "", "", true, "stt url is empty"},
-		{"tcp_dial_failure", 0, "", "tcp://127.0.0.1:59999", "", true, ""},
-		{"http_500", http.StatusInternalServerError, `internal server error`, "", "", true, "500"},
-		{"network_failure", 0, "", "http://127.0.0.1:59998/invalid", "", true, ""},
+		{"empty_url", "", true, "stt url is empty"},
+		{"unsupported_scheme", "http://127.0.0.1:59998/invalid", true, "unsupported stt scheme"},
+		{"tcp_dial_failure", "tcp://127.0.0.1:59999", true, "wyoming dial failed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			targetURL := tc.rawURL
-			if tc.status > 0 {
-				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(tc.status)
-					_, _ = w.Write([]byte(tc.respBody))
-				}))
-				defer ts.Close()
-				targetURL = ts.URL
-			}
-			txt, err := NewDefaultSTTClient(targetURL).Transcribe(context.Background(), makeValidWAV(100))
-			if (err != nil) != tc.wantErr || (tc.wantErr && tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr)) || (!tc.wantErr && txt != tc.wantText) {
-				t.Fatalf("got (%q, %v), want (%q, wantErr=%v, errStr=%q)", txt, err, tc.wantText, tc.wantErr, tc.wantErrStr)
+			txt, err := NewDefaultSTTClient(tc.rawURL).Transcribe(context.Background(), makeValidWAV(100))
+			if (err != nil) != tc.wantErr || (tc.wantErr && tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr)) || (!tc.wantErr && txt != "") {
+				t.Fatalf("got (%q, %v), want (wantErr=%v, errStr=%q)", txt, err, tc.wantErr, tc.wantErrStr)
 			}
 		})
 	}
@@ -449,7 +434,7 @@ func TestDefaultBrainClient(t *testing.T) {
 				targetURL = ts.URL
 			}
 			var statuses []string
-			reply, err := NewDefaultBrainClient(targetURL, 5).Ask(context.Background(), tc.req, func(s string) { statuses = append(statuses, s) })
+			reply, err := NewDefaultBrainClient(targetURL, 5).AskStreaming(context.Background(), tc.req, func(s string) { statuses = append(statuses, s) }, nil)
 			if (err != nil) != tc.wantErr || (tc.wantErr && tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr)) {
 				t.Fatalf("err = %v, wantErr %v (%q)", err, tc.wantErr, tc.wantErrStr)
 			}

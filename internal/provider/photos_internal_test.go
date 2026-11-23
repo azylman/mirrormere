@@ -98,25 +98,33 @@ func TestPhotos_ParsePhotosConfig(t *testing.T) {
 		wantSource      string
 		wantAlbumURL    string
 		wantAlbumURLEnv string
+		wantCacheDir    string
 		wantErr         string
 	}{
 		{name: "nil", cfg: nil, wantErr: "photo-carousel: configuration is required"},
-		{name: "missing_source", cfg: map[string]any{}, wantErr: `photo-carousel: 'source' is required and must be either "share_url" or "ember_bridge"`},
-		{name: "invalid_source", cfg: map[string]any{"source": "invalid"}, wantErr: `photo-carousel: 'source' is required and must be either "share_url" or "ember_bridge"`},
-		{name: "missing_album_url", cfg: map[string]any{"source": "share_url"}, wantErr: "photo-carousel requires either 'album_url' or 'album_url_env'"},
+		{name: "missing_albums", cfg: map[string]any{}, wantErr: "photo-carousel: 'albums' is required"},
 		{
-			name:    "url_and_env",
-			cfg:     map[string]any{"source": "share_url", "album_url": "https://photos.app.goo.gl/TEST", "album_url_env": "ENV_VAR"},
-			wantErr: "photo-carousel: 'album_url' and 'album_url_env' are mutually exclusive",
+			name:    "legacy_keys_rejected",
+			cfg:     map[string]any{"source": "share_url", "album_url": "https://example.com"},
+			wantErr: "photo-carousel: legacy single-album configuration ('source', 'album_url', 'share_url') is no longer supported; please migrate to 'albums: [{name, source, url/url_env}]'",
 		},
 		{
-			name:       "share_url",
-			cfg:        map[string]any{"source": "share_url", "album_url": "https://photos.app.goo.gl/TEST"},
-			wantSource: "share_url", wantAlbumURL: "https://photos.app.goo.gl/TEST",
+			name: "share_url",
+			cfg: map[string]any{
+				"cache_dir": "/tmp/photos",
+				"albums": []any{
+					map[string]any{"name": "A1", "source": "share_url", "url": "https://photos.app.goo.gl/TEST"},
+				},
+			},
+			wantSource: "share_url", wantAlbumURL: "https://photos.app.goo.gl/TEST", wantCacheDir: "/tmp/photos",
 		},
 		{
-			name:       "ember_env",
-			cfg:        map[string]any{"source": "ember_bridge", "album_url_env": "ALBUM_ENV"},
+			name: "ember_env",
+			cfg: map[string]any{
+				"albums": []any{
+					map[string]any{"name": "A2", "source": "ember_bridge", "url_env": "ALBUM_ENV"},
+				},
+			},
 			wantSource: "ember_bridge", wantAlbumURLEnv: "ALBUM_ENV",
 		},
 	}
@@ -127,8 +135,8 @@ func TestPhotos_ParsePhotosConfig(t *testing.T) {
 			if got := photosErrText(err); got != tc.wantErr {
 				t.Fatalf("err = %q, want %q", got, tc.wantErr)
 			}
-			if cfg.Source != tc.wantSource || cfg.AlbumURL != tc.wantAlbumURL || cfg.AlbumURLEnv != tc.wantAlbumURLEnv {
-				t.Errorf("cfg = %+v, want source=%q url=%q env=%q", cfg, tc.wantSource, tc.wantAlbumURL, tc.wantAlbumURLEnv)
+			if cfg.Source != tc.wantSource || cfg.AlbumURL != tc.wantAlbumURL || cfg.AlbumURLEnv != tc.wantAlbumURLEnv || cfg.CacheDir != tc.wantCacheDir {
+				t.Errorf("cfg = %+v, want source=%q url=%q env=%q cacheDir=%q", cfg, tc.wantSource, tc.wantAlbumURL, tc.wantAlbumURLEnv, tc.wantCacheDir)
 			}
 		})
 	}
@@ -606,7 +614,7 @@ func TestPhotosProvider_InitResetsDeck(t *testing.T) {
 	t.Parallel()
 	p := NewPhotosProvider()
 	p.deck, p.deckCursor, p.cachedSnapshot = []PhotoItem{{ID: "2", URL: "u2"}}, 1, &PhotoSnapshot{}
-	if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": "https://example.com/album"}, InitOptions{}); err != nil {
+	if err := p.Init(context.Background(), map[string]any{"albums": []any{map[string]any{"name": "Alb", "source": "share_url", "url": "https://example.com/album"}}}, InitOptions{}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	if p.deck != nil || p.deckCursor != 0 || p.cachedSnapshot != nil {
@@ -621,7 +629,7 @@ type photosPush struct {
 
 func TestPhotosProvider_IngestPushedPhotos(t *testing.T) {
 	t.Parallel()
-	emberCfg := map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/ember"}
+	emberCfg := map[string]any{"albums": []any{map[string]any{"name": "Ember", "source": "ember_bridge", "url": "https://photos.app.goo.gl/ember"}}}
 	mixedCfg := map[string]any{"albums": []any{
 		map[string]any{"name": "Shared 1", "source": "share_url", "url": "https://photos.app.goo.gl/share1"},
 		map[string]any{"name": "Pushed 1", "source": "ember_bridge", "url": "https://photos.app.goo.gl/ember1"},
@@ -639,7 +647,7 @@ func TestPhotosProvider_IngestPushedPhotos(t *testing.T) {
 	}{
 		{
 			name:    "share_url_rejects_push",
-			cfg:     map[string]any{"source": "share_url", "album_url": "https://photos.app.goo.gl/share"},
+			cfg:     map[string]any{"albums": []any{map[string]any{"name": "Share", "source": "share_url", "url": "https://photos.app.goo.gl/share"}}},
 			pushes:  []photosPush{{[]string{"https://lh3.googleusercontent.com/pw/VALID"}, "Test"}},
 			wantErr: ErrPhotoPushNotSupported,
 		},
@@ -743,7 +751,6 @@ func TestPhotos_ResolveSingleAlbumURL(t *testing.T) {
 		name    string
 		idx     int
 		src     AlbumSource
-		legacy  bool
 		secrets map[string]string
 		want    string
 		wantErr string
@@ -753,12 +760,6 @@ func TestPhotos_ResolveSingleAlbumURL(t *testing.T) {
 		{name: "malformed_port", src: AlbumSource{URL: "http://[::1]:namedport"}, wantErr: `photo-carousel: invalid album URL "http://[::1]:namedport"`},
 		{name: "empty", wantErr: "photo-carousel: resolved album URL is empty"},
 		{name: "env_secret", src: AlbumSource{URLEnv: "SECRET_VAR"}, secrets: map[string]string{"SECRET_VAR": "https://photos.app.goo.gl/secret"}, want: "https://photos.app.goo.gl/secret"},
-		{name: "legacy_album_url", src: AlbumSource{URL: "https://example.com/a"}, legacy: true, secrets: map[string]string{"album_url": "https://example.com/secret_album"}, want: "https://example.com/secret_album"},
-		{name: "legacy_share_url", src: AlbumSource{URL: "https://example.com/a"}, legacy: true, secrets: map[string]string{"share_url": "https://example.com/secret_share"}, want: "https://example.com/secret_share"},
-		{
-			name: "legacy_share_url_named", src: AlbumSource{Name: "Shared Album", Source: "share_url", URL: "https://example.com/a"}, legacy: true,
-			secrets: map[string]string{"share_url": "https://example.com/legacy_share"}, want: "https://example.com/legacy_share",
-		},
 		{
 			name: "indexed_secret", idx: 2, src: AlbumSource{Name: "Alb", Source: "share_url", URLEnv: "SOME_ENV"},
 			secrets: map[string]string{"albums[2].url": "https://example.com/indexed"}, want: "https://example.com/indexed",
@@ -767,7 +768,7 @@ func TestPhotos_ResolveSingleAlbumURL(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := resolveSingleAlbumURL(tc.idx, tc.src, tc.legacy, InitOptions{Secrets: tc.secrets})
+			got, err := resolveSingleAlbumURL(tc.idx, tc.src, InitOptions{Secrets: tc.secrets})
 			if got != tc.want || photosErrText(err) != tc.wantErr {
 				t.Errorf("resolveSingleAlbumURL = (%q, %v), want (%q, %q)", got, err, tc.want, tc.wantErr)
 			}
@@ -995,7 +996,7 @@ func TestPhotosProvider_SyncErrors(t *testing.T) {
 		wantErr string
 	}{
 		{"uninitialized", nil, "photo-carousel: provider not initialized"},
-		{"unhydrated_dial_failure", map[string]any{"source": "share_url", "album_url": photosClosedURL(t)}, "photo-carousel scrape failed"},
+		{"unhydrated_dial_failure", map[string]any{"albums": []any{map[string]any{"name": "Share", "source": "share_url", "url": photosClosedURL(t)}}}, "photo-carousel scrape failed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1072,7 +1073,7 @@ func TestPhotosProvider_InitCacheDir(t *testing.T) {
 	t.Parallel()
 	p := NewPhotosProvider()
 	dir := t.TempDir()
-	if err := p.Init(context.Background(), map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/custom", "cache_dir": dir}, InitOptions{}); err != nil {
+	if err := p.Init(context.Background(), map[string]any{"albums": []any{map[string]any{"name": "Ember", "source": "ember_bridge", "url": "https://photos.app.goo.gl/custom"}}, "cache_dir": dir}, InitOptions{}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	if p.effectiveCacheDir != dir {

@@ -1149,7 +1149,7 @@ body[data-theme="night"] .screen-indicator-dot.active::after,
 }
 
 /* Interactive Touch Targets */
-button, .touch-target {
+button {
   min-width: var(--mm-touch-target-min);
   min-height: var(--mm-touch-target-min);
   border-radius: var(--mm-border-radius-sm);
@@ -2410,18 +2410,6 @@ button, .touch-target {
 }
 
 .tasks-sparkle-icon {
-  flex-shrink: 0;
-}
-
-.tasks-source-badge {
-  font-size: 0.72rem;
-  font-weight: 800;
-  text-transform: capitalize;
-  background: var(--mm-mint-light);
-  color: var(--mm-mint);
-  padding: 3px 10px;
-  border-radius: 9999px;
-  letter-spacing: 0.01em;
   flex-shrink: 0;
 }
 
