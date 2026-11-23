@@ -75,4 +75,31 @@ config_schema:
       type: string
       enum: ["webrtc", "mjpeg", "hls"]
       description: Optional override stream format for fullscreen presentation. Defaults to stream_type.
+    auto_live_on_motion_seconds:
+      type: integer
+      minimum: 1
+      description: Duration in seconds to automatically promote the tile to live video after motion is detected.
+    max_auto_live_streams:
+      type: integer
+      minimum: 1
+      description: Maximum number of camera tiles allowed to auto-stream live video concurrently.
+    battery_powered:
+      type: boolean
+      description: Whether the camera is battery-powered, disabling continuous live streaming.
+    refresh_interval_seconds:
+      type: integer
+      minimum: 0
+      description: Snapshot refresh interval in seconds when visible on the active screen.
+    background_refresh_interval_seconds:
+      type: integer
+      minimum: 0
+      description: Snapshot refresh interval in seconds when on a background screen; 0 disables background polling.
+    stagger_index:
+      type: integer
+      minimum: 0
+      description: 0-based stagger slot index offsetting snapshot refreshes across camera tiles.
+    idle_timeout_seconds:
+      type: integer
+      minimum: 1
+      description: Timeout in seconds before an idle live stream falls back to snapshot mode.
   additionalProperties: false

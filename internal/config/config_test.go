@@ -9,6 +9,7 @@ import (
 
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/testutil"
+	"github.com/azylman/mirrormere/internal/widget"
 )
 
 func assertEq[T comparable](t *testing.T, label string, got, want T) {
@@ -66,7 +67,9 @@ func TestLoad_ExampleConfig(t *testing.T) {
 		t.Fatalf("read example config: %v", err)
 	}
 
-	_, err = parseConfig(string(raw), mockGetenv(nil))
+	loader := widget.NewLoader(filepath.Join("..", "..", "widgets"), t.TempDir())
+
+	_, err = config.ValidatePipeline(raw, loader, mockGetenv(nil))
 	if err == nil || !strings.Contains(err.Error(), "FAMILY_CALENDAR_URL") {
 		t.Fatalf("expected error mentioning FAMILY_CALENDAR_URL, got: %v", err)
 	}
@@ -76,10 +79,11 @@ func TestLoad_ExampleConfig(t *testing.T) {
 		"TODOIST_API_TOKEN":       "todoist-test-token",
 		"GOOGLE_PHOTOS_ALBUM_URL": "https://photos.app.goo.gl/example-album",
 	}
-	cfg, err := parseConfig(string(raw), mockGetenv(mockEnv))
+	snap, err := config.ValidatePipeline(raw, loader, mockGetenv(mockEnv))
 	if err != nil {
 		t.Fatalf("unexpected error validating example config: %v", err)
 	}
+	cfg := snap.Config
 
 	assertEq(t, "timezone", cfg.Timezone, "America/Los_Angeles")
 	assertEq(t, "location", cfg.Location().String(), "America/Los_Angeles")
