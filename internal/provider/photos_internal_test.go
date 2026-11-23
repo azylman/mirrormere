@@ -26,7 +26,8 @@ const photosBatchexecutePath = "/_/PhotosUi/data/batchexecute"
 // newPhotosHTMLServer serves body as text/html at the server root.
 func newPhotosHTMLServer(t testing.TB, body string) *httptest.Server {
 	t.Helper()
-	srv, _ := testutil.RouteServer(t, map[string]testutil.Route{"/": {Body: body, ContentType: "text/html; charset=utf-8"}})
+	srv, captured := testutil.RouteServer(t, map[string]testutil.Route{"/": {Body: body, ContentType: "text/html; charset=utf-8"}})
+	_ = captured
 	return srv
 }
 
@@ -226,7 +227,8 @@ func TestPhotos_CarryCachedPhotoMetadata(t *testing.T) {
 func TestPhotos_EnrichPhotoLocations(t *testing.T) {
 	t.Parallel()
 	const fdcnBody = ")]}'\n\n120\n[[[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_new1\\\",null,\\\"PXL_ANIMATION.gif\\\",null,null,null,null,null,null,null,null,null,null,[null,null,[[null,[[\\\"Beta Town\\\",null,1]],\\\"ChIJ123\\\"]]]]]\",null,null,null,\"1\"],[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_noloc\\\",null,\\\"clip.mp4\\\"]]\",null,null,null,\"2\"],[\"wrb.fr\",\"fDcn4b\",\"[null]\",null,null,null,\"3\"]]]\n"
-	srv, _ := testutil.RouteServer(t, map[string]testutil.Route{photosBatchexecutePath: {Body: fdcnBody, ContentType: "text/plain; charset=utf-8"}})
+	srv, captured := testutil.RouteServer(t, map[string]testutil.Route{photosBatchexecutePath: {Body: fdcnBody, ContentType: "text/plain; charset=utf-8"}})
+	_ = captured
 	items := []PhotoItem{
 		{ID: "AF1Qip_new1", URL: "https://lh3.googleusercontent.com/pw/NEW1"},
 		{ID: "AF1Qip_noloc", URL: "https://lh3.googleusercontent.com/pw/NOLOC"},
@@ -1017,7 +1019,8 @@ func TestPhotos_FetchBatchexecutePage(t *testing.T) {
 			albumURL := photosClosedURL(t)
 			client := photosTestClient()
 			if tc.route != nil {
-				srv, _ := testutil.RouteServer(t, map[string]testutil.Route{photosBatchexecutePath: *tc.route})
+				srv, captured := testutil.RouteServer(t, map[string]testutil.Route{photosBatchexecutePath: *tc.route})
+				_ = captured
 				albumURL = srv.URL
 				client = srv.Client()
 			}
@@ -1114,12 +1117,16 @@ func TestPhotosProvider_ConcurrentFetchSync(t *testing.T) {
 	for range 3 {
 		wg.Go(func() {
 			for ctx.Err() == nil {
-				_, _ = p.Fetch(ctx)
+				if _, err := p.Fetch(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("Fetch concurrent error: %v", err)
+				}
 			}
 		})
 		wg.Go(func() {
 			for ctx.Err() == nil {
-				_ = p.Sync(ctx, false)
+				if err := p.Sync(ctx, false); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("Sync concurrent error: %v", err)
+				}
 			}
 		})
 	}

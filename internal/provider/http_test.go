@@ -104,7 +104,10 @@ func runHTTPFetchCase(t *testing.T, tc httpFetchTestCase) {
 			<-r.Context().Done()
 			return
 		}
-		b, _ := io.ReadAll(r.Body)
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("io.ReadAll: %v", err)
+		}
 		got = httpCapturedRequest{method: r.Method, dims: r.Header.Get("X-Widget-Dimensions"), auth: r.Header.Get("Authorization"), body: string(b)}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(tc.status)

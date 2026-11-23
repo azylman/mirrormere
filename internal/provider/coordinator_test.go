@@ -139,7 +139,8 @@ func waitForState(t *testing.T, cache *provider.SWRCache, id, state string) prov
 			return p
 		}
 	}
-	p, _ := cache.Get(id)
+	p, ok := cache.Get(id)
+	_ = ok
 	t.Fatalf("timeout %q -> %q (current: %s)", id, state, p.State)
 	return p
 }
@@ -356,8 +357,8 @@ func TestProviderCoordinator_ColdBootErrorsRecoverOnPushUpdate(t *testing.T) {
 		waitForState(t, coordFail.Cache(), id, provider.StateError)
 	}
 	payload, err := coordFail.PushUpdate("failing-tile", map[string]any{"pushed": true, "val": 42})
-	pUpdated, _ := coordFail.Cache().Get("failing-tile")
-	if err != nil || payload.State != provider.StateHealthy || pUpdated.State != provider.StateHealthy || !hasEvent(bFail, "failing-tile", provider.StateHealthy) {
+	pUpdated, ok := coordFail.Cache().Get("failing-tile")
+	if err != nil || !ok || payload.State != provider.StateHealthy || pUpdated.State != provider.StateHealthy || !hasEvent(bFail, "failing-tile", provider.StateHealthy) {
 		t.Fatalf("PushUpdate failed or inconsistent: %v, %s", err, payload.State)
 	}
 }
@@ -559,7 +560,9 @@ func TestProviderCoordinator_Shutdown(t *testing.T) {
 	coord := newCoord(regTypes("edge-type"), nil, nil, mkSnap("", nil, mkWidget("edge-tile", "edge-type", 30, nil)))
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_ = coord.Shutdown(canceledCtx)
+	if err := coord.Shutdown(canceledCtx); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
 	if err := coord.Stop(); err != nil || coord.Stop() != nil {
 		t.Fatal("expected idempotent Stop")
 	}
@@ -680,7 +683,9 @@ func assertPushWidgetPhotosSuccess(t *testing.T) (*provider.ProviderCoordinator,
 	coord := newCoord(reg, b, s, mkSnap("", pkgs, widgets...))
 
 	waitForState(t, coord.Cache(), "tile-ember", provider.StateHealthy)
-	_, _ = b.WaitForPublish(time.Second)
+	if _, ok := b.WaitForPublish(time.Second); !ok {
+		t.Fatal("expected publish event for tile-ember")
+	}
 
 	ctx := context.Background()
 	validPhotos := []string{"https://lh3.googleusercontent.com/pw/AL9nZEW1", "https://lh3.googleusercontent.com/pw/AL9nZEW2"}
