@@ -37,26 +37,17 @@ function photoPane(isCurrentPane: boolean, paneIndex = 0) {
 
 describe('PhotoCarouselWidget helpers', () => {
   describe('parsePhotoCarouselData', () => {
-    it('returns empty object when data is nullish or invalid', () => {
-      expect(parsePhotoCarouselData(null)).toEqual({});
-      expect(parsePhotoCarouselData(undefined)).toEqual({});
-      expect(parsePhotoCarouselData(123)).toEqual({});
-      expect(parsePhotoCarouselData('not-json')).toEqual({});
-    });
-
-    it('returns object as-is if already an object', () => {
-      const data = { photos: [{ url: 'https://example.com/1.jpg' }], cycle_interval_seconds: 45 };
-      expect(parsePhotoCarouselData(data)).toEqual(data);
-    });
-
-    it('parses single-encoded JSON string', () => {
-      const data = { photos: [{ url: 'https://example.com/1.jpg' }], cycle_interval_seconds: 45 };
-      expect(parsePhotoCarouselData(JSON.stringify(data))).toEqual(data);
-    });
-
-    it('parses double-encoded JSON string', () => {
-      const data = { photos: [{ url: 'https://example.com/1.jpg' }], cycle_interval_seconds: 45 };
-      expect(parsePhotoCarouselData(JSON.stringify(JSON.stringify(data)))).toEqual(data);
+    const data = { photos: [{ url: 'https://example.com/1.jpg' }], cycle_interval_seconds: 45 };
+    it.each([
+      { input: null, want: {} },
+      { input: undefined, want: {} },
+      { input: 123, want: {} },
+      { input: 'not-json', want: {} },
+      { input: data, want: data },
+      { input: JSON.stringify(data), want: data },
+      { input: JSON.stringify(JSON.stringify(data)), want: data },
+    ])('parses input correctly', ({ input, want }) => {
+      expect(parsePhotoCarouselData(input)).toEqual(want);
     });
   });
 
@@ -134,21 +125,17 @@ describe('PhotoCarouselWidget helpers', () => {
   });
 
   describe('getPhotoItemKey', () => {
-    it('returns raw URL when url or URL is present', () => {
-      expect(getPhotoItemKey({ url: 'https://example.com/a.jpg' })).toBe('https://example.com/a.jpg');
-      expect(getPhotoItemKey({ URL: 'https://example.com/b.jpg' })).toBe('https://example.com/b.jpg');
-      expect(getPhotoItemKey({ url: 'https://example.com/c.jpg', id: 'id-c' })).toBe('https://example.com/c.jpg');
-    });
-
-    it('returns id when URL is absent', () => {
-      expect(getPhotoItemKey({ id: 'photo-123' })).toBe('photo-123');
-      expect(getPhotoItemKey({ id: 'photo-456', url: '' })).toBe('photo-456');
-    });
-
-    it('falls back to index string when URL and id are missing', () => {
-      expect(getPhotoItemKey({}, 5)).toBe('5');
-      expect(getPhotoItemKey(undefined, 2)).toBe('2');
-      expect(getPhotoItemKey(undefined)).toBe('');
+    it.each([
+      { item: { url: 'https://example.com/a.jpg' }, idx: undefined, want: 'https://example.com/a.jpg' },
+      { item: { URL: 'https://example.com/b.jpg' }, idx: undefined, want: 'https://example.com/b.jpg' },
+      { item: { url: 'https://example.com/c.jpg', id: 'id-c' }, idx: undefined, want: 'https://example.com/c.jpg' },
+      { item: { id: 'photo-123' }, idx: undefined, want: 'photo-123' },
+      { item: { id: 'photo-456', url: '' }, idx: undefined, want: 'photo-456' },
+      { item: {}, idx: 5, want: '5' },
+      { item: undefined, idx: 2, want: '2' },
+      { item: undefined, idx: undefined, want: '' },
+    ])('resolves photo key correctly ($want)', ({ item, idx, want }) => {
+      expect(getPhotoItemKey(item, idx)).toBe(want);
     });
   });
 

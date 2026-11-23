@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestHub_PublishAndSubscribe(t *testing.T) {
+func TestHub(t *testing.T) {
 	t.Parallel()
 	cfg := HubConfig{RingCapacity: 10, RingTTL: 5 * time.Minute, HeartbeatInterval: 15 * time.Second, SubscriberBuffer: 4, NowFunc: func() time.Time { return time.Date(2026, 9, 25, 20, 0, 0, 0, time.UTC) }}
 	cfg.ApplyDefaults()
@@ -39,6 +39,32 @@ func TestHub_PublishAndSubscribe(t *testing.T) {
 	if len(hub.subscribers) != 1 {
 		t.Fatalf("expected 1, got %d", len(hub.subscribers))
 	}
+
+	if replayed, found := hub.ReplaySince(hub.Publish(EventSystemStatus, []byte("{}")).ID); !found || len(replayed) != 0 {
+		t.Fatalf("unexpected replay hit: (%v, %v)", replayed, found)
+	}
+	if batch := hub.BuildHydration(); len(batch) < 6 {
+		t.Fatalf("expected >= 6, got %d", len(batch))
+	}
+	hub.PublishEvent(nil)
+	evtBlank := &Event{Type: "test_blank"}
+	hub.PublishEvent(evtBlank)
+	if evtBlank.ID == "" || evtBlank.Timestamp.IsZero() {
+		t.Fatal("expected populated ID")
+	}
+
+	ctxC, cancelC := context.WithCancel(context.Background())
+	cancelC()
+	hub.Subscribe(ctxC)
+	hub.Publish(EventWidgetUpdate, []byte("{}"))
+	ch, _ := hub.Subscribe(context.Background())
+	hub.Close()
+	hub.Close()
+	hub.Subscribe(context.Background())
+	if len(hub.subscribers) != 0 || (<-ch != nil) {
+		t.Fatal("expected closed")
+	}
+	hub.Publish(EventWidgetUpdate, []byte("{}"))
 }
 
 func TestHub_SlowConsumerDrop(t *testing.T) {
@@ -85,36 +111,6 @@ func TestHub_ConcurrentPublishAndSubscribe(t *testing.T) {
 	cancel()
 	hub.Close()
 	wg.Wait()
-}
-
-func TestHub_CloseAndEdgeCases(t *testing.T) {
-	t.Parallel()
-	hub := NewHub(HubConfig{}, nil, nil)
-	if replayed, found := hub.ReplaySince(hub.Publish(EventSystemStatus, []byte("{}")).ID); !found || len(replayed) != 0 {
-		t.Fatalf("unexpected replay hit: (%v, %v)", replayed, found)
-	}
-	if batch := hub.BuildHydration(); len(batch) < 6 {
-		t.Fatalf("expected >= 6, got %d", len(batch))
-	}
-	hub.PublishEvent(nil)
-	evtBlank := &Event{Type: "test_blank"}
-	hub.PublishEvent(evtBlank)
-	if evtBlank.ID == "" || evtBlank.Timestamp.IsZero() {
-		t.Fatal("expected populated ID")
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	hub.Subscribe(ctx)
-	hub.Publish(EventWidgetUpdate, []byte("{}"))
-	ch, _ := hub.Subscribe(context.Background())
-	hub.Close()
-	hub.Close()
-	hub.Subscribe(context.Background())
-	if len(hub.subscribers) != 0 || (<-ch != nil) {
-		t.Fatal("expected closed")
-	}
-	hub.Publish(EventWidgetUpdate, []byte("{}"))
 }
 
 func TestHub_PublishSyncsStateProvider(t *testing.T) {

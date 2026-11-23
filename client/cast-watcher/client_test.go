@@ -503,7 +503,7 @@ type errConn struct{ net.Conn }
 
 func (*errConn) Close() error { return errors.New("conn close failure") }
 
-func TestCastClient_LifecycleAndEdgeCases(t *testing.T) {
+func TestCastClient_Lifecycle(t *testing.T) {
 	client := NewCastClient(ClientConfig{})
 	client.Close()
 	client.Start(context.Background())

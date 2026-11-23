@@ -384,9 +384,24 @@ func TestRun_CLIAndErrors(t *testing.T) {
 	}
 }
 
+type safeTestTransport struct {
+	base http.RoundTripper
+}
+
+func (s safeTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return s.base.RoundTrip(req)
+}
+
+func newTestClient() *http.Client {
+	return &http.Client{
+		Transport: safeTestTransport{base: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+}
+
 func runDaemonSmokeEndpoints(t *testing.T, baseURL string) {
 	t.Helper()
-	c := &http.Client{Timeout: 5 * time.Second}
+	c := newTestClient()
 	endpoints := []struct {
 		path, match string
 		status      int
@@ -419,7 +434,7 @@ func runDaemonSmokeEndpoints(t *testing.T, baseURL string) {
 	_ = completeResp.Body.Close()
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/events", http.NoBody)
-	r, err := http.DefaultClient.Do(req)
+	r, err := c.Do(req)
 	if err != nil || r.StatusCode != http.StatusOK {
 		t.Fatalf("events: %v", err)
 	}
@@ -487,7 +502,7 @@ func listenSseEvents(ctx context.Context, t *testing.T, baseURL string) <-chan s
 	t.Helper()
 	sseEvents := make(chan string, 20)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/events", http.NoBody)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newTestClient().Do(req)
 	if err != nil {
 		t.Fatalf("SSE connect: %v", err)
 	}
@@ -522,7 +537,7 @@ func waitSseEvent(t *testing.T, sseEvents <-chan string, wantEvt string) {
 func assertDaemonHTTPResponse(t *testing.T, baseURL, path, wantBody string) {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+path, http.NoBody)
-	r, err := http.DefaultClient.Do(req)
+	r, err := newTestClient().Do(req)
 	if err != nil || r.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s failed: %v", path, err)
 	}
@@ -585,7 +600,7 @@ func TestRun_SIGHUP(t *testing.T) {
 			}
 			if tc.action == "invalid_yaml" || tc.action == "read_error" {
 				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, d.baseURL+"/display", http.NoBody)
-				if r, err := http.DefaultClient.Do(req); err != nil || r.StatusCode != http.StatusOK {
+				if r, err := newTestClient().Do(req); err != nil || r.StatusCode != http.StatusOK {
 					t.Fatalf("display LKGC: %v", err)
 				} else {
 					_ = r.Body.Close()
