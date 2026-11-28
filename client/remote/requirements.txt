@@ -3,4 +3,4 @@ androidtvremote2>=0.3.3
 bluez-peripheral>=0.1.7
 cryptography>=50.0.2
 evdev>=2.0.0
-pyyaml>=6.0.3
+pyyaml>=6.0.4

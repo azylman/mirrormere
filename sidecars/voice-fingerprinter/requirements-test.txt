@@ -3,6 +3,6 @@
 # real torch/speechbrain are never imported and no model is downloaded.
 pytest==9.2.0
 httpx==0.28.1
-fastapi==0.164.0
+fastapi==0.165.0
 numpy==2.5.5
 soundfile==0.14.0
